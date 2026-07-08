@@ -1,0 +1,8 @@
+venv/
+__pycache__/
+*.pyc
+.DS_Store
+.streamlit/secrets.toml
+
+# Local data copy — production reads the Google Sheet, not this file.
+data/*.xlsx

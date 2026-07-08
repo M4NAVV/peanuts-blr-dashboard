@@ -1,0 +1,477 @@
+"""
+Data loader + KPI helpers for the Peanuts (Manyavar) Bengaluru sales dashboard.
+
+Single source of truth for reading and cleaning the sales export, whether it
+comes from a published Google Sheet (hosted / production) or a local Excel file
+(local development). Everything downstream reads a clean, typed DataFrame from
+`load_data()`.
+
+The cleaning is deliberately defensive because the same export gets re-imported
+into Google Sheets every day, which can:
+  - append a "Grand Total" footer row,
+  - reformat numbers with thousands separators ("17,536"),
+  - reformat / reparse the Bill Date column.
+"""
+
+from __future__ import annotations
+
+import io
+import os
+from datetime import datetime
+
+import pandas as pd
+
+# Column names as they appear in the raw Tableau export.
+COL_STORE = "SHORT_NAME"
+COL_DATE = "Bill Date"
+COL_BILL = "Bill No"
+COL_MOBILE = "CUSTOMER_MOBILE"
+COL_SALESPERSON = "Name (Dm Salesperson)"
+COL_DIVISION = "Division"
+COL_SECTION = "Section"
+COL_MWC = "Men/Women/Child"
+COL_DEPARTMENT = "Department"
+COL_SIZE = "Size"
+COL_COLOR = "CATEGORY2"
+COL_STYLE = "CATEGORY1"
+COL_AMOUNT = "Bill Amount"
+COL_QTY = "Bill Quantity"
+COL_PROMO = "Promotion Amount"
+
+NUMERIC_COLS = [COL_AMOUNT, COL_QTY, COL_PROMO]
+
+LOCAL_EXCEL = os.path.join(os.path.dirname(__file__), "data", "sales.xlsx")
+
+
+def _read_raw() -> pd.DataFrame:
+    """Read the raw sheet from the Google Sheet CSV URL if configured, else the
+    local Excel file. Kept separate from cleaning so the source can change
+    without touching the cleaning logic."""
+    url = _sheet_url()
+    if url:
+        # Published Google Sheet -> CSV. Read as strings; cleaning handles types.
+        return pd.read_csv(url, dtype=str, keep_default_na=False)
+    if os.path.exists(LOCAL_EXCEL):
+        return pd.read_excel(LOCAL_EXCEL, sheet_name=0, dtype=str)
+    raise FileNotFoundError(
+        "No data source found. Set SHEET_CSV_URL in Streamlit secrets, or place "
+        f"the export at {LOCAL_EXCEL}"
+    )
+
+
+def _sheet_url() -> str | None:
+    """Read the published-sheet CSV URL from Streamlit secrets or env var.
+    Returns None when running locally without it (falls back to Excel)."""
+    # Env var takes precedence (handy for local testing against the live sheet).
+    if os.environ.get("SHEET_CSV_URL"):
+        return os.environ["SHEET_CSV_URL"]
+    try:
+        import streamlit as st
+
+        return st.secrets.get("SHEET_CSV_URL")  # type: ignore[no-any-return]
+    except Exception:
+        return None
+
+
+def _to_number(series: pd.Series) -> pd.Series:
+    """Coerce a possibly comma/currency-formatted string column to float."""
+    cleaned = (
+        series.astype(str)
+        .str.replace(",", "", regex=False)
+        .str.replace("₹", "", regex=False)  # rupee sign
+        .str.strip()
+    )
+    return pd.to_numeric(cleaned, errors="coerce")
+
+
+def _parse_dates(series: pd.Series) -> pd.Series:
+    """Parse Bill Date robustly. The raw export is US-style M/D/YYYY, but once the
+    file has passed through Google Sheets it may come back ISO (YYYY-MM-DD) or in
+    another locale. Try the known format first, then fall back to inference."""
+    s = series.astype(str).str.strip()
+    # Known raw format from the Tableau export.
+    dt = pd.to_datetime(s, format="%m/%d/%Y", errors="coerce")
+    # Fill any that failed (e.g. Sheets reformatted them) with flexible parsing.
+    missing = dt.isna()
+    if missing.any():
+        dt.loc[missing] = pd.to_datetime(s[missing], errors="coerce")
+    return dt
+
+
+def clean(df: pd.DataFrame) -> pd.DataFrame:
+    """Turn a raw export into a clean, typed, analysis-ready DataFrame."""
+    df = df.copy()
+    df.columns = [str(c).strip() for c in df.columns]
+
+    # Drop the "Grand Total" footer row (and any fully blank rows).
+    if "Sr No" in df.columns:
+        df = df[df["Sr No"].astype(str).str.strip().str.lower() != "grand total"]
+    if COL_STORE in df.columns:
+        df = df[df[COL_STORE].astype(str).str.strip().str.lower() != "total"]
+
+    for c in NUMERIC_COLS:
+        if c in df.columns:
+            df[c] = _to_number(df[c])
+
+    df["date"] = _parse_dates(df[COL_DATE])
+    df = df[df["date"].notna()].copy()
+
+    # Drop rows with no monetary value (defensive against stray blank lines).
+    df = df[df[COL_AMOUNT].notna()].copy()
+
+    # Derived calendar fields for trend charts.
+    df["month"] = df["date"].dt.to_period("M").dt.to_timestamp()
+    df["month_label"] = df["date"].dt.strftime("%b %Y")
+    df["weekday"] = df["date"].dt.day_name()
+    df["date_only"] = df["date"].dt.date
+
+    # Net sales after promotion (discount). Promotion is the discount amount.
+    df[COL_PROMO] = df[COL_PROMO].fillna(0)
+    df["net_amount"] = df[COL_AMOUNT] - df[COL_PROMO]
+
+    # Blank mobiles -> NA so unique-customer counts don't lump them as one.
+    df["mobile_clean"] = (
+        df[COL_MOBILE].astype(str).str.strip().replace({"": pd.NA, "nan": pd.NA})
+    )
+
+    return df.reset_index(drop=True)
+
+
+def load_data() -> pd.DataFrame:
+    """Public entry point. Streamlit caching is applied in app.py."""
+    return clean(_read_raw())
+
+
+# --------------------------------------------------------------------------- #
+# KPI helpers — all operate on the cleaned frame.
+# --------------------------------------------------------------------------- #
+
+def headline_kpis(df: pd.DataFrame) -> dict:
+    """Top-line KPIs for the overview cards."""
+    total_sales = df[COL_AMOUNT].sum()
+    total_units = df[COL_QTY].sum()
+    bills = df[COL_BILL].nunique()
+    customers = df[COL_MOBILE].replace("", pd.NA).nunique()
+    discount = df[COL_PROMO].sum()
+
+    per_bill = df.groupby(COL_BILL).agg(
+        amt=(COL_AMOUNT, "sum"), qty=(COL_QTY, "sum")
+    )
+    atv = per_bill["amt"].mean() if len(per_bill) else 0
+    upt = per_bill["qty"].mean() if len(per_bill) else 0
+    asp = (total_sales / total_units) if total_units else 0
+
+    cust_bills = (
+        df[df[COL_MOBILE].replace("", pd.NA).notna()]
+        .groupby(COL_MOBILE)[COL_BILL]
+        .nunique()
+    )
+    repeat_rate = (cust_bills > 1).mean() * 100 if len(cust_bills) else 0
+
+    return {
+        "total_sales": total_sales,
+        "total_units": int(total_units),
+        "bills": int(bills),
+        "customers": int(customers),
+        "discount": discount,
+        "atv": atv,
+        "upt": upt,
+        "asp": asp,
+        "repeat_rate": repeat_rate,
+    }
+
+
+def monthly_summary(df: pd.DataFrame) -> pd.DataFrame:
+    """Sales / bills / units by calendar month, chronologically ordered."""
+    g = (
+        df.groupby("month")
+        .agg(
+            sales=(COL_AMOUNT, "sum"),
+            bills=(COL_BILL, "nunique"),
+            units=(COL_QTY, "sum"),
+            discount=(COL_PROMO, "sum"),
+        )
+        .reset_index()
+        .sort_values("month")
+    )
+    g["atv"] = g["sales"] / g["bills"].where(g["bills"] != 0)
+    g["month_label"] = g["month"].dt.strftime("%b %Y")
+    return g
+
+
+def daily_summary(df: pd.DataFrame) -> pd.DataFrame:
+    g = (
+        df.groupby("date")
+        .agg(sales=(COL_AMOUNT, "sum"), bills=(COL_BILL, "nunique"), units=(COL_QTY, "sum"))
+        .reset_index()
+        .sort_values("date")
+    )
+    return g
+
+
+def dimension_summary(df: pd.DataFrame, col: str, top: int | None = None) -> pd.DataFrame:
+    """Sales / units / bills grouped by any categorical column."""
+    g = (
+        df.groupby(col)
+        .agg(
+            sales=(COL_AMOUNT, "sum"),
+            units=(COL_QTY, "sum"),
+            bills=(COL_BILL, "nunique"),
+        )
+        .reset_index()
+        .sort_values("sales", ascending=False)
+    )
+    if top:
+        g = g.head(top)
+    return g
+
+
+def salesperson_summary(df: pd.DataFrame) -> pd.DataFrame:
+    g = (
+        df.groupby(COL_SALESPERSON)
+        .agg(
+            sales=(COL_AMOUNT, "sum"),
+            units=(COL_QTY, "sum"),
+            bills=(COL_BILL, "nunique"),
+        )
+        .reset_index()
+        .sort_values("sales", ascending=False)
+    )
+    g["atv"] = g["sales"] / g["bills"].where(g["bills"] != 0)
+    return g
+
+
+def customer_stats(df: pd.DataFrame) -> dict:
+    """New vs repeat split at the bill level, plus a monthly repeat trend."""
+    valid = df[df[COL_MOBILE].replace("", pd.NA).notna()].copy()
+    if valid.empty:
+        return {"new": 0, "repeat": 0, "top": pd.DataFrame(), "trend": pd.DataFrame()}
+
+    # First purchase date per customer.
+    first = valid.groupby(COL_MOBILE)["date"].min().rename("first_date")
+    bills = (
+        valid.groupby([COL_MOBILE, COL_BILL])
+        .agg(date=("date", "min"), amt=(COL_AMOUNT, "sum"))
+        .reset_index()
+        .merge(first, on=COL_MOBILE)
+    )
+    bills["is_repeat"] = bills["date"] > bills["first_date"]
+
+    top = (
+        valid.groupby(COL_MOBILE)
+        .agg(spend=(COL_AMOUNT, "sum"), visits=(COL_BILL, "nunique"))
+        .reset_index()
+        .sort_values("spend", ascending=False)
+        .head(20)
+    )
+
+    bills["month"] = bills["date"].dt.to_period("M").dt.to_timestamp()
+    trend = (
+        bills.groupby("month")["is_repeat"]
+        .agg(["mean", "count"])
+        .reset_index()
+        .rename(columns={"mean": "repeat_share", "count": "bills"})
+    )
+    trend["repeat_share"] *= 100
+    trend["month_label"] = trend["month"].dt.strftime("%b %Y")
+
+    return {
+        "new": int((~bills["is_repeat"]).sum()),
+        "repeat": int(bills["is_repeat"].sum()),
+        "top": top,
+        "trend": trend,
+    }
+
+
+def data_freshness(df: pd.DataFrame) -> dict:
+    return {
+        "min_date": df["date"].min(),
+        "max_date": df["date"].max(),
+        "rows": len(df),
+    }
+
+
+# --------------------------------------------------------------------------- #
+# Generic metric + dimension engine (powers the "Build your view" tab)
+# --------------------------------------------------------------------------- #
+
+# Friendly metric name -> internal key. All metrics are derivable from six base
+# aggregates, so any dimension can be sliced by any metric.
+METRICS: dict[str, str] = {
+    "Sales (₹)": "sales",
+    "Net Sales after discount (₹)": "net_sales",
+    "Units": "units",
+    "Bills": "bills",
+    "Unique Customers": "customers",
+    "Discount (₹)": "discount",
+    "Avg Bill Value / ATV (₹)": "atv",
+    "Units per Bill / UPT": "upt",
+    "Avg Selling Price / ASP (₹)": "asp",
+    "Discount %": "disc_pct",
+}
+
+# Which metrics are rupee values (for formatting in the UI).
+MONEY_METRICS = {"sales", "net_sales", "discount", "atv", "asp"}
+
+# Friendly categorical dimension name -> column.
+CAT_DIMS: dict[str, str] = {
+    "Division": COL_DIVISION,
+    "Section": COL_SECTION,
+    "Department": COL_DEPARTMENT,
+    "Men/Women/Child": COL_MWC,
+    "Size": COL_SIZE,
+    "Color": COL_COLOR,
+    "Style code": COL_STYLE,
+    "Salesperson": COL_SALESPERSON,
+}
+
+# Time-based dimensions (granularity), coarse to fine handled internally.
+TIME_DIMS = ["Day", "Week", "Month", "Quarter", "Year", "Weekday"]
+
+# Everything selectable as a "group by".
+ALL_DIMS = TIME_DIMS + list(CAT_DIMS.keys())
+
+_WEEKDAY_ORDER = [
+    "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday",
+]
+
+
+def _period_label(ts: pd.Timestamp, dim: str) -> str:
+    if dim == "Day":
+        return ts.strftime("%d %b %Y")
+    if dim == "Week":
+        return "w/o " + ts.strftime("%d %b %y")
+    if dim == "Month":
+        return ts.strftime("%b %Y")
+    if dim == "Quarter":
+        return f"Q{ts.quarter} {ts.year}"
+    if dim == "Year":
+        return ts.strftime("%Y")
+    return ts.strftime("%d %b %Y")
+
+
+def _dim_column(work: pd.DataFrame, dim: str, name: str) -> tuple[str, list | None]:
+    """Add a label column `name` to `work` for dimension `dim`.
+    Returns the column name and an explicit category order (or None)."""
+    if dim in CAT_DIMS:
+        work[name] = work[CAT_DIMS[dim]].fillna("(blank)").astype(str)
+        return name, None
+
+    if dim == "Weekday":
+        work[name] = work["date"].dt.day_name()
+        return name, _WEEKDAY_ORDER
+
+    freq = {"Day": "D", "Week": "W", "Month": "M", "Quarter": "Q", "Year": "Y"}[dim]
+    starts = work["date"].dt.to_period(freq).dt.start_time
+    work["_ts_" + name] = starts
+    work[name] = starts.map(lambda t: _period_label(t, dim))
+    order = (
+        work[["_ts_" + name, name]]
+        .drop_duplicates()
+        .sort_values("_ts_" + name)[name]
+        .tolist()
+    )
+    return name, order
+
+
+def _agg_base(work: pd.DataFrame, group_cols: list[str]) -> pd.DataFrame:
+    return (
+        work.groupby(group_cols, dropna=False)
+        .agg(
+            sales=(COL_AMOUNT, "sum"),
+            net_sales=("net_amount", "sum"),
+            units=(COL_QTY, "sum"),
+            bills=(COL_BILL, "nunique"),
+            customers=("mobile_clean", "nunique"),
+            discount=(COL_PROMO, "sum"),
+        )
+        .reset_index()
+    )
+
+
+def _derive_metric(base: pd.DataFrame, metric_key: str) -> pd.DataFrame:
+    b = base.copy()
+    if metric_key == "atv":
+        b["value"] = b["sales"] / b["bills"].where(b["bills"] != 0)
+    elif metric_key == "upt":
+        b["value"] = b["units"] / b["bills"].where(b["bills"] != 0)
+    elif metric_key == "asp":
+        b["value"] = b["sales"] / b["units"].where(b["units"] != 0)
+    elif metric_key == "disc_pct":
+        b["value"] = b["discount"] / b["sales"].where(b["sales"] != 0) * 100
+    else:
+        b["value"] = b[metric_key]
+    return b
+
+
+def all_scalar_kpis(df: pd.DataFrame) -> dict[str, tuple[float, bool]]:
+    """Every metric as a single scalar over `df`, for the selectable KPI cards.
+    Returns {label: (value, is_money)}."""
+    sales = df[COL_AMOUNT].sum()
+    net = df["net_amount"].sum()
+    units = df[COL_QTY].sum()
+    bills = df[COL_BILL].nunique()
+    customers = df["mobile_clean"].nunique()
+    discount = df[COL_PROMO].sum()
+    vals = {
+        "sales": sales,
+        "net_sales": net,
+        "units": units,
+        "bills": bills,
+        "customers": customers,
+        "discount": discount,
+        "atv": sales / bills if bills else 0,
+        "upt": units / bills if bills else 0,
+        "asp": sales / units if units else 0,
+        "disc_pct": (discount / sales * 100) if sales else 0,
+    }
+    return {
+        label: (vals[key], key in MONEY_METRICS)
+        for label, key in METRICS.items()
+    }
+
+
+def build_view(
+    df: pd.DataFrame,
+    metric_label: str,
+    group_dim: str,
+    split_dim: str | None = None,
+    top: int | None = None,
+) -> dict:
+    """Aggregate `metric_label` by `group_dim` (and optional `split_dim`).
+
+    Returns a dict with the tidy result frame plus the column names and the
+    category order, so the UI can render any chart type consistently."""
+    metric_key = METRICS[metric_label]
+    work = df.copy()
+
+    gcol, gorder = _dim_column(work, group_dim, "_g")
+    group_cols = [gcol]
+    scol = None
+    if split_dim and split_dim not in ("(none)", None):
+        scol, _ = _dim_column(work, split_dim, "_s")
+        group_cols.append(scol)
+
+    base = _agg_base(work, group_cols)
+    res = _derive_metric(base, metric_key)
+
+    # For categorical group dims, order by the metric and apply Top-N.
+    if gorder is None:
+        totals = (
+            res.groupby(gcol)["value"].sum().sort_values(ascending=False).index.tolist()
+        )
+        gorder = totals[: top] if top else totals
+        res = res[res[gcol].isin(gorder)]
+    # Time dims keep chronological order (already in gorder); no Top-N.
+
+    return {
+        "data": res[[c for c in [gcol, scol, "value"] if c]].rename(
+            columns={gcol: "group", scol: "split"} if scol else {gcol: "group"}
+        ),
+        "group_dim": group_dim,
+        "split_dim": split_dim if scol else None,
+        "metric": metric_label,
+        "metric_key": metric_key,
+        "order": gorder,
+        "is_money": metric_key in MONEY_METRICS,
+    }
