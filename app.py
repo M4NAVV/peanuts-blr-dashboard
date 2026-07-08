@@ -134,6 +134,17 @@ if sel_mwc:
     mask &= df_all[L.COL_MWC].isin(sel_mwc)
 df = df_all[mask].copy()
 
+# Executive YoY needs full history (both years), so it honors the store /
+# division / M-W-C filters but NOT the sidebar date range.
+mask_exec = pd.Series(True, index=df_all.index)
+if sel_store:
+    mask_exec &= df_all[L.COL_STORE_LABEL].isin(sel_store)
+if sel_div:
+    mask_exec &= df_all[L.COL_DIVISION].isin(sel_div)
+if sel_mwc:
+    mask_exec &= df_all[L.COL_MWC].isin(sel_mwc)
+df_exec = df_all[mask_exec].copy()
+
 st.sidebar.markdown("---")
 st.sidebar.caption(
     f"**Data through:** {fresh['max_date']:%d %b %Y}  \n**Rows:** {fresh['rows']:,}"
@@ -238,6 +249,26 @@ def draw_view(cfg: dict, height: int = 360):
     st.plotly_chart(fig, use_container_width=True, key=cfg.get("_key"))
 
 
+def exec_window_row(frame, title, start, end):
+    """One executive window (MTD/QTD/YTD…) as YoY metric cards."""
+    r = L.window_yoy(frame, start, end)
+    ps, pe = r["prior_window"]
+    st.markdown(
+        f"**{title}** &nbsp; `{start:%d %b %Y} → {end:%d %b %Y}` &nbsp;·&nbsp; "
+        f"vs LY `{ps:%d %b %Y} → {pe:%d %b %Y}`"
+    )
+    cols = st.columns(4)
+    specs = [
+        ("Sales", r["cur"]["sales"], r["growth"]["sales"], True),
+        ("Bills", r["cur"]["bills"], r["growth"]["bills"], False),
+        ("Units", r["cur"]["units"], r["growth"]["units"], False),
+        ("ATV", r["cur"]["atv"], r["growth"]["atv"], True),
+    ]
+    for col, (lbl, val, g, money) in zip(cols, specs):
+        delta = f"{g:+.1f}% vs LY" if g is not None else None
+        col.metric(lbl, inr(val) if money else f"{val:,}", delta)
+
+
 # --------------------------------------------------------------------------- #
 # Header + tabs
 # --------------------------------------------------------------------------- #
@@ -245,11 +276,56 @@ st.title("Sales Dashboard")
 scope = f"{len(sel_store)} store(s)" if sel_store else f"all {n_stores_all} stores"
 st.caption(f"Peanuts Retail · {scope} · {start_d:%d %b %Y} → {end_d:%d %b %Y}")
 
-(tab_overview, tab_stores, tab_build, tab_trends, tab_cat,
+(tab_exec, tab_overview, tab_stores, tab_build, tab_trends, tab_cat,
  tab_staff, tab_cust, tab_merch) = st.tabs([
-    "Overview", "🏬 Stores", "🔧 Build your view", "Trends", "Category mix",
-    "Salespeople", "Customers", "Colors & sizes",
+    "📊 Executive", "Overview", "🏬 Stores", "🔧 Build your view", "Trends",
+    "Category mix", "Salespeople", "Customers", "Colors & sizes",
 ])
+
+# =========================================================================== #
+# EXECUTIVE — MTD / QTD / YTD, all year-on-year (fiscal year Apr–Mar)
+# =========================================================================== #
+with tab_exec:
+    asof = L.as_of(df_exec)
+    st.caption(
+        f"Fiscal year **Apr–Mar**. All figures **year-on-year** vs the same "
+        f"period last year (SPLY). Data as of **{asof:%d %b %Y}**. "
+        f"Respects the Store / Division filters (not the date range)."
+    )
+    wins = L.standard_windows(df_exec)
+
+    exec_window_row(df_exec, "MTD — Month to date", *wins["MTD"])
+    st.markdown("")
+    exec_window_row(df_exec, "QTD — Quarter to date", *wins["QTD"])
+    st.markdown("")
+    exec_window_row(df_exec, "YTD — Financial year to date", *wins["YTD"])
+    st.markdown("")
+    exec_window_row(df_exec, "Last completed month", *wins["Last month"])
+
+    st.markdown("---")
+    st.subheader("Monthly sales — this FY vs last FY")
+    st.caption("Grouped by fiscal month (Apr→Mar). Bars appear per year where "
+               "data exists; overlapping months show true YoY.")
+    draw_view({"metric": "Sales (₹)", "group_dim": "Fiscal Month",
+               "split_dim": "Financial Year", "chart": "Bar",
+               "_key": "ex_yoy_month"}, height=400)
+
+    st.markdown("---")
+    st.subheader("Store YoY — YTD growth / degrowth")
+    st.caption("This financial year to date vs same period last year, per store. "
+               "Sorted to surface degrowth. “—” = no last-year data (new store).")
+    sy = L.store_yoy(df_exec, *wins["YTD"]).rename(columns={
+        L.COL_STORE_LABEL: "Store", "cur": "YTD (₹)", "prior": "LY YTD (₹)",
+        "growth": "Growth %"})
+    sy = sy.sort_values("Growth %", ascending=True, na_position="last")
+    st.dataframe(
+        sy, use_container_width=True, hide_index=True,
+        column_config={
+            "YTD (₹)": st.column_config.NumberColumn(format="₹%d"),
+            "LY YTD (₹)": st.column_config.NumberColumn(format="₹%d"),
+            "Growth %": st.column_config.NumberColumn(format="%.1f%%"),
+        },
+    )
 
 # =========================================================================== #
 # OVERVIEW — selectable KPI cards + trend at chosen granularity
