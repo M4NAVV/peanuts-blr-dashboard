@@ -1,9 +1,11 @@
-# Peanuts (Manyavar) — Bengaluru Sales Dashboard
+# Peanuts (Manyavar) — Retail Sales Dashboard
 
-A KPI dashboard over the daily Tableau sales export for the Grand Kamraj Road
-store. Reads a **published Google Sheet** in production so the dashboard
-**auto-updates** whenever the sheet is refreshed — one permanent link, no
-redeploys.
+A self-serve KPI dashboard over the daily Tableau sales export for the full
+Peanuts retail network (all stores). Reads a link-shared **Google Sheet** in
+production so the dashboard **auto-updates** whenever the sheet is refreshed —
+one permanent link, no redeploys. Features: selectable KPI cards, a
+day→week→month→quarter→year granularity toggle, a per-store comparison tab, and
+a "Build your view" panel builder.
 
 ## Daily update (≈30 seconds)
 

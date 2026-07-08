@@ -19,7 +19,7 @@ import streamlit as st
 import loader as L
 
 st.set_page_config(
-    page_title="Peanuts Bengaluru — Sales Dashboard",
+    page_title="Peanuts Retail — Sales Dashboard",
     page_icon="🥜",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -96,8 +96,9 @@ fresh = L.data_freshness(df_all)
 # --------------------------------------------------------------------------- #
 # Sidebar — filters + view settings
 # --------------------------------------------------------------------------- #
-st.sidebar.title("🥜 Peanuts Bengaluru")
-st.sidebar.caption("Grand Kamraj Road")
+n_stores_all = df_all[L.COL_STORE_LABEL].nunique()
+st.sidebar.title("🥜 Peanuts Retail")
+st.sidebar.caption(f"All {n_stores_all} stores · Bengaluru + East India")
 
 min_d, max_d = fresh["min_date"].date(), fresh["max_date"].date()
 date_range = st.sidebar.date_input(
@@ -108,6 +109,9 @@ if isinstance(date_range, tuple) and len(date_range) == 2:
 else:
     start_d, end_d = min_d, max_d
 
+stores = sorted(df_all[L.COL_STORE_LABEL].dropna().unique().tolist())
+sel_store = st.sidebar.multiselect("Store", stores, default=[],
+                                   help="Leave empty for all stores")
 divisions = sorted(df_all[L.COL_DIVISION].dropna().unique().tolist())
 sel_div = st.sidebar.multiselect("Division", divisions, default=[])
 mwc_opts = sorted(df_all[L.COL_MWC].dropna().unique().tolist())
@@ -122,6 +126,8 @@ granularity = st.sidebar.radio(
 
 # Apply filters
 mask = (df_all["date"].dt.date >= start_d) & (df_all["date"].dt.date <= end_d)
+if sel_store:
+    mask &= df_all[L.COL_STORE_LABEL].isin(sel_store)
 if sel_div:
     mask &= df_all[L.COL_DIVISION].isin(sel_div)
 if sel_mwc:
@@ -236,24 +242,24 @@ def draw_view(cfg: dict, height: int = 360):
 # Header + tabs
 # --------------------------------------------------------------------------- #
 st.title("Sales Dashboard")
-st.caption(
-    f"Peanuts — Grand Kamraj Road, Bengaluru · {start_d:%d %b %Y} → {end_d:%d %b %Y}"
-)
+scope = f"{len(sel_store)} store(s)" if sel_store else f"all {n_stores_all} stores"
+st.caption(f"Peanuts Retail · {scope} · {start_d:%d %b %Y} → {end_d:%d %b %Y}")
 
-tabs = st.tabs([
-    "Overview", "🔧 Build your view", "Trends", "Category mix",
+(tab_overview, tab_stores, tab_build, tab_trends, tab_cat,
+ tab_staff, tab_cust, tab_merch) = st.tabs([
+    "Overview", "🏬 Stores", "🔧 Build your view", "Trends", "Category mix",
     "Salespeople", "Customers", "Colors & sizes",
 ])
 
 # =========================================================================== #
 # OVERVIEW — selectable KPI cards + trend at chosen granularity
 # =========================================================================== #
-with tabs[0]:
+with tab_overview:
     scalar = L.all_scalar_kpis(df)
     default_cards = [
-        "Sales (₹)", "Bills", "Units", "Unique Customers",
-        "Avg Bill Value / ATV (₹)", "Units per Bill / UPT",
-        "Avg Selling Price / ASP (₹)", "Discount (₹)",
+        "Sales (₹)", "Bills", "Units", "Active Stores",
+        "Unique Customers", "Avg Bill Value / ATV (₹)",
+        "Units per Bill / UPT", "Avg Selling Price / ASP (₹)",
     ]
     chosen = st.multiselect(
         "KPI cards to show", list(scalar.keys()), default=default_cards,
@@ -280,9 +286,51 @@ with tabs[0]:
         d2.metric(f"Periods in view ({granularity.lower()})", f"{len(tv)}")
 
 # =========================================================================== #
+# STORES — multi-store comparison
+# =========================================================================== #
+with tab_stores:
+    st.subheader("Store comparison")
+    rank_metric = st.selectbox(
+        "Rank / compare stores by", list(L.METRICS.keys()), index=0,
+        key="store_rank_metric",
+    )
+    colA, colB = st.columns([3, 2])
+    with colA:
+        st.caption("Leaderboard")
+        draw_view({"metric": rank_metric, "group_dim": "Store",
+                   "chart": "Horizontal bar", "top": 30, "_key": "st_bar"}, height=560)
+    with colB:
+        st.caption("Contribution")
+        draw_view({"metric": rank_metric, "group_dim": "Store",
+                   "chart": "Treemap", "top": 30, "_key": "st_tree"}, height=560)
+
+    st.markdown("---")
+    st.subheader(f"Store × {granularity} — {rank_metric}")
+    st.caption("Darker = higher. Spot which stores drive which periods.")
+    draw_view({"metric": rank_metric, "group_dim": granularity,
+               "split_dim": "Store", "chart": "Heatmap (pivot)",
+               "_key": "st_heat"}, height=520)
+
+    st.markdown("---")
+    st.subheader("Per-store KPI table")
+    ss = L.store_summary(df).rename(columns={
+        L.COL_STORE_LABEL: "Store", "sales": "Sales (₹)", "units": "Units",
+        "bills": "Bills", "customers": "Customers", "atv": "ATV (₹)",
+        "upt": "UPT", "asp": "ASP (₹)"})
+    st.dataframe(
+        ss, use_container_width=True, hide_index=True,
+        column_config={
+            "Sales (₹)": st.column_config.NumberColumn(format="₹%d"),
+            "ATV (₹)": st.column_config.NumberColumn(format="₹%d"),
+            "ASP (₹)": st.column_config.NumberColumn(format="₹%d"),
+            "UPT": st.column_config.NumberColumn(format="%.2f"),
+        },
+    )
+
+# =========================================================================== #
 # BUILD YOUR VIEW — per-session panel builder
 # =========================================================================== #
-with tabs[1]:
+with tab_build:
     st.subheader("Build your own view")
     st.caption(
         "Pick a metric, a dimension to break it down by, and a chart. "
@@ -294,12 +342,12 @@ with tabs[1]:
         st.session_state.panels = [
             {"title": "Sales by month", "metric": "Sales (₹)", "group_dim": "Month",
              "split_dim": "(none)", "chart": "Bar", "top": 15, "width": "Full"},
+            {"title": "Sales by store", "metric": "Sales (₹)",
+             "group_dim": "Store", "split_dim": "(none)",
+             "chart": "Horizontal bar", "top": 25, "width": "Half"},
             {"title": "Sales by division", "metric": "Sales (₹)",
              "group_dim": "Division", "split_dim": "(none)",
              "chart": "Horizontal bar", "top": 12, "width": "Half"},
-            {"title": "Units by Men/Women/Child", "metric": "Units",
-             "group_dim": "Men/Women/Child", "split_dim": "(none)",
-             "chart": "Pie / Donut", "top": 10, "width": "Half"},
         ]
 
     with st.expander("➕ Add a panel", expanded=False):
@@ -362,7 +410,7 @@ with tabs[1]:
 # =========================================================================== #
 # TRENDS — respect chosen granularity
 # =========================================================================== #
-with tabs[2]:
+with tab_trends:
     st.subheader(f"Sales — by {granularity}")
     draw_view({"metric": "Sales (₹)", "group_dim": granularity, "chart": "Area",
                "_key": "tr_sales"}, height=340)
@@ -390,7 +438,7 @@ with tabs[2]:
 # =========================================================================== #
 # CATEGORY MIX
 # =========================================================================== #
-with tabs[3]:
+with tab_cat:
     colA, colB = st.columns([2, 1])
     with colA:
         st.subheader("Sales by Division")
@@ -415,7 +463,7 @@ with tabs[3]:
 # =========================================================================== #
 # SALESPEOPLE
 # =========================================================================== #
-with tabs[4]:
+with tab_staff:
     sp = L.salesperson_summary(df)
     st.subheader("Salesperson leaderboard")
     st.caption(f"{len(sp)} salespeople in view")
@@ -434,7 +482,7 @@ with tabs[4]:
 # =========================================================================== #
 # CUSTOMERS
 # =========================================================================== #
-with tabs[5]:
+with tab_cust:
     cs = L.customer_stats(df)
     c1, c2, c3 = st.columns(3)
     total_bills = cs["new"] + cs["repeat"]
@@ -477,7 +525,7 @@ with tabs[5]:
 # =========================================================================== #
 # COLORS & SIZES
 # =========================================================================== #
-with tabs[6]:
+with tab_merch:
     c1, c2 = st.columns(2)
     with c1:
         st.subheader("Best-selling colors")
