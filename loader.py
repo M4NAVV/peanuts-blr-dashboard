@@ -40,7 +40,20 @@ COL_PROMO = "Promotion Amount"
 
 NUMERIC_COLS = [COL_AMOUNT, COL_QTY, COL_PROMO]
 
-LOCAL_EXCEL = os.path.join(os.path.dirname(__file__), "data", "sales.xlsx")
+# Cleaned, display-friendly store name (derived in clean()).
+COL_STORE_LABEL = "store"
+
+_DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
+# Prefer the full multi-store export; fall back to the single-store file.
+_LOCAL_CANDIDATES = ["fulldata.xlsx", "sales.xlsx"]
+
+
+def _local_excel() -> str | None:
+    for name in _LOCAL_CANDIDATES:
+        p = os.path.join(_DATA_DIR, name)
+        if os.path.exists(p):
+            return p
+    return None
 
 
 def _read_raw() -> pd.DataFrame:
@@ -51,11 +64,12 @@ def _read_raw() -> pd.DataFrame:
     if url:
         # Published Google Sheet -> CSV. Read as strings; cleaning handles types.
         return pd.read_csv(url, dtype=str, keep_default_na=False)
-    if os.path.exists(LOCAL_EXCEL):
-        return pd.read_excel(LOCAL_EXCEL, sheet_name=0, dtype=str)
+    local = _local_excel()
+    if local:
+        return pd.read_excel(local, sheet_name=0, dtype=str)
     raise FileNotFoundError(
         "No data source found. Set SHEET_CSV_URL in Streamlit secrets, or place "
-        f"the export at {LOCAL_EXCEL}"
+        f"the export at {os.path.join(_DATA_DIR, _LOCAL_CANDIDATES[0])}"
     )
 
 
@@ -132,6 +146,13 @@ def clean(df: pd.DataFrame) -> pd.DataFrame:
     # Blank mobiles -> NA so unique-customer counts don't lump them as one.
     df["mobile_clean"] = (
         df[COL_MOBILE].astype(str).str.strip().replace({"": pd.NA, "nan": pd.NA})
+    )
+
+    # Display-friendly store name: drop the "Peanuts [Retail] -" prefix.
+    df[COL_STORE_LABEL] = (
+        df[COL_STORE].astype(str)
+        .str.replace(r"(?i)^\s*peanuts\s*(?:retail)?\s*[-–]?\s*", "", regex=True)
+        .str.strip()
     )
 
     return df.reset_index(drop=True)
@@ -241,6 +262,25 @@ def salesperson_summary(df: pd.DataFrame) -> pd.DataFrame:
     return g
 
 
+def store_summary(df: pd.DataFrame) -> pd.DataFrame:
+    """Per-store KPI table (sales, bills, units, ATV, UPT, ASP), best first."""
+    g = (
+        df.groupby(COL_STORE_LABEL)
+        .agg(
+            sales=(COL_AMOUNT, "sum"),
+            units=(COL_QTY, "sum"),
+            bills=(COL_BILL, "nunique"),
+            customers=("mobile_clean", "nunique"),
+        )
+        .reset_index()
+        .sort_values("sales", ascending=False)
+    )
+    g["atv"] = g["sales"] / g["bills"].where(g["bills"] != 0)
+    g["upt"] = g["units"] / g["bills"].where(g["bills"] != 0)
+    g["asp"] = g["sales"] / g["units"].where(g["units"] != 0)
+    return g
+
+
 def customer_stats(df: pd.DataFrame) -> dict:
     """New vs repeat split at the bill level, plus a monthly repeat trend."""
     valid = df[df[COL_MOBILE].replace("", pd.NA).notna()].copy()
@@ -303,6 +343,7 @@ METRICS: dict[str, str] = {
     "Units": "units",
     "Bills": "bills",
     "Unique Customers": "customers",
+    "Active Stores": "stores",
     "Discount (₹)": "discount",
     "Avg Bill Value / ATV (₹)": "atv",
     "Units per Bill / UPT": "upt",
@@ -315,6 +356,7 @@ MONEY_METRICS = {"sales", "net_sales", "discount", "atv", "asp"}
 
 # Friendly categorical dimension name -> column.
 CAT_DIMS: dict[str, str] = {
+    "Store": COL_STORE_LABEL,
     "Division": COL_DIVISION,
     "Section": COL_SECTION,
     "Department": COL_DEPARTMENT,
@@ -383,6 +425,7 @@ def _agg_base(work: pd.DataFrame, group_cols: list[str]) -> pd.DataFrame:
             units=(COL_QTY, "sum"),
             bills=(COL_BILL, "nunique"),
             customers=("mobile_clean", "nunique"),
+            stores=(COL_STORE_LABEL, "nunique"),
             discount=(COL_PROMO, "sum"),
         )
         .reset_index()
@@ -412,6 +455,7 @@ def all_scalar_kpis(df: pd.DataFrame) -> dict[str, tuple[float, bool]]:
     units = df[COL_QTY].sum()
     bills = df[COL_BILL].nunique()
     customers = df["mobile_clean"].nunique()
+    stores = df[COL_STORE_LABEL].nunique()
     discount = df[COL_PROMO].sum()
     vals = {
         "sales": sales,
@@ -419,6 +463,7 @@ def all_scalar_kpis(df: pd.DataFrame) -> dict[str, tuple[float, bool]]:
         "units": units,
         "bills": bills,
         "customers": customers,
+        "stores": stores,
         "discount": discount,
         "atv": sales / bills if bills else 0,
         "upt": units / bills if bills else 0,
