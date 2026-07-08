@@ -14,6 +14,13 @@ redeploys.
    30-minute cache, or immediately via the **🔄 Refresh data now** button in the
    sidebar).
 
+> **⚠️ Paise / number-format check.** Google exports the *displayed* value, and
+> the Tableau export formats the amount columns to 0 decimals — which rounds
+> paise (e.g. `3499.50 → 3500`, a tiny total drift). Fix once: select the
+> **Bill Amount (col P)** and **Promotion Amount (col R)** columns →
+> **Format → Number → Number** (2 decimals). If a future daily import reverts
+> this (amounts show whole rupees again), just re-apply that format — 15 sec.
+
 > The dashboard is defensive about formatting — it strips the "Grand Total"
 > footer row, handles comma-formatted numbers, and re-parses dates — so the
 > re-import doesn't break it.
@@ -35,21 +42,23 @@ Data source resolution (in `loader.py`):
 
 ## Hosting (one-time — free, permanent link)
 
-**Source of truth = a published Google Sheet:**
+**Source of truth = a link-shared Google Sheet, read via the CSV export
+endpoint** (reads live values; honors the column number format — see the paise
+note above):
 1. Create a Google Sheet, import the Excel into it (see daily update above).
-2. **File → Share → Publish to web → Entire document → CSV → Publish.**
-   Copy the URL (looks like
-   `https://docs.google.com/spreadsheets/d/e/…/pub?output=csv`).
+2. **Share → General access → "Anyone with the link → Viewer".**
+3. Data URL = `https://docs.google.com/spreadsheets/d/<FILE_ID>/export?format=csv`
+   (no `gid` needed for a single-tab sheet).
 
 **Deploy on Streamlit Community Cloud:**
-1. Push this folder to a GitHub repo.
+1. Repo: `M4NAVV/peanuts-blr-dashboard` (this folder).
 2. On [share.streamlit.io](https://share.streamlit.io) → New app → point at the
    repo / `app.py`.
 3. In the app's **Settings → Secrets**, add:
    ```toml
-   SHEET_CSV_URL = "https://docs.google.com/spreadsheets/d/e/…/pub?output=csv"
+   SHEET_CSV_URL = "https://docs.google.com/spreadsheets/d/<FILE_ID>/export?format=csv"
    ```
-4. The app gets a permanent URL, e.g. `https://manyavar-blr.streamlit.app`.
+4. The app gets a permanent URL, e.g. `https://peanuts-blr.streamlit.app`.
 
 ## Files
 
