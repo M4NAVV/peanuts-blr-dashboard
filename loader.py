@@ -155,6 +155,14 @@ def clean(df: pd.DataFrame) -> pd.DataFrame:
         .str.strip()
     )
 
+    # Indian fiscal calendar (Apr–Mar). FY26 = Apr 2025 → Mar 2026.
+    fy_start_year = df["date"].dt.year.where(df["date"].dt.month >= 4,
+                                             df["date"].dt.year - 1)
+    df["fy_start_year"] = fy_start_year
+    df["fy"] = "FY" + ((fy_start_year + 1) % 100).astype(int).astype(str).str.zfill(2)
+    df["fy_month_idx"] = (df["date"].dt.month - 4) % 12 + 1  # Apr=1 … Mar=12
+    df["fy_month"] = df["date"].dt.strftime("%b")
+
     return df.reset_index(drop=True)
 
 
@@ -368,7 +376,12 @@ CAT_DIMS: dict[str, str] = {
 }
 
 # Time-based dimensions (granularity), coarse to fine handled internally.
-TIME_DIMS = ["Day", "Week", "Month", "Quarter", "Year", "Weekday"]
+# "Financial Year" and "Fiscal Month" enable YoY breakdowns in the builder.
+TIME_DIMS = ["Day", "Week", "Month", "Quarter", "Year",
+             "Financial Year", "Fiscal Month", "Weekday"]
+
+_FY_MONTH_ORDER = ["Apr", "May", "Jun", "Jul", "Aug", "Sep",
+                   "Oct", "Nov", "Dec", "Jan", "Feb", "Mar"]
 
 # Everything selectable as a "group by".
 ALL_DIMS = TIME_DIMS + list(CAT_DIMS.keys())
@@ -402,6 +415,19 @@ def _dim_column(work: pd.DataFrame, dim: str, name: str) -> tuple[str, list | No
     if dim == "Weekday":
         work[name] = work["date"].dt.day_name()
         return name, _WEEKDAY_ORDER
+
+    if dim == "Financial Year":
+        work[name] = work["fy"]
+        order = (
+            work[["fy_start_year", "fy"]].drop_duplicates()
+            .sort_values("fy_start_year")["fy"].tolist()
+        )
+        return name, order
+
+    if dim == "Fiscal Month":
+        work[name] = work["fy_month"]
+        present = set(work[name].unique())
+        return name, [m for m in _FY_MONTH_ORDER if m in present]
 
     freq = {"Day": "D", "Week": "W", "Month": "M", "Quarter": "Q", "Year": "Y"}[dim]
     starts = work["date"].dt.to_period(freq).dt.start_time
@@ -445,6 +471,83 @@ def _derive_metric(base: pd.DataFrame, metric_key: str) -> pd.DataFrame:
     else:
         b["value"] = b[metric_key]
     return b
+
+
+# --------------------------------------------------------------------------- #
+# Executive YoY metrics (MTD / QTD / YTD vs same period last year)
+# --------------------------------------------------------------------------- #
+
+def as_of(df: pd.DataFrame) -> pd.Timestamp:
+    """Latest date present — the reference point for all to-date windows."""
+    return df["date"].max()
+
+
+def _sply(start: pd.Timestamp, end: pd.Timestamp):
+    """Same period last year: shift both bounds back exactly one year."""
+    off = pd.DateOffset(years=1)
+    return start - off, end - off
+
+
+def _window_metrics(df: pd.DataFrame, start: pd.Timestamp, end: pd.Timestamp) -> dict:
+    sub = df[(df["date"] >= start) & (df["date"] <= end)]
+    sales = sub[COL_AMOUNT].sum()
+    bills = sub[COL_BILL].nunique()
+    units = sub[COL_QTY].sum()
+    return {
+        "sales": sales,
+        "bills": int(bills),
+        "units": int(units),
+        "atv": sales / bills if bills else 0.0,
+    }
+
+
+def window_yoy(df: pd.DataFrame, start: pd.Timestamp, end: pd.Timestamp) -> dict:
+    """Current window vs the same period last year, with growth % per metric."""
+    cur = _window_metrics(df, start, end)
+    ps, pe = _sply(start, end)
+    prior = _window_metrics(df, ps, pe)
+    growth = {
+        k: ((cur[k] - prior[k]) / prior[k] * 100 if prior[k] else None)
+        for k in cur
+    }
+    return {
+        "cur": cur, "prior": prior, "growth": growth,
+        "cur_window": (start, end), "prior_window": (ps, pe),
+    }
+
+
+def standard_windows(df: pd.DataFrame) -> dict[str, tuple]:
+    """MTD / QTD / YTD (fiscal) and the last completed month, as (start, end)."""
+    asof = as_of(df)
+    mtd = (asof.replace(day=1), asof)
+
+    q_start_month = {4: 4, 5: 4, 6: 4, 7: 7, 8: 7, 9: 7,
+                     10: 10, 11: 10, 12: 10, 1: 1, 2: 1, 3: 1}[asof.month]
+    qtd = (pd.Timestamp(asof.year, q_start_month, 1), asof)
+
+    fy_start_year = asof.year if asof.month >= 4 else asof.year - 1
+    ytd = (pd.Timestamp(fy_start_year, 4, 1), asof)
+
+    first_of_month = asof.replace(day=1)
+    last_month_end = first_of_month - pd.Timedelta(days=1)
+    last_month = (last_month_end.replace(day=1), last_month_end)
+
+    return {"MTD": mtd, "QTD": qtd, "YTD": ytd, "Last month": last_month}
+
+
+def store_yoy(df: pd.DataFrame, start: pd.Timestamp, end: pd.Timestamp) -> pd.DataFrame:
+    """Per-store sales for the window vs same period last year + growth %."""
+    ps, pe = _sply(start, end)
+    cur = (df[(df["date"] >= start) & (df["date"] <= end)]
+           .groupby(COL_STORE_LABEL)[COL_AMOUNT].sum().rename("cur"))
+    pri = (df[(df["date"] >= ps) & (df["date"] <= pe)]
+           .groupby(COL_STORE_LABEL)[COL_AMOUNT].sum().rename("prior"))
+    m = pd.concat([cur, pri], axis=1).fillna(0.0).reset_index()
+    m["growth"] = m.apply(
+        lambda r: ((r["cur"] - r["prior"]) / r["prior"] * 100)
+        if r["prior"] > 0 else None, axis=1,
+    )
+    return m.sort_values("cur", ascending=False)
 
 
 def all_scalar_kpis(df: pd.DataFrame) -> dict[str, tuple[float, bool]]:
