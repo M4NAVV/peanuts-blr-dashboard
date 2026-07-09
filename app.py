@@ -116,6 +116,58 @@ def fmt_metric(value: float, is_money: bool) -> str:
     return f"{value:,.2f}"
 
 
+# --------------------------------------------------------------------------- #
+# Custom KPI cards (big number + YoY badge + inline SVG sparkline)
+# --------------------------------------------------------------------------- #
+def _sparkline_svg(values, w=118, h=34, color=GOLD) -> str:
+    vals = [float(v) for v in (values or []) if v is not None and not pd.isna(v)]
+    if len(vals) < 2:
+        return ""
+    lo, hi = min(vals), max(vals)
+    rng = (hi - lo) or 1.0
+    n = len(vals)
+    pts = [f"{i/(n-1)*w:.1f},{h - ((v-lo)/rng)*(h-6) - 3:.1f}" for i, v in enumerate(vals)]
+    poly = " ".join(pts)
+    area = f"0,{h} " + poly + f" {w},{h}"
+    last_x, last_y = pts[-1].split(",")
+    return (
+        f'<svg width="{w}" height="{h}" viewBox="0 0 {w} {h}" '
+        f'style="overflow:visible">'
+        f'<polygon points="{area}" fill="{color}22"/>'
+        f'<polyline points="{poly}" fill="none" stroke="{color}" '
+        f'stroke-width="1.6" stroke-linejoin="round"/>'
+        f'<circle cx="{last_x}" cy="{last_y}" r="2.4" fill="{color}"/></svg>'
+    )
+
+
+def kpi_card(label, value, delta_pct=None, spark=None, hero=False) -> str:
+    """HTML for one KPI card: label, big value, YoY badge, optional sparkline."""
+    delta_html = "&nbsp;"
+    if delta_pct is not None and not pd.isna(delta_pct):
+        up = delta_pct >= 0
+        color = "#1B7F3B" if up else "#C0143C"
+        arrow = "▲" if up else "▼"
+        delta_html = (
+            f'<span style="color:{color};font-weight:700;font-size:.82rem;">'
+            f'{arrow} {abs(delta_pct):.1f}%</span>'
+            f'<span style="color:#9a9a9a;font-weight:500;font-size:.72rem;"> YoY</span>'
+        )
+    spark_html = _sparkline_svg(spark) if spark is not None else ""
+    val_size = "2.0rem" if hero else "1.5rem"
+    minh = "112px" if hero else "96px"
+    return (
+        f'<div style="background:#fff;border:1px solid #ECE4D6;border-radius:14px;'
+        f'padding:14px 16px;box-shadow:0 1px 4px rgba(0,0,0,.05);min-height:{minh};'
+        f'display:flex;flex-direction:column;justify-content:space-between;">'
+        f'<div style="color:#6b6b6b;font-size:.78rem;font-weight:600;'
+        f'text-transform:uppercase;letter-spacing:.03em;">{label}</div>'
+        f'<div style="color:{MAROON};font-size:{val_size};font-weight:800;'
+        f'line-height:1.15;margin:4px 0;">{value}</div>'
+        f'<div style="display:flex;justify-content:space-between;align-items:flex-end;'
+        f'gap:8px;">{delta_html}{spark_html}</div></div>'
+    )
+
+
 try:
     df_all = get_data()
 except FileNotFoundError as e:
@@ -312,13 +364,29 @@ def draw_view(cfg: dict, height: int = 360):
                         labels=dict(color=axis_title))
         fig.update_layout(xaxis_title=cfg["group_dim"], yaxis_title=view["split_dim"])
 
-    fig.update_layout(height=height, plot_bgcolor="white", paper_bgcolor="white",
-                      margin=dict(t=10, b=10), legend_title_text=view["split_dim"] or "")
+    # Data labels for readable, small-N bar charts (single series).
+    if chart in ("Bar", "Horizontal bar") and not has_split and len(data) <= 20:
+        if is_money:
+            tmpl = "%{x:.1f}" if horizontal else "%{y:.1f}"
+        else:
+            tmpl = "%{x:,.0f}" if horizontal else "%{y:,.0f}"
+        fig.update_traces(texttemplate=tmpl, textposition="outside",
+                          cliponaxis=False, textfont_size=10)
+
+    fig.update_layout(
+        height=height, plot_bgcolor="white", paper_bgcolor="white",
+        margin=dict(t=12, b=8, l=8, r=8), legend_title_text=view["split_dim"] or "",
+        font=dict(family="Inter, -apple-system, Segoe UI, sans-serif",
+                  size=12, color=INK),
+        hoverlabel=dict(font_size=12),
+    )
+    fig.update_xaxes(showgrid=False, zeroline=False)
+    fig.update_yaxes(gridcolor="#EFEAE0", zeroline=False)
     st.plotly_chart(fig, use_container_width=True, key=cfg.get("_key"))
 
 
 def exec_window_row(title, r):
-    """One executive window (MTD/QTD/YTD…) as YoY metric cards, from a result dict."""
+    """One executive window (MTD/QTD/YTD…) as YoY KPI cards, from a result dict."""
     cs, ce = r["cur_window"]
     ps, pe = r["prior_window"]
     rng = (f"`{cs:%d %b %Y} → {ce:%d %b %Y}` &nbsp;·&nbsp; "
@@ -326,14 +394,13 @@ def exec_window_row(title, r):
     st.markdown(f"**{title}** &nbsp; {rng}")
     cols = st.columns(4)
     specs = [
-        ("Sales", r["cur"]["sales"], r["growth"]["sales"], True),
-        ("Bills", r["cur"]["bills"], r["growth"]["bills"], False),
-        ("Units", r["cur"]["units"], r["growth"]["units"], False),
-        ("ATV", r["cur"]["atv"], r["growth"]["atv"], True),
+        ("Sales", inr(r["cur"]["sales"]), r["growth"]["sales"]),
+        ("Bills", f'{r["cur"]["bills"]:,}', r["growth"]["bills"]),
+        ("Units", f'{r["cur"]["units"]:,}', r["growth"]["units"]),
+        ("Avg Bill", inr(r["cur"]["atv"]), r["growth"]["atv"]),
     ]
-    for col, (lbl, val, g, money) in zip(cols, specs):
-        delta = f"{g:+.1f}% vs LY" if g is not None else None
-        col.metric(lbl, inr(val) if money else f"{val:,}", delta)
+    for col, (lbl, val, g) in zip(cols, specs):
+        col.markdown(kpi_card(lbl, val, g), unsafe_allow_html=True)
 
 
 # --------------------------------------------------------------------------- #
@@ -343,12 +410,16 @@ st.title("Sales Dashboard")
 scope = f"{len(sel_store)} store(s)" if sel_store else f"all {n_stores_all} stores"
 st.caption(f"Peanuts Retail · {scope} · {start_d:%d %b %Y} → {end_d:%d %b %Y}")
 
-(tab_report, tab_exec, tab_overview, tab_stores, tab_build, tab_trends, tab_cat,
- tab_staff, tab_cust, tab_merch) = st.tabs([
-    "📋 MTD / YTD Report", "📊 Executive", "Overview", "🏬 Stores",
-    "🔧 Build your view", "Trends", "Category mix", "Salespeople",
-    "Customers", "Colors & sizes",
-])
+_sec = st.tabs(["📊 Performance", "🏬 Stores", "🔍 Explore", "👥 People"])
+with _sec[0]:
+    tab_exec, tab_report, tab_overview = st.tabs(
+        ["📊 Executive", "📋 MTD / YTD Report", "Overview"])
+tab_stores = _sec[1]
+with _sec[2]:
+    tab_build, tab_trends, tab_cat, tab_merch = st.tabs(
+        ["🔧 Build your view", "Trends", "Category mix", "Colors & sizes"])
+with _sec[3]:
+    tab_staff, tab_cust = st.tabs(["Salespeople", "Customers"])
 
 # =========================================================================== #
 # MTD / YTD REPORT — region × store, year-on-year (the executive table)
@@ -424,13 +495,34 @@ with tab_exec:
         f"Respects the Store / Division filters (not the date range)."
     )
     wins = L.standard_windows(df_exec)
+    mtd_r = L.window_yoy_takeover(df_exec, "MTD")
+    ytd_r = L.window_yoy_takeover(df_exec, "YTD")
 
-    exec_window_row("MTD — Month to date", L.window_yoy_takeover(df_exec, "MTD"))
+    # Hero scorecard — the headline numbers with sparklines.
+    ytd_cur, _ = L.report_frames(df_exec, "YTD")
+    mtd_cur, _ = L.report_frames(df_exec, "MTD")
+    monthly_spark = (ytd_cur.groupby(ytd_cur["date"].dt.to_period("M"))["Bill Amount"]
+                     .sum().tolist())
+    daily_spark = (mtd_cur.groupby(mtd_cur["date"].dt.date)["Bill Amount"]
+                   .sum().tolist())
+    h = st.columns(4)
+    h[0].markdown(kpi_card("YTD Sales", inr(ytd_r["cur"]["sales"]),
+                           ytd_r["growth"]["sales"], spark=monthly_spark, hero=True),
+                  unsafe_allow_html=True)
+    h[1].markdown(kpi_card("MTD Sales", inr(mtd_r["cur"]["sales"]),
+                           mtd_r["growth"]["sales"], spark=daily_spark, hero=True),
+                  unsafe_allow_html=True)
+    h[2].markdown(kpi_card("YTD Bills", f'{ytd_r["cur"]["bills"]:,}',
+                           ytd_r["growth"]["bills"], hero=True), unsafe_allow_html=True)
+    h[3].markdown(kpi_card("YTD Avg Bill", inr(ytd_r["cur"]["atv"]),
+                           ytd_r["growth"]["atv"], hero=True), unsafe_allow_html=True)
+    st.markdown("---")
+
+    exec_window_row("MTD — Month to date", mtd_r)
     st.markdown("")
     exec_window_row("QTD — Quarter to date", L.window_yoy(df_exec, *wins["QTD"]))
     st.markdown("")
-    exec_window_row("YTD — Financial year to date",
-                    L.window_yoy_takeover(df_exec, "YTD"))
+    exec_window_row("YTD — Financial year to date", ytd_r)
     st.markdown("")
     exec_window_row("Last completed month", L.window_yoy(df_exec, *wins["Last month"]))
 
