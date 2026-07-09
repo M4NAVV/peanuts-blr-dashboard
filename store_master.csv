@@ -1,23 +1,23 @@
-tableau_name,code,location,city,state,region
-City Centre SIL,56,City Centre,SILIGURI,WEST BENGAL,East & NE
-Siliguri,58,Sevok Road,SILIGURI,WEST BENGAL,East & NE
-Roodraksh Mall,59,Roodraksh Mall,GUWAHATI,ASSAM,East & NE
-Mani Square,61,Mani Square,KOLKATA,WEST BENGAL,East & NE
-City Centre GHY,89,City Centre GHT,GUWAHATI,ASSAM,East & NE
-CC2 Rajarhat,90,Rajarhat CC2,KOLKATA,WEST BENGAL,East & NE
-Agartala,91,Agartala,AGARTALA,TRIPURA,East & NE
-Malda,92,Malda,MALDA,WEST BENGAL,East & NE
-Jorhat,97,Jorhat,JORHAT,ASSAM,East & NE
-Fairfield,101,Rajarhat Fairfield,KOLKATA,WEST BENGAL,East & NE
-VEGA Circle Mall,102,Vega Circle Mall,SILIGURI,WEST BENGAL,East & NE
-Silchar,105,Silchar,SILCHAR,ASSAM,East & NE
-Dibrugarh,106,Dibrugarh,DIBRUGARH,ASSAM,East & NE
-Grand Kamraj Road,107,Grand Kamraj Road,BENGALURU,KARNATAKA,South
-Commercial Street,108,Commercial Street,BENGALURU,KARNATAKA,South
-Kamraj Road,109,Kamraj Road,BENGALURU,KARNATAKA,South
-M.G. Road,110,M.G. Road,BENGALURU,KARNATAKA,South
-Orion Mall,111,Orion Mall,BENGALURU,KARNATAKA,South
-Jayanagar,112,Jayanagar,BENGALURU,KARNATAKA,South
-CMH Road,113,CMH Road,BENGALURU,KARNATAKA,South
-DVG Road,114,DVG Road,BENGALURU,KARNATAKA,South
-Siliguri 2,10005,Sevok Road,SILIGURI,WEST BENGAL,East & NE
+tableau_name,code,location,city,state,region,takeover_date
+City Centre SIL,56,City Centre,SILIGURI,WEST BENGAL,East & NE,2025-04-01
+Siliguri,58,Sevok Road,SILIGURI,WEST BENGAL,East & NE,2025-04-01
+Roodraksh Mall,59,Roodraksh Mall,GUWAHATI,ASSAM,East & NE,2025-04-01
+Mani Square,61,Mani Square,KOLKATA,WEST BENGAL,East & NE,2025-04-01
+City Centre GHY,89,City Centre GHT,GUWAHATI,ASSAM,East & NE,2025-04-01
+CC2 Rajarhat,90,Rajarhat CC2,KOLKATA,WEST BENGAL,East & NE,2025-04-01
+Agartala,91,Agartala,AGARTALA,TRIPURA,East & NE,2025-04-01
+Malda,92,Malda,MALDA,WEST BENGAL,East & NE,2025-04-01
+Jorhat,97,Jorhat,JORHAT,ASSAM,East & NE,2025-04-01
+Fairfield,101,Rajarhat Fairfield,KOLKATA,WEST BENGAL,East & NE,2025-04-01
+VEGA Circle Mall,102,Vega Circle Mall,SILIGURI,WEST BENGAL,East & NE,2025-04-01
+Silchar,105,Silchar,SILCHAR,ASSAM,East & NE,2025-04-01
+Dibrugarh,106,Dibrugarh,DIBRUGARH,ASSAM,East & NE,2025-04-01
+Grand Kamraj Road,107,Grand Kamraj Road,BENGALURU,KARNATAKA,South,2025-04-19
+Commercial Street,108,Commercial Street,BENGALURU,KARNATAKA,South,2025-04-19
+Kamraj Road,109,Kamraj Road,BENGALURU,KARNATAKA,South,2025-04-19
+M.G. Road,110,M.G. Road,BENGALURU,KARNATAKA,South,2025-04-19
+Orion Mall,111,Orion Mall,BENGALURU,KARNATAKA,South,2025-04-19
+Jayanagar,112,Jayanagar,BENGALURU,KARNATAKA,South,2025-04-19
+CMH Road,113,CMH Road,BENGALURU,KARNATAKA,South,2025-04-19
+DVG Road,114,DVG Road,BENGALURU,KARNATAKA,South,2025-04-19
+Siliguri 2,10005,Sevok Road,SILIGURI,WEST BENGAL,East & NE,2025-04-01

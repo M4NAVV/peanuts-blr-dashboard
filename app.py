@@ -317,14 +317,13 @@ def draw_view(cfg: dict, height: int = 360):
     st.plotly_chart(fig, use_container_width=True, key=cfg.get("_key"))
 
 
-def exec_window_row(frame, title, start, end):
-    """One executive window (MTD/QTD/YTD…) as YoY metric cards."""
-    r = L.window_yoy(frame, start, end)
+def exec_window_row(title, r):
+    """One executive window (MTD/QTD/YTD…) as YoY metric cards, from a result dict."""
+    cs, ce = r["cur_window"]
     ps, pe = r["prior_window"]
-    st.markdown(
-        f"**{title}** &nbsp; `{start:%d %b %Y} → {end:%d %b %Y}` &nbsp;·&nbsp; "
-        f"vs LY `{ps:%d %b %Y} → {pe:%d %b %Y}`"
-    )
+    rng = (f"`{cs:%d %b %Y} → {ce:%d %b %Y}` &nbsp;·&nbsp; "
+           f"vs LY `{ps:%d %b %Y} → {pe:%d %b %Y}`") if cs is not None else ""
+    st.markdown(f"**{title}** &nbsp; {rng}")
     cols = st.columns(4)
     specs = [
         ("Sales", r["cur"]["sales"], r["growth"]["sales"], True),
@@ -419,19 +418,21 @@ with tab_report:
 with tab_exec:
     asof = L.as_of(df_exec)
     st.caption(
-        f"Fiscal year **Apr–Mar**. All figures **year-on-year** vs the same "
-        f"period last year (SPLY). Data as of **{asof:%d %b %Y}**. "
+        f"Fiscal year **Apr–Mar**, each store counted from its **takeover date** "
+        f"(South: 19 Apr 2025). All figures **year-on-year** vs the same period "
+        f"last year. Data as of **{asof:%d %b %Y}**. "
         f"Respects the Store / Division filters (not the date range)."
     )
     wins = L.standard_windows(df_exec)
 
-    exec_window_row(df_exec, "MTD — Month to date", *wins["MTD"])
+    exec_window_row("MTD — Month to date", L.window_yoy_takeover(df_exec, "MTD"))
     st.markdown("")
-    exec_window_row(df_exec, "QTD — Quarter to date", *wins["QTD"])
+    exec_window_row("QTD — Quarter to date", L.window_yoy(df_exec, *wins["QTD"]))
     st.markdown("")
-    exec_window_row(df_exec, "YTD — Financial year to date", *wins["YTD"])
+    exec_window_row("YTD — Financial year to date",
+                    L.window_yoy_takeover(df_exec, "YTD"))
     st.markdown("")
-    exec_window_row(df_exec, "Last completed month", *wins["Last month"])
+    exec_window_row("Last completed month", L.window_yoy(df_exec, *wins["Last month"]))
 
     st.markdown("---")
     st.subheader("Monthly sales — this FY vs last FY")
@@ -445,7 +446,7 @@ with tab_exec:
     st.subheader("Store YoY — YTD growth / degrowth")
     st.caption("This financial year to date vs same period last year, per store. "
                "Sorted to surface degrowth. “—” = no last-year data (new store).")
-    sy = L.store_yoy(df_exec, *wins["YTD"]).rename(columns={
+    sy = L.store_yoy(df_exec, "YTD").rename(columns={
         L.COL_STORE_LABEL: "Store", "cur": "YTD (₹)", "prior": "LY YTD (₹)",
         "growth": "Growth %"})
     sy = sy.sort_values("Growth %", ascending=True, na_position="last")
