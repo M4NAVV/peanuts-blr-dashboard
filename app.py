@@ -24,7 +24,7 @@ st.set_page_config(
     page_title="Peanuts Retail — Sales Dashboard",
     page_icon="🥜",
     layout="wide",
-    initial_sidebar_state="expanded",
+    initial_sidebar_state="auto",  # collapses on mobile, open on desktop
 )
 
 # --- Brand palette (Manyavar-ish maroon / gold) ---------------------------- #
@@ -44,6 +44,23 @@ st.markdown(
       div[data-testid="stMetric"] {{
         background: #FFFFFF; border: 1px solid #ECE4D6; border-radius: 12px;
         padding: 14px 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+      }}
+
+      /* ---- Mobile responsiveness (phones / narrow screens) ---- */
+      @media (max-width: 640px) {{
+        /* Let column rows wrap instead of squishing side by side */
+        [data-testid="stHorizontalBlock"] {{ flex-wrap: wrap !important; }}
+        [data-testid="stHorizontalBlock"] > div {{
+          min-width: 46% !important; flex: 1 1 46% !important;
+        }}
+        /* Tighter page padding + smaller headings on mobile */
+        .block-container {{ padding: 0.6rem 0.7rem !important; }}
+        [data-testid="stMetricValue"] {{ font-size: 1.15rem !important; }}
+        [data-testid="stMetricLabel"] {{ font-size: 0.72rem !important; }}
+        div[data-testid="stMetric"] {{ padding: 8px 10px; }}
+        h1 {{ font-size: 1.4rem !important; }}
+        h2, h3 {{ font-size: 1.1rem !important; }}
+        .stTabs [data-baseweb="tab"] {{ padding: 6px 8px; font-size: 0.8rem; }}
       }}
     </style>
     """,
@@ -346,8 +363,21 @@ with tab_report:
     )
     rep, rtypes = L.region_store_report(df_exec)
 
-    val_cols = ["MTD LY", "MTD TY", "GD MTD Value", "YTD LY", "YTD TY", "GD YTD Value"]
-    pct_cols = ["GD MTD %", "GD YTD %"]
+    compact = st.toggle(
+        "📱 Compact view (best on mobile)", value=False,
+        help="Shows the key columns only — easier to read on a phone.")
+    if compact:
+        show_cols = ["Region", "STORE CODE", "LOCATION",
+                     "MTD TY", "GD MTD %", "YTD TY", "GD YTD %"]
+    else:
+        show_cols = list(rep.columns)
+    rep_show = rep[show_cols]
+
+    val_cols = [c for c in ["MTD LY", "MTD TY", "GD MTD Value",
+                            "YTD LY", "YTD TY", "GD YTD Value"] if c in show_cols]
+    pct_cols = [c for c in ["GD MTD %", "GD YTD %"] if c in show_cols]
+    sign_cols = [c for c in ["GD MTD Value", "GD MTD %",
+                             "GD YTD Value", "GD YTD %"] if c in show_cols]
 
     def _sign_color(v):
         if pd.isna(v):
@@ -366,16 +396,15 @@ with tab_report:
         return [""] * len(row)
 
     styler = (
-        rep.style
+        rep_show.style
         .format({**{c: (lambda v: fmt_in(v, 2)) for c in val_cols},
                  **{c: (lambda v: f"{v:,.2f}%" if pd.notna(v) else "—")
                     for c in pct_cols}})
         .apply(_row_bg, axis=1)
-        .map(_sign_color, subset=["GD MTD Value", "GD MTD %",
-                                  "GD YTD Value", "GD YTD %"])
+        .map(_sign_color, subset=sign_cols)
     )
     st.dataframe(styler, use_container_width=True, hide_index=True,
-                 height=(len(rep) + 1) * 36)
+                 height=(len(rep_show) + 1) * 36)
 
     st.download_button(
         "⬇ Download report (CSV)",
