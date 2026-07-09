@@ -11,6 +11,8 @@ updating the source sheet updates the dashboard with no redeploy.
 
 from __future__ import annotations
 
+import re
+
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
@@ -69,6 +71,22 @@ def inr(x: float) -> str:
     if abs(x) >= 1e3:
         return f"₹{x/1e3:.1f} K"
     return f"₹{x:,.0f}"
+
+
+def fmt_in(x, dec: int = 2) -> str:
+    """Indian digit grouping (1,69,709.00) with fixed decimals."""
+    if x is None or pd.isna(x):
+        return ""
+    neg = x < 0
+    x = abs(float(x))
+    s = f"{x:.{dec}f}"
+    intpart, _, frac = s.partition(".")
+    if len(intpart) > 3:
+        head, tail = intpart[:-3], intpart[-3:]
+        head = re.sub(r"(\d)(?=(\d\d)+$)", r"\1,", head)
+        intpart = head + "," + tail
+    out = intpart + ("." + frac if dec else "")
+    return ("-" if neg else "") + out
 
 
 def fmt_metric(value: float, is_money: bool) -> str:
@@ -237,7 +255,7 @@ def draw_view(cfg: dict, height: int = 360):
         else:
             t = data[["group", "value"]].rename(
                 columns={"group": cfg["group_dim"], "value": view["metric"]})
-            fmt = "₹%d" if is_money else "%.2f"
+            fmt = "₹%.2f" if is_money else "%.2f"
             st.dataframe(
                 t, use_container_width=True, hide_index=True,
                 column_config={view["metric"]: st.column_config.NumberColumn(format=fmt)},
@@ -276,11 +294,62 @@ st.title("Sales Dashboard")
 scope = f"{len(sel_store)} store(s)" if sel_store else f"all {n_stores_all} stores"
 st.caption(f"Peanuts Retail · {scope} · {start_d:%d %b %Y} → {end_d:%d %b %Y}")
 
-(tab_exec, tab_overview, tab_stores, tab_build, tab_trends, tab_cat,
+(tab_report, tab_exec, tab_overview, tab_stores, tab_build, tab_trends, tab_cat,
  tab_staff, tab_cust, tab_merch) = st.tabs([
-    "📊 Executive", "Overview", "🏬 Stores", "🔧 Build your view", "Trends",
-    "Category mix", "Salespeople", "Customers", "Colors & sizes",
+    "📋 MTD / YTD Report", "📊 Executive", "Overview", "🏬 Stores",
+    "🔧 Build your view", "Trends", "Category mix", "Salespeople",
+    "Customers", "Colors & sizes",
 ])
+
+# =========================================================================== #
+# MTD / YTD REPORT — region × store, year-on-year (the executive table)
+# =========================================================================== #
+with tab_report:
+    st.subheader("Store-wise MTD / YTD — Year on Year")
+    st.caption(
+        "MTD = current month to date · YTD = financial year (Apr–Mar) to date · "
+        "LY = same period last year · TY = this year · GD = growth/degrowth. "
+        "All values in ₹, 2 decimals. Red = degrowth."
+    )
+    rep, rtypes = L.region_store_report(df_exec)
+
+    val_cols = ["MTD LY", "MTD TY", "GD MTD Value", "YTD LY", "YTD TY", "GD YTD Value"]
+    pct_cols = ["GD MTD %", "GD YTD %"]
+
+    def _sign_color(v):
+        if pd.isna(v):
+            return ""
+        return "color: #C0143C" if v < 0 else "color: #1B7F3B"
+
+    def _row_bg(row):
+        t = rtypes[row.name]
+        if t == "subtotal":
+            return ["background-color: #F4CCCC; font-weight: 700"] * len(row)
+        if t == "grand":
+            return ["background-color: #D9EAD3; font-weight: 700"] * len(row)
+        # degrowing store → light red tint
+        if pd.notna(row["GD YTD %"]) and row["GD YTD %"] < 0:
+            return ["background-color: #FCE8E6"] * len(row)
+        return [""] * len(row)
+
+    styler = (
+        rep.style
+        .format({**{c: (lambda v: fmt_in(v, 2)) for c in val_cols},
+                 **{c: (lambda v: f"{v:,.2f}%" if pd.notna(v) else "—")
+                    for c in pct_cols}})
+        .apply(_row_bg, axis=1)
+        .map(_sign_color, subset=["GD MTD Value", "GD MTD %",
+                                  "GD YTD Value", "GD YTD %"])
+    )
+    st.dataframe(styler, use_container_width=True, hide_index=True,
+                 height=(len(rep) + 1) * 36)
+
+    st.download_button(
+        "⬇ Download report (CSV)",
+        rep.to_csv(index=False).encode(),
+        file_name=f"peanuts_mtd_ytd_report_{L.as_of(df_exec):%Y%m%d}.csv",
+        mime="text/csv",
+    )
 
 # =========================================================================== #
 # EXECUTIVE — MTD / QTD / YTD, all year-on-year (fiscal year Apr–Mar)
@@ -321,8 +390,8 @@ with tab_exec:
     st.dataframe(
         sy, use_container_width=True, hide_index=True,
         column_config={
-            "YTD (₹)": st.column_config.NumberColumn(format="₹%d"),
-            "LY YTD (₹)": st.column_config.NumberColumn(format="₹%d"),
+            "YTD (₹)": st.column_config.NumberColumn(format="₹%.2f"),
+            "LY YTD (₹)": st.column_config.NumberColumn(format="₹%.2f"),
             "Growth %": st.column_config.NumberColumn(format="%.1f%%"),
         },
     )
@@ -396,9 +465,9 @@ with tab_stores:
     st.dataframe(
         ss, use_container_width=True, hide_index=True,
         column_config={
-            "Sales (₹)": st.column_config.NumberColumn(format="₹%d"),
-            "ATV (₹)": st.column_config.NumberColumn(format="₹%d"),
-            "ASP (₹)": st.column_config.NumberColumn(format="₹%d"),
+            "Sales (₹)": st.column_config.NumberColumn(format="₹%.2f"),
+            "ATV (₹)": st.column_config.NumberColumn(format="₹%.2f"),
+            "ASP (₹)": st.column_config.NumberColumn(format="₹%.2f"),
             "UPT": st.column_config.NumberColumn(format="%.2f"),
         },
     )
@@ -550,8 +619,8 @@ with tab_staff:
                            "units": "Units", "bills": "Bills", "atv": "ATV (₹)"}),
         use_container_width=True, hide_index=True,
         column_config={
-            "Sales (₹)": st.column_config.NumberColumn(format="₹%d"),
-            "ATV (₹)": st.column_config.NumberColumn(format="₹%d"),
+            "Sales (₹)": st.column_config.NumberColumn(format="₹%.2f"),
+            "ATV (₹)": st.column_config.NumberColumn(format="₹%.2f"),
         },
     )
 
@@ -595,7 +664,7 @@ with tab_cust:
             lambda m: m[:2] + "•••" + m[-2:] if len(m) >= 4 else "•••")
     st.dataframe(
         top, use_container_width=True, hide_index=True,
-        column_config={"Spend (₹)": st.column_config.NumberColumn(format="₹%d")},
+        column_config={"Spend (₹)": st.column_config.NumberColumn(format="₹%.2f")},
     )
 
 # =========================================================================== #
