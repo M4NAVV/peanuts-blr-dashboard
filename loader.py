@@ -295,6 +295,13 @@ def store_summary(df: pd.DataFrame) -> pd.DataFrame:
     g["atv"] = g["sales"] / g["bills"].where(g["bills"] != 0)
     g["upt"] = g["units"] / g["bills"].where(g["bills"] != 0)
     g["asp"] = g["sales"] / g["units"].where(g["units"] != 0)
+
+    # Carpet area -> sales per sq ft (retail productivity).
+    m = load_store_master()
+    if "ca" in m.columns:
+        areas = dict(zip(m["tableau_name"], pd.to_numeric(m["ca"], errors="coerce")))
+        g["carpet_area"] = g[COL_STORE_LABEL].map(areas)
+        g["sales_psf"] = g["sales"] / g["carpet_area"].where(g["carpet_area"] > 0)
     return g
 
 
