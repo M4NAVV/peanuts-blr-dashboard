@@ -550,6 +550,100 @@ def store_yoy(df: pd.DataFrame, start: pd.Timestamp, end: pd.Timestamp) -> pd.Da
     return m.sort_values("cur", ascending=False)
 
 
+# --------------------------------------------------------------------------- #
+# Region × store MTD/YTD YoY report (the executive table)
+# --------------------------------------------------------------------------- #
+
+_MASTER_PATH = os.path.join(os.path.dirname(__file__), "store_master.csv")
+_REGION_ORDER = ["East & NE", "South"]
+
+REPORT_COLS = [
+    "Region", "DATE", "STORE CODE", "LOCATION",
+    "MTD LY", "MTD TY", "GD MTD Value", "GD MTD %",
+    "YTD LY", "YTD TY", "GD YTD Value", "GD YTD %",
+]
+
+
+def load_store_master() -> pd.DataFrame:
+    m = pd.read_csv(_MASTER_PATH, dtype={"code": str})
+    m["tableau_name"] = m["tableau_name"].astype(str).str.strip()
+    return m
+
+
+def _store_window_sales(df, start, end) -> pd.Series:
+    return (df[(df["date"] >= start) & (df["date"] <= end)]
+            .groupby(COL_STORE_LABEL)[COL_AMOUNT].sum())
+
+
+def _growth_pct(ty: float, ly: float):
+    return ((ty - ly) / ly * 100) if ly else None
+
+
+def region_store_report(df: pd.DataFrame):
+    """Region-grouped, store-wise MTD/YTD year-on-year table with subtotals and
+    a grand total. Returns (display_df, row_types) where row_types marks each row
+    as 'store' | 'subtotal' | 'grand' for styling."""
+    wins = standard_windows(df)
+    (ms, me), (ys, ye) = wins["MTD"], wins["YTD"]
+    pms, pme = _sply(ms, me)
+    pys, pye = _sply(ys, ye)
+    mtd_ty, mtd_ly = _store_window_sales(df, ms, me), _store_window_sales(df, pms, pme)
+    ytd_ty, ytd_ly = _store_window_sales(df, ys, ye), _store_window_sales(df, pys, pye)
+    date_str = as_of(df).strftime("%d-%m-%Y")
+
+    master = load_store_master()
+    master["_rord"] = master["region"].map(
+        {k: i for i, k in enumerate(_REGION_ORDER)}).fillna(99)
+    master["_code_num"] = pd.to_numeric(master["code"], errors="coerce")
+    master = master.sort_values(["_rord", "_code_num"])
+
+    rows, types = [], []
+
+    def _store_row(region, code, loc, mly, mty, yly, yty):
+        return {
+            "Region": region, "DATE": date_str, "STORE CODE": code, "LOCATION": loc,
+            "MTD LY": mly, "MTD TY": mty,
+            "GD MTD Value": mty - mly, "GD MTD %": _growth_pct(mty, mly),
+            "YTD LY": yly, "YTD TY": yty,
+            "GD YTD Value": yty - yly, "GD YTD %": _growth_pct(yty, yly),
+        }
+
+    def _total_row(label, sub):
+        mly, mty = sub["MTD LY"].sum(), sub["MTD TY"].sum()
+        yly, yty = sub["YTD LY"].sum(), sub["YTD TY"].sum()
+        return {
+            "Region": label, "DATE": "", "STORE CODE": "", "LOCATION": "",
+            "MTD LY": mly, "MTD TY": mty,
+            "GD MTD Value": mty - mly, "GD MTD %": _growth_pct(mty, mly),
+            "YTD LY": yly, "YTD TY": yty,
+            "GD YTD Value": yty - yly, "GD YTD %": _growth_pct(yty, yly),
+        }
+
+    all_store_rows = []
+    for region, grp in master.groupby("region", sort=False):
+        region_rows = []
+        for _, r in grp.iterrows():
+            name = r["tableau_name"]
+            sr = _store_row(
+                region, r["code"], r["location"],
+                float(mtd_ly.get(name, 0.0)), float(mtd_ty.get(name, 0.0)),
+                float(ytd_ly.get(name, 0.0)), float(ytd_ty.get(name, 0.0)),
+            )
+            region_rows.append(sr)
+            rows.append(sr)
+            types.append("store")
+        region_df = pd.DataFrame(region_rows)
+        all_store_rows.append(region_df)
+        rows.append(_total_row(f"{region} Total", region_df))
+        types.append("subtotal")
+
+    grand = pd.concat(all_store_rows, ignore_index=True)
+    rows.append(_total_row("Grand Total", grand))
+    types.append("grand")
+
+    return pd.DataFrame(rows, columns=REPORT_COLS), types
+
+
 def all_scalar_kpis(df: pd.DataFrame) -> dict[str, tuple[float, bool]]:
     """Every metric as a single scalar over `df`, for the selectable KPI cards.
     Returns {label: (value, is_money)}."""
