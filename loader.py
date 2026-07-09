@@ -168,7 +168,16 @@ def clean(df: pd.DataFrame) -> pd.DataFrame:
 
 def load_data() -> pd.DataFrame:
     """Public entry point. Streamlit caching is applied in app.py."""
-    return clean(_read_raw())
+    return _apply_takeover_filter(clean(_read_raw()))
+
+
+def _apply_takeover_filter(df: pd.DataFrame) -> pd.DataFrame:
+    """Drop rows before each store's takeover date — pre-ownership sales from the
+    previous operator don't count. Stores without a mapped date keep all rows."""
+    tk = takeover_map()
+    start = df[COL_STORE_LABEL].map(tk)
+    keep = start.isna() | (df["date"] >= start)
+    return df[keep].reset_index(drop=True)
 
 
 # --------------------------------------------------------------------------- #
@@ -535,13 +544,11 @@ def standard_windows(df: pd.DataFrame) -> dict[str, tuple]:
     return {"MTD": mtd, "QTD": qtd, "YTD": ytd, "Last month": last_month}
 
 
-def store_yoy(df: pd.DataFrame, start: pd.Timestamp, end: pd.Timestamp) -> pd.DataFrame:
-    """Per-store sales for the window vs same period last year + growth %."""
-    ps, pe = _sply(start, end)
-    cur = (df[(df["date"] >= start) & (df["date"] <= end)]
-           .groupby(COL_STORE_LABEL)[COL_AMOUNT].sum().rename("cur"))
-    pri = (df[(df["date"] >= ps) & (df["date"] <= pe)]
-           .groupby(COL_STORE_LABEL)[COL_AMOUNT].sum().rename("prior"))
+def store_yoy(df: pd.DataFrame, kind: str = "YTD") -> pd.DataFrame:
+    """Per-store sales YoY using per-store takeover-anchored windows + growth %."""
+    cur_f, pri_f = report_frames(df, kind)
+    cur = cur_f.groupby(COL_STORE_LABEL)[COL_AMOUNT].sum().rename("cur")
+    pri = pri_f.groupby(COL_STORE_LABEL)[COL_AMOUNT].sum().rename("prior")
     m = pd.concat([cur, pri], axis=1).fillna(0.0).reset_index()
     m["growth"] = m.apply(
         lambda r: ((r["cur"] - r["prior"]) / r["prior"] * 100)
@@ -567,7 +574,74 @@ REPORT_COLS = [
 def load_store_master() -> pd.DataFrame:
     m = pd.read_csv(_MASTER_PATH, dtype={"code": str})
     m["tableau_name"] = m["tableau_name"].astype(str).str.strip()
+    if "takeover_date" in m.columns:
+        m["takeover_date"] = pd.to_datetime(m["takeover_date"], errors="coerce")
     return m
+
+
+def takeover_map() -> dict:
+    """store label -> takeover Timestamp (each store's reporting-year anchor)."""
+    m = load_store_master()
+    if "takeover_date" not in m.columns:
+        return {}
+    return dict(zip(m["tableau_name"], m["takeover_date"]))
+
+
+def _anchor_md(df: pd.DataFrame):
+    """Per-row (month, day) of each store's takeover date; default 1 Apr."""
+    tk = takeover_map()
+    md = {s: ((d.month, d.day) if pd.notna(d) else (4, 1)) for s, d in tk.items()}
+    m = df[COL_STORE_LABEL].map(lambda s: md.get(s, (4, 1))[0]).astype(int)
+    d = df[COL_STORE_LABEL].map(lambda s: md.get(s, (4, 1))[1]).astype(int)
+    return m, d
+
+
+def report_frames(df: pd.DataFrame, kind: str):
+    """Current & same-period-last-year frames for kind in {MTD, YTD}, with each
+    store's window anchored to its own takeover date (so TY and LY line up)."""
+    asof = as_of(df)
+    fy_year = asof.year if asof.month >= 4 else asof.year - 1
+    m, d = _anchor_md(df)
+
+    if kind == "YTD":
+        cur_start = pd.to_datetime(pd.DataFrame({"year": fy_year, "month": m, "day": d}))
+    elif kind == "MTD":
+        base = pd.to_datetime(pd.DataFrame(
+            {"year": asof.year, "month": asof.month, "day": 1}, index=df.index))
+        anchored = pd.to_datetime(pd.DataFrame(
+            {"year": asof.year, "month": m, "day": d}))
+        # If the takeover falls inside the current month, start from it.
+        in_month = (m == asof.month) & (anchored > base)
+        cur_start = base.mask(in_month, anchored)
+    else:
+        raise ValueError(kind)
+
+    cur_start.index = df.index
+    prior_start = cur_start - pd.DateOffset(years=1)
+    cur_end = asof
+    prior_end = asof - pd.DateOffset(years=1)
+    cur = df[(df["date"] >= cur_start) & (df["date"] <= cur_end)]
+    prior = df[(df["date"] >= prior_start) & (df["date"] <= prior_end)]
+    return cur, prior
+
+
+def _frame_metrics(f: pd.DataFrame) -> dict:
+    sales = f[COL_AMOUNT].sum()
+    bills = f[COL_BILL].nunique()
+    units = f[COL_QTY].sum()
+    return {"sales": sales, "bills": int(bills), "units": int(units),
+            "atv": sales / bills if bills else 0.0}
+
+
+def window_yoy_takeover(df: pd.DataFrame, kind: str) -> dict:
+    """YoY for MTD/YTD using per-store takeover-anchored windows (for exec cards)."""
+    cur, prior = report_frames(df, kind)
+    c, p = _frame_metrics(cur), _frame_metrics(prior)
+    growth = {k: ((c[k] - p[k]) / p[k] * 100 if p[k] else None) for k in c}
+    def _rng(f):
+        return (f["date"].min(), f["date"].max()) if len(f) else (None, None)
+    return {"cur": c, "prior": p, "growth": growth,
+            "cur_window": _rng(cur), "prior_window": _rng(prior)}
 
 
 def _store_window_sales(df, start, end) -> pd.Series:
@@ -583,12 +657,11 @@ def region_store_report(df: pd.DataFrame):
     """Region-grouped, store-wise MTD/YTD year-on-year table with subtotals and
     a grand total. Returns (display_df, row_types) where row_types marks each row
     as 'store' | 'subtotal' | 'grand' for styling."""
-    wins = standard_windows(df)
-    (ms, me), (ys, ye) = wins["MTD"], wins["YTD"]
-    pms, pme = _sply(ms, me)
-    pys, pye = _sply(ys, ye)
-    mtd_ty, mtd_ly = _store_window_sales(df, ms, me), _store_window_sales(df, pms, pme)
-    ytd_ty, ytd_ly = _store_window_sales(df, ys, ye), _store_window_sales(df, pys, pye)
+    mtd_cur, mtd_pri = report_frames(df, "MTD")
+    ytd_cur, ytd_pri = report_frames(df, "YTD")
+    g = lambda f: f.groupby(COL_STORE_LABEL)[COL_AMOUNT].sum()
+    mtd_ty, mtd_ly = g(mtd_cur), g(mtd_pri)
+    ytd_ty, ytd_ly = g(ytd_cur), g(ytd_pri)
     date_str = as_of(df).strftime("%d-%m-%Y")
 
     master = load_store_master()
