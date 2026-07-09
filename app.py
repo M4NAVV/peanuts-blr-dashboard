@@ -520,11 +520,27 @@ with tab_stores:
                "_key": "st_heat"}, height=520)
 
     st.markdown("---")
+    ss_raw = L.store_summary(df)
+
+    if "sales_psf" in ss_raw.columns:
+        st.subheader("Sales per sq ft (carpet area)")
+        st.caption(f"Sales in view ÷ carpet area — retail productivity. "
+                   f"{start_d:%d %b %Y} → {end_d:%d %b %Y}.")
+        psf = ss_raw.dropna(subset=["sales_psf"]).sort_values("sales_psf")
+        fig = px.bar(psf, x="sales_psf", y=L.COL_STORE_LABEL, orientation="h",
+                     color_discrete_sequence=[MAROON])
+        fig.update_layout(height=520, plot_bgcolor="white", yaxis_title="",
+                          xaxis_title="₹ per sq ft", margin=dict(t=10))
+        fig.update_traces(hovertemplate="%{y}<br>₹%{x:,.0f}/sqft<extra></extra>")
+        st.plotly_chart(fig, use_container_width=True)
+        st.markdown("---")
+
     st.subheader("Per-store KPI table")
-    ss = L.store_summary(df).rename(columns={
+    ss = ss_raw.rename(columns={
         L.COL_STORE_LABEL: "Store", "sales": "Sales (₹)", "units": "Units",
         "bills": "Bills", "customers": "Customers", "atv": "ATV (₹)",
-        "upt": "UPT", "asp": "ASP (₹)"})
+        "upt": "UPT", "asp": "ASP (₹)", "carpet_area": "Carpet Area (sqft)",
+        "sales_psf": "Sales/sqft (₹)"})
     st.dataframe(
         ss, use_container_width=True, hide_index=True,
         column_config={
@@ -532,6 +548,8 @@ with tab_stores:
             "ATV (₹)": st.column_config.NumberColumn(format="₹%.2f"),
             "ASP (₹)": st.column_config.NumberColumn(format="₹%.2f"),
             "UPT": st.column_config.NumberColumn(format="%.2f"),
+            "Carpet Area (sqft)": st.column_config.NumberColumn(format="%.0f"),
+            "Sales/sqft (₹)": st.column_config.NumberColumn(format="₹%.0f"),
         },
     )
 
