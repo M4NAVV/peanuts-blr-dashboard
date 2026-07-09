@@ -204,7 +204,43 @@ def draw_view(cfg: dict, height: int = 360):
     data = data.sort_values("group")
 
     color = "split" if has_split else None
-    tickpre = "₹" if is_money else ""
+
+    # Table branch first — it keeps full unscaled rupee values (Indian grouped).
+    if chart == "Table":
+        if has_split:
+            pivot = data.pivot_table(index="group", columns="split", values="value",
+                                     aggfunc="sum", observed=True).reset_index()
+            pivot = pivot.rename(columns={"group": cfg["group_dim"]})
+            if is_money:
+                for c in pivot.columns[1:]:
+                    pivot[c] = pivot[c].map(lambda v: fmt_in(v, 2))
+            st.dataframe(pivot, use_container_width=True, hide_index=True)
+        else:
+            t = data[["group", "value"]].rename(columns={"group": cfg["group_dim"]})
+            if is_money:
+                t[view["metric"]] = t.pop("value").map(lambda v: fmt_in(v, 2))
+                st.dataframe(t, use_container_width=True, hide_index=True)
+            else:
+                t = t.rename(columns={"value": view["metric"]})
+                st.dataframe(
+                    t, use_container_width=True, hide_index=True,
+                    column_config={view["metric"]:
+                                   st.column_config.NumberColumn(format="%.2f")},
+                )
+        return
+
+    # Scale money into Indian units (₹ Cr / L / K) so axes never show millions.
+    unit_lbl = ""
+    if is_money:
+        m = float(data["value"].abs().max() or 0)
+        div, unit_lbl = (
+            (1e7, "₹ Cr") if m >= 1e7 else
+            (1e5, "₹ L") if m >= 1e5 else
+            (1e3, "₹ K") if m >= 1e3 else (1.0, "₹")
+        )
+        data["value"] = data["value"] / div
+    base = view["metric"].replace(" (₹)", "")
+    axis_title = f"{base} ({unit_lbl})" if is_money else view["metric"]
 
     if chart in ("Bar", "Horizontal bar"):
         horizontal = chart == "Horizontal bar"
@@ -215,26 +251,39 @@ def draw_view(cfg: dict, height: int = 360):
             color_discrete_sequence=SEQ, barmode="group",
         )
         if horizontal:
-            fig.update_layout(xaxis_tickprefix=tickpre, yaxis_title="", xaxis_title=view["metric"])
+            fig.update_layout(yaxis_title="", xaxis_title=axis_title)
             fig.update_yaxes(categoryorder="array", categoryarray=order[::-1])
+            if is_money:
+                fig.update_traces(hovertemplate="%{y}<br>%{x:.2f} " + unit_lbl + "<extra></extra>")
         else:
-            fig.update_layout(yaxis_tickprefix=tickpre, xaxis_title="", yaxis_title=view["metric"])
+            fig.update_layout(xaxis_title="", yaxis_title=axis_title)
+            if is_money:
+                fig.update_traces(hovertemplate="%{x}<br>%{y:.2f} " + unit_lbl + "<extra></extra>")
 
     elif chart in ("Line", "Area"):
         fn = px.area if chart == "Area" else px.line
         fig = fn(data, x="group", y="value", color=color, markers=True,
                  color_discrete_sequence=SEQ)
-        fig.update_layout(yaxis_tickprefix=tickpre, xaxis_title="", yaxis_title=view["metric"])
+        fig.update_layout(xaxis_title="", yaxis_title=axis_title)
+        if is_money:
+            fig.update_traces(hovertemplate="%{x}<br>%{y:.2f} " + unit_lbl + "<extra></extra>")
 
     elif chart == "Pie / Donut":
         agg = data.groupby("group", observed=True)["value"].sum().reset_index()
         fig = px.pie(agg, names="group", values="value", hole=0.5,
                      color_discrete_sequence=SEQ)
+        if is_money:
+            fig.update_traces(hovertemplate="%{label}<br>%{value:.2f} " + unit_lbl
+                              + " (%{percent})<extra></extra>")
 
     elif chart == "Treemap":
         agg = data.groupby("group", observed=True)["value"].sum().reset_index()
         fig = px.treemap(agg, path=["group"], values="value",
                          color_discrete_sequence=SEQ)
+        if is_money:
+            fig.update_traces(
+                texttemplate="%{label}<br>%{value:.2f} " + unit_lbl,
+                hovertemplate="%{label}<br>%{value:.2f} " + unit_lbl + "<extra></extra>")
 
     elif chart == "Heatmap (pivot)":
         if not has_split:
@@ -243,24 +292,8 @@ def draw_view(cfg: dict, height: int = 360):
         pivot = data.pivot_table(index="split", columns="group", values="value",
                                  aggfunc="sum", observed=True)
         fig = px.imshow(pivot, color_continuous_scale="OrRd", aspect="auto",
-                        labels=dict(color=view["metric"]))
+                        labels=dict(color=axis_title))
         fig.update_layout(xaxis_title=cfg["group_dim"], yaxis_title=view["split_dim"])
-
-    else:  # Table
-        if has_split:
-            pivot = data.pivot_table(index="group", columns="split", values="value",
-                                     aggfunc="sum", observed=True).reset_index()
-            pivot = pivot.rename(columns={"group": cfg["group_dim"]})
-            st.dataframe(pivot, use_container_width=True, hide_index=True)
-        else:
-            t = data[["group", "value"]].rename(
-                columns={"group": cfg["group_dim"], "value": view["metric"]})
-            fmt = "₹%.2f" if is_money else "%.2f"
-            st.dataframe(
-                t, use_container_width=True, hide_index=True,
-                column_config={view["metric"]: st.column_config.NumberColumn(format=fmt)},
-            )
-        return
 
     fig.update_layout(height=height, plot_bgcolor="white", paper_bgcolor="white",
                       margin=dict(t=10, b=10), legend_title_text=view["split_dim"] or "")
