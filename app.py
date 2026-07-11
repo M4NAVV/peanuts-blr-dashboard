@@ -406,9 +406,9 @@ if active_filters:
         for lbl, sel in active_filters)
     st.markdown("**Filters:** " + chips, unsafe_allow_html=True)
 
-(tab_report, tab_exec, tab_overview, tab_stores, tab_build, tab_trends,
- tab_cat, tab_staff, tab_cust, tab_merch) = st.tabs([
-    "📋 MTD / YTD Report", "📊 Executive", "Overview", "🏬 Stores",
+(tab_report, tab_degrowth, tab_exec, tab_overview, tab_stores, tab_build,
+ tab_trends, tab_cat, tab_staff, tab_cust, tab_merch) = st.tabs([
+    "📋 MTD / YTD Report", "📉 Degrowth", "📊 Executive", "Overview", "🏬 Stores",
     "🔧 Build your view", "Trends", "Category mix", "Salespeople",
     "Customers", "Colors & sizes",
 ])
@@ -478,6 +478,45 @@ with tab_report:
         file_name=f"peanuts_mtd_ytd_report_{L.as_of(df_exec):%Y%m%d}.csv",
         mime="text/csv",
     )
+
+# =========================================================================== #
+# DEGROWTH — stores below last year (watchlist)
+# =========================================================================== #
+with tab_degrowth:
+    st.subheader("Degrowth watchlist")
+    dg_kind = st.radio("Period", ["YTD", "MTD"], horizontal=True, key="dg_kind")
+    st.caption(
+        f"Stores where **{dg_kind} This Year < Last Year**, as of "
+        f"**{end_d:%d %b %Y}** — worst degrowth first. Respects all filters.")
+    dg = L.degrowth_report(df_exec, asof=pd.Timestamp(end_d), kind=dg_kind)
+
+    if dg.empty:
+        st.success("🎉 No stores in degrowth for this selection.")
+    else:
+        c1, c2 = st.columns(2)
+        c1.metric("Stores degrowing", f"{len(dg)}")
+        c2.metric("Total shortfall", inr(dg["shortfall"].sum()))
+
+        disp = dg.copy()
+        disp.insert(0, "DATE", f"{end_d:%d-%m-%Y}")
+        disp = disp.rename(columns={
+            "region": "Region", "code": "STORE CODE", "location": "LOCATION",
+            "prior": f"{dg_kind} LY", "cur": f"{dg_kind} TY",
+            "shortfall": "Shortfall", "growth": "Degrowth %"})
+
+        val_cols = [f"{dg_kind} LY", f"{dg_kind} TY", "Shortfall"]
+        styler = (
+            disp.style
+            .format({**{c: (lambda v: fmt_in(v, 2)) for c in val_cols},
+                     "Degrowth %": lambda v: f"{v:,.2f}%"})
+            .map(lambda v: "color: #C0143C",
+                 subset=["Shortfall", "Degrowth %"]))
+        st.dataframe(styler, use_container_width=True, hide_index=True,
+                     height=(len(disp) + 1) * 36)
+        st.download_button(
+            "⬇ Download degrowth list (CSV)", disp.to_csv(index=False).encode(),
+            file_name=f"peanuts_degrowth_{dg_kind}_{end_d:%Y%m%d}.csv",
+            mime="text/csv")
 
 # =========================================================================== #
 # EXECUTIVE — MTD / QTD / YTD, all year-on-year (fiscal year Apr–Mar)
