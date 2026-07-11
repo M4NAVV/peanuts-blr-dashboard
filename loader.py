@@ -608,6 +608,20 @@ def store_yoy(df: pd.DataFrame, kind: str = "YTD", asof=None) -> pd.DataFrame:
     return m.sort_values("cur", ascending=False)
 
 
+def degrowth_report(df: pd.DataFrame, asof=None, kind: str = "YTD") -> pd.DataFrame:
+    """Stores in `kind` (MTD/YTD) degrowth — This Year < Last Year — worst first,
+    with the ₹ shortfall and degrowth %. Respects whatever `df` is filtered to."""
+    sy = store_yoy(df, kind, asof=asof)
+    m = load_store_master()[["tableau_name", "code", "location", "region"]]
+    out = sy.merge(m, left_on=COL_STORE_LABEL, right_on="tableau_name", how="left")
+    out = out[out["growth"].notna() & (out["growth"] < 0)].copy()
+    out["shortfall"] = out["cur"] - out["prior"]
+    rord = {k: i for i, k in enumerate(_REGION_ORDER)}
+    out["_r"] = out["region"].map(rord).fillna(99)
+    out = out.sort_values(["_r", "growth"]).reset_index(drop=True)
+    return out[["region", "code", "location", "prior", "cur", "shortfall", "growth"]]
+
+
 # --------------------------------------------------------------------------- #
 # Region × store MTD/YTD YoY report (the executive table)
 # --------------------------------------------------------------------------- #
