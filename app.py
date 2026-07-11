@@ -181,61 +181,123 @@ except FileNotFoundError as e:
 fresh = L.data_freshness(df_all)
 
 # --------------------------------------------------------------------------- #
-# Sidebar — filters + view settings
+# Sidebar — exhaustive, cascading filters + view settings
 # --------------------------------------------------------------------------- #
 n_stores_all = df_all[L.COL_STORE_LABEL].nunique()
 st.sidebar.title("🥜 Peanuts Retail")
 st.sidebar.caption(f"All {n_stores_all} stores · Bengaluru + East India")
 
 min_d, max_d = fresh["min_date"].date(), fresh["max_date"].date()
-date_range = st.sidebar.date_input(
-    "Date range", value=(min_d, max_d), min_value=min_d, max_value=max_d,
-)
-if isinstance(date_range, tuple) and len(date_range) == 2:
-    start_d, end_d = date_range
+
+# ---- Date: single day or custom range ----
+st.sidebar.markdown("#### 📅 Date")
+date_mode = st.sidebar.radio(
+    "Date mode", ["Custom range", "Single day"], horizontal=True,
+    label_visibility="collapsed", key="f_date_mode")
+if date_mode == "Single day":
+    one = st.sidebar.date_input("Day", value=max_d, min_value=min_d,
+                                max_value=max_d, key="f_day")
+    start_d = end_d = one
 else:
-    start_d, end_d = min_d, max_d
+    dr = st.sidebar.date_input("Range", value=(min_d, max_d), min_value=min_d,
+                               max_value=max_d, key="f_range")
+    if isinstance(dr, tuple) and len(dr) == 2:
+        start_d, end_d = dr
+    elif isinstance(dr, tuple) and len(dr) == 1:
+        start_d = end_d = dr[0]
+    else:
+        start_d = end_d = dr
 
-stores = sorted(df_all[L.COL_STORE_LABEL].dropna().unique().tolist())
-sel_store = st.sidebar.multiselect("Store", stores, default=[],
-                                   help="Leave empty for all stores")
-divisions = sorted(df_all[L.COL_DIVISION].dropna().unique().tolist())
-sel_div = st.sidebar.multiselect("Division", divisions, default=[])
-mwc_opts = sorted(df_all[L.COL_MWC].dropna().unique().tolist())
-sel_mwc = st.sidebar.multiselect("Men / Women / Child", mwc_opts, default=[])
 
-st.sidebar.markdown("### View settings")
+def _msel(container, label, options, key):
+    return container.multiselect(label, options, default=[], key=key)
+
+
+# ---- Store (cascading: region → state → city → store) ----
+with st.sidebar.expander("🏬 Store", expanded=False):
+    sel_region = _msel(st, "Region",
+                       sorted(df_all[L.COL_REGION].dropna().unique()), "f_region")
+    pool = df_all[df_all[L.COL_REGION].isin(sel_region)] if sel_region else df_all
+    sel_state = _msel(st, "State",
+                      sorted(pool[L.COL_STATE].dropna().unique()), "f_state")
+    pool = pool[pool[L.COL_STATE].isin(sel_state)] if sel_state else pool
+    sel_city = _msel(st, "City",
+                     sorted(pool[L.COL_CITY].dropna().unique()), "f_city")
+    pool = pool[pool[L.COL_CITY].isin(sel_city)] if sel_city else pool
+    sel_store = _msel(st, "Store",
+                      sorted(pool[L.COL_STORE_LABEL].dropna().unique()), "f_store")
+    sel_format = _msel(st, "Store format",
+                       sorted(df_all[L.COL_FORMAT].dropna().unique()), "f_format") \
+        if L.COL_FORMAT in df_all.columns else []
+
+# ---- Product (cascading: division → section → department) ----
+with st.sidebar.expander("👕 Product", expanded=False):
+    sel_div = _msel(st, "Division",
+                    sorted(df_all[L.COL_DIVISION].dropna().unique()), "f_div")
+    ppool = df_all[df_all[L.COL_DIVISION].isin(sel_div)] if sel_div else df_all
+    sel_sec = _msel(st, "Section",
+                    sorted(ppool[L.COL_SECTION].dropna().unique()), "f_sec")
+    ppool = ppool[ppool[L.COL_SECTION].isin(sel_sec)] if sel_sec else ppool
+    sel_dep = _msel(st, "Department",
+                    sorted(ppool[L.COL_DEPARTMENT].dropna().unique()), "f_dep")
+    sel_mwc = _msel(st, "Men / Women / Child",
+                    sorted(df_all[L.COL_MWC].dropna().unique()), "f_mwc")
+    sel_size = _msel(st, "Size",
+                     sorted(df_all[L.COL_SIZE].dropna().unique()), "f_size")
+    sel_color = _msel(st, "Color",
+                      sorted(df_all[L.COL_COLOR].dropna().unique()), "f_color")
+    sel_style = _msel(st, "Style code",
+                      sorted(df_all[L.COL_STYLE].dropna().unique()), "f_style")
+
+# ---- People ----
+with st.sidebar.expander("🧑‍💼 People", expanded=False):
+    sel_sp = _msel(st, "Salesperson",
+                   sorted(df_all[L.COL_SALESPERSON].dropna().unique()), "f_sp")
+
+st.sidebar.markdown("#### View settings")
 granularity = st.sidebar.radio(
     "Time granularity", ["Day", "Week", "Month", "Quarter", "Year"],
     index=2, horizontal=True,
-    help="Drives the trend charts and the default in Build-your-view.",
-)
+    help="Drives the trend tables and the default in Build-your-view.")
 
-# Apply filters
-mask = (df_all["date"].dt.date >= start_d) & (df_all["date"].dt.date <= end_d)
-if sel_store:
-    mask &= df_all[L.COL_STORE_LABEL].isin(sel_store)
-if sel_div:
-    mask &= df_all[L.COL_DIVISION].isin(sel_div)
-if sel_mwc:
-    mask &= df_all[L.COL_MWC].isin(sel_mwc)
-df = df_all[mask].copy()
+_FILTER_KEYS = ["f_region", "f_state", "f_city", "f_store", "f_format", "f_div",
+                "f_sec", "f_dep", "f_mwc", "f_size", "f_color", "f_style", "f_sp"]
+if st.sidebar.button("↺ Reset all filters"):
+    for _k in _FILTER_KEYS:
+        st.session_state.pop(_k, None)
+    st.rerun()
 
-# Executive YoY needs full history (both years), so it honors the store /
-# division / M-W-C filters but NOT the sidebar date range.
-mask_exec = pd.Series(True, index=df_all.index)
-if sel_store:
-    mask_exec &= df_all[L.COL_STORE_LABEL].isin(sel_store)
-if sel_div:
-    mask_exec &= df_all[L.COL_DIVISION].isin(sel_div)
-if sel_mwc:
-    mask_exec &= df_all[L.COL_MWC].isin(sel_mwc)
-df_exec = df_all[mask_exec].copy()
+# ---- Apply filters ----
+_CAT_FILTERS = [
+    ("Region", L.COL_REGION, sel_region), ("State", L.COL_STATE, sel_state),
+    ("City", L.COL_CITY, sel_city), ("Store", L.COL_STORE_LABEL, sel_store),
+    ("Format", L.COL_FORMAT, sel_format), ("Division", L.COL_DIVISION, sel_div),
+    ("Section", L.COL_SECTION, sel_sec), ("Department", L.COL_DEPARTMENT, sel_dep),
+    ("M/W/C", L.COL_MWC, sel_mwc), ("Size", L.COL_SIZE, sel_size),
+    ("Color", L.COL_COLOR, sel_color), ("Style", L.COL_STYLE, sel_style),
+    ("Salesperson", L.COL_SALESPERSON, sel_sp),
+]
+
+
+def _cat_mask(frame):
+    m = pd.Series(True, index=frame.index)
+    for _lbl, col, sel in _CAT_FILTERS:
+        if sel and col in frame.columns:
+            m &= frame[col].isin(sel)
+    return m
+
+
+cat_mask = _cat_mask(df_all)
+date_mask = (df_all["date"].dt.date >= start_d) & (df_all["date"].dt.date <= end_d)
+df = df_all[cat_mask & date_mask].copy()
+# Executive / report YoY need full history — apply all filters EXCEPT date range.
+df_exec = df_all[cat_mask].copy()
+
+active_filters = [(lbl, sel) for lbl, _col, sel in _CAT_FILTERS if sel]
 
 st.sidebar.markdown("---")
 st.sidebar.caption(
-    f"**Data through:** {fresh['max_date']:%d %b %Y}  \n**Rows:** {fresh['rows']:,}"
-)
+    f"**Data through:** {fresh['max_date']:%d %b %Y}  \n**Rows:** {fresh['rows']:,}")
 if st.sidebar.button("🔄 Refresh data now"):
     get_data.clear()
     st.rerun()
@@ -316,7 +378,27 @@ def exec_window_row(title, r):
 # --------------------------------------------------------------------------- #
 st.title("Sales Dashboard")
 scope = f"{len(sel_store)} store(s)" if sel_store else f"all {n_stores_all} stores"
-st.caption(f"Peanuts Retail · {scope} · {start_d:%d %b %Y} → {end_d:%d %b %Y}")
+_dlabel = (f"{start_d:%d %b %Y}" if start_d == end_d
+           else f"{start_d:%d %b %Y} → {end_d:%d %b %Y}")
+st.caption(f"Peanuts Retail · {scope} · {_dlabel}")
+
+# Selected-period summary bar (reflects current filters + date selection).
+_k = L.headline_kpis(df)
+_sb = st.columns(4)
+_sb[0].metric("Sales (selected)", inr(_k["total_sales"]))
+_sb[1].metric("Bills", f'{_k["bills"]:,}')
+_sb[2].metric("Units", f'{_k["total_units"]:,}')
+_sb[3].metric("Avg Bill", inr(_k["atv"]))
+
+# Active-filter chips.
+if active_filters:
+    chips = " ".join(
+        f'<span style="background:#F1E9DA;color:#7A1F2B;border-radius:10px;'
+        f'padding:2px 9px;margin:2px;font-size:.74rem;font-weight:600;'
+        f'display:inline-block;">{lbl}: {", ".join(map(str, sel[:3]))}'
+        f'{f" +{len(sel) - 3}" if len(sel) > 3 else ""}</span>'
+        for lbl, sel in active_filters)
+    st.markdown("**Filters:** " + chips, unsafe_allow_html=True)
 
 _sec = st.tabs(["📊 Performance", "🏬 Stores", "🔍 Explore", "👥 People"])
 with _sec[0]:
