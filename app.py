@@ -425,6 +425,9 @@ with tab_report:
         "All values in ₹, 2 decimals. Red = degrowth."
     )
     rep, rtypes = L.region_store_report(df_exec, asof=pd.Timestamp(end_d))
+    if rep.empty:
+        st.info("No stores match the current filters.")
+        st.stop()
 
     compact = st.toggle(
         "📱 Compact view (best on mobile)", value=False,

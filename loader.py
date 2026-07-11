@@ -719,10 +719,16 @@ def region_store_report(df: pd.DataFrame, asof=None):
     date_str = asof.strftime("%d-%m-%Y")
 
     master = load_store_master()
+    # Only show stores that survive the current filters (region/store/brand/…).
+    present = set(df[COL_STORE_LABEL].dropna().unique())
+    master = master[master["tableau_name"].isin(present)]
     master["_rord"] = master["region"].map(
         {k: i for i, k in enumerate(_REGION_ORDER)}).fillna(99)
     master["_code_num"] = pd.to_numeric(master["code"], errors="coerce")
     master = master.sort_values(["_rord", "_code_num"])
+
+    if master.empty:
+        return pd.DataFrame(columns=REPORT_COLS), []
 
     rows, types = [], []
 
