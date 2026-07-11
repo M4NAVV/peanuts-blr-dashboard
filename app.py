@@ -253,7 +253,7 @@ CHART_TYPES = ["Bar", "Horizontal bar", "Line", "Area", "Pie / Donut",
 
 
 def draw_view(cfg: dict, height: int = 360):
-    """Render one configured view (metric × dimension[s] × chart type)."""
+    """Render one configured view as a numbers table (charts removed — numbers only)."""
     view = L.build_view(
         df, cfg["metric"], cfg["group_dim"],
         split_dim=cfg.get("split_dim"), top=cfg.get("top"),
@@ -261,7 +261,6 @@ def draw_view(cfg: dict, height: int = 360):
     data = view["data"].copy()
     is_money = view["is_money"]
     order = view["order"]
-    chart = cfg["chart"]
     has_split = view["split_dim"] is not None
 
     if data.empty:
@@ -272,117 +271,26 @@ def draw_view(cfg: dict, height: int = 360):
     data["group"] = pd.Categorical(data["group"], categories=order, ordered=True)
     data = data.sort_values("group")
 
-    color = "split" if has_split else None
-
-    # Table branch first — it keeps full unscaled rupee values (Indian grouped).
-    if chart == "Table":
-        if has_split:
-            pivot = data.pivot_table(index="group", columns="split", values="value",
-                                     aggfunc="sum", observed=True).reset_index()
-            pivot = pivot.rename(columns={"group": cfg["group_dim"]})
-            if is_money:
-                for c in pivot.columns[1:]:
-                    pivot[c] = pivot[c].map(lambda v: fmt_in(v, 2))
-            st.dataframe(pivot, use_container_width=True, hide_index=True)
+    if has_split:
+        pivot = data.pivot_table(index="group", columns="split", values="value",
+                                 aggfunc="sum", observed=True).reset_index()
+        pivot = pivot.rename(columns={"group": cfg["group_dim"]})
+        if is_money:
+            for c in pivot.columns[1:]:
+                pivot[c] = pivot[c].map(lambda v: fmt_in(v, 2))
+        st.dataframe(pivot, use_container_width=True, hide_index=True)
+    else:
+        t = data[["group", "value"]].rename(columns={"group": cfg["group_dim"]})
+        if is_money:
+            t[view["metric"]] = t.pop("value").map(lambda v: fmt_in(v, 2))
+            st.dataframe(t, use_container_width=True, hide_index=True)
         else:
-            t = data[["group", "value"]].rename(columns={"group": cfg["group_dim"]})
-            if is_money:
-                t[view["metric"]] = t.pop("value").map(lambda v: fmt_in(v, 2))
-                st.dataframe(t, use_container_width=True, hide_index=True)
-            else:
-                t = t.rename(columns={"value": view["metric"]})
-                st.dataframe(
-                    t, use_container_width=True, hide_index=True,
-                    column_config={view["metric"]:
-                                   st.column_config.NumberColumn(format="%.2f")},
-                )
-        return
-
-    # Scale money into Indian units (₹ Cr / L / K) so axes never show millions.
-    unit_lbl = ""
-    if is_money:
-        m = float(data["value"].abs().max() or 0)
-        div, unit_lbl = (
-            (1e7, "₹ Cr") if m >= 1e7 else
-            (1e5, "₹ L") if m >= 1e5 else
-            (1e3, "₹ K") if m >= 1e3 else (1.0, "₹")
-        )
-        data["value"] = data["value"] / div
-    base = view["metric"].replace(" (₹)", "")
-    axis_title = f"{base} ({unit_lbl})" if is_money else view["metric"]
-
-    if chart in ("Bar", "Horizontal bar"):
-        horizontal = chart == "Horizontal bar"
-        fig = px.bar(
-            data, x="value" if horizontal else "group",
-            y="group" if horizontal else "value",
-            color=color, orientation="h" if horizontal else "v",
-            color_discrete_sequence=SEQ, barmode="group",
-        )
-        if horizontal:
-            fig.update_layout(yaxis_title="", xaxis_title=axis_title)
-            fig.update_yaxes(categoryorder="array", categoryarray=order[::-1])
-            if is_money:
-                fig.update_traces(hovertemplate="%{y}<br>%{x:.2f} " + unit_lbl + "<extra></extra>")
-        else:
-            fig.update_layout(xaxis_title="", yaxis_title=axis_title)
-            if is_money:
-                fig.update_traces(hovertemplate="%{x}<br>%{y:.2f} " + unit_lbl + "<extra></extra>")
-
-    elif chart in ("Line", "Area"):
-        fn = px.area if chart == "Area" else px.line
-        fig = fn(data, x="group", y="value", color=color, markers=True,
-                 color_discrete_sequence=SEQ)
-        fig.update_layout(xaxis_title="", yaxis_title=axis_title)
-        if is_money:
-            fig.update_traces(hovertemplate="%{x}<br>%{y:.2f} " + unit_lbl + "<extra></extra>")
-
-    elif chart == "Pie / Donut":
-        agg = data.groupby("group", observed=True)["value"].sum().reset_index()
-        fig = px.pie(agg, names="group", values="value", hole=0.5,
-                     color_discrete_sequence=SEQ)
-        if is_money:
-            fig.update_traces(hovertemplate="%{label}<br>%{value:.2f} " + unit_lbl
-                              + " (%{percent})<extra></extra>")
-
-    elif chart == "Treemap":
-        agg = data.groupby("group", observed=True)["value"].sum().reset_index()
-        fig = px.treemap(agg, path=["group"], values="value",
-                         color_discrete_sequence=SEQ)
-        if is_money:
-            fig.update_traces(
-                texttemplate="%{label}<br>%{value:.2f} " + unit_lbl,
-                hovertemplate="%{label}<br>%{value:.2f} " + unit_lbl + "<extra></extra>")
-
-    elif chart == "Heatmap (pivot)":
-        if not has_split:
-            st.info("Heatmap needs a **split** dimension. Pick one, or choose another chart.")
-            return
-        pivot = data.pivot_table(index="split", columns="group", values="value",
-                                 aggfunc="sum", observed=True)
-        fig = px.imshow(pivot, color_continuous_scale="OrRd", aspect="auto",
-                        labels=dict(color=axis_title))
-        fig.update_layout(xaxis_title=cfg["group_dim"], yaxis_title=view["split_dim"])
-
-    # Data labels for readable, small-N bar charts (single series).
-    if chart in ("Bar", "Horizontal bar") and not has_split and len(data) <= 20:
-        if is_money:
-            tmpl = "%{x:.1f}" if horizontal else "%{y:.1f}"
-        else:
-            tmpl = "%{x:,.0f}" if horizontal else "%{y:,.0f}"
-        fig.update_traces(texttemplate=tmpl, textposition="outside",
-                          cliponaxis=False, textfont_size=10)
-
-    fig.update_layout(
-        height=height, plot_bgcolor="white", paper_bgcolor="white",
-        margin=dict(t=12, b=8, l=8, r=8), legend_title_text=view["split_dim"] or "",
-        font=dict(family="Inter, -apple-system, Segoe UI, sans-serif",
-                  size=12, color=INK),
-        hoverlabel=dict(font_size=12),
-    )
-    fig.update_xaxes(showgrid=False, zeroline=False)
-    fig.update_yaxes(gridcolor="#EFEAE0", zeroline=False)
-    st.plotly_chart(fig, use_container_width=True, key=cfg.get("_key"))
+            t = t.rename(columns={"value": view["metric"]})
+            st.dataframe(
+                t, use_container_width=True, hide_index=True,
+                column_config={view["metric"]:
+                               st.column_config.NumberColumn(format="%.2f")},
+            )
 
 
 def exec_window_row(title, r):
@@ -498,20 +406,12 @@ with tab_exec:
     mtd_r = L.window_yoy_takeover(df_exec, "MTD")
     ytd_r = L.window_yoy_takeover(df_exec, "YTD")
 
-    # Hero scorecard — the headline numbers with sparklines.
-    ytd_cur, _ = L.report_frames(df_exec, "YTD")
-    mtd_cur, _ = L.report_frames(df_exec, "MTD")
-    monthly_spark = (ytd_cur.groupby(ytd_cur["date"].dt.to_period("M"))["Bill Amount"]
-                     .sum().tolist())
-    daily_spark = (mtd_cur.groupby(mtd_cur["date"].dt.date)["Bill Amount"]
-                   .sum().tolist())
+    # Hero scorecard — the headline numbers.
     h = st.columns(4)
     h[0].markdown(kpi_card("YTD Sales", inr(ytd_r["cur"]["sales"]),
-                           ytd_r["growth"]["sales"], spark=monthly_spark, hero=True),
-                  unsafe_allow_html=True)
+                           ytd_r["growth"]["sales"], hero=True), unsafe_allow_html=True)
     h[1].markdown(kpi_card("MTD Sales", inr(mtd_r["cur"]["sales"]),
-                           mtd_r["growth"]["sales"], spark=daily_spark, hero=True),
-                  unsafe_allow_html=True)
+                           mtd_r["growth"]["sales"], hero=True), unsafe_allow_html=True)
     h[2].markdown(kpi_card("YTD Bills", f'{ytd_r["cur"]["bills"]:,}',
                            ytd_r["growth"]["bills"], hero=True), unsafe_allow_html=True)
     h[3].markdown(kpi_card("YTD Avg Bill", inr(ytd_r["cur"]["atv"]),
@@ -591,41 +491,17 @@ with tab_overview:
 with tab_stores:
     st.subheader("Store comparison")
     rank_metric = st.selectbox(
-        "Rank / compare stores by", list(L.METRICS.keys()), index=0,
+        "Break stores down by", list(L.METRICS.keys()), index=0,
         key="store_rank_metric",
     )
-    colA, colB = st.columns([3, 2])
-    with colA:
-        st.caption("Leaderboard")
-        draw_view({"metric": rank_metric, "group_dim": "Store",
-                   "chart": "Horizontal bar", "top": 30, "_key": "st_bar"}, height=560)
-    with colB:
-        st.caption("Contribution")
-        draw_view({"metric": rank_metric, "group_dim": "Store",
-                   "chart": "Treemap", "top": 30, "_key": "st_tree"}, height=560)
-
-    st.markdown("---")
-    st.subheader(f"Store × {granularity} — {rank_metric}")
-    st.caption("Darker = higher. Spot which stores drive which periods.")
+    st.markdown(f"**Store × {granularity} — {rank_metric}**")
     draw_view({"metric": rank_metric, "group_dim": granularity,
-               "split_dim": "Store", "chart": "Heatmap (pivot)",
-               "_key": "st_heat"}, height=520)
+               "split_dim": "Store", "_key": "st_pivot"})
 
     st.markdown("---")
     ss_raw = L.store_summary(df)
-
-    if "sales_psf" in ss_raw.columns:
-        st.subheader("Sales per sq ft (carpet area)")
-        st.caption(f"Sales in view ÷ carpet area — retail productivity. "
-                   f"{start_d:%d %b %Y} → {end_d:%d %b %Y}.")
-        psf = ss_raw.dropna(subset=["sales_psf"]).sort_values("sales_psf")
-        fig = px.bar(psf, x="sales_psf", y=L.COL_STORE_LABEL, orientation="h",
-                     color_discrete_sequence=[MAROON])
-        fig.update_layout(height=520, plot_bgcolor="white", yaxis_title="",
-                          xaxis_title="₹ per sq ft", margin=dict(t=10))
-        fig.update_traces(hovertemplate="%{y}<br>₹%{x:,.0f}/sqft<extra></extra>")
-        st.plotly_chart(fig, use_container_width=True)
-        st.markdown("---")
+    st.caption("Sales/sqft = sales in view ÷ carpet area (retail productivity). "
+               "Click a column header to sort.")
 
     st.subheader("Per-store KPI table")
     ss = ss_raw.rename(columns={
@@ -651,8 +527,9 @@ with tab_stores:
 with tab_build:
     st.subheader("Build your own view")
     st.caption(
-        "Pick a metric, a dimension to break it down by, and a chart. "
-        "Add as many panels as you like — this layout is yours for this session."
+        "Pick a metric and a dimension to break it down by (optionally a second "
+        "dimension to split by) — you get a numbers table. Add as many as you like; "
+        "this layout is yours for this session."
     )
 
     if "panels" not in st.session_state:
@@ -675,17 +552,15 @@ with tab_build:
                                index=L.ALL_DIMS.index("Month"), key="nb_group")
         n_split = c3.selectbox("Split by (optional)", ["(none)"] + L.ALL_DIMS,
                                key="nb_split")
-        c4, c5, c6 = st.columns(3)
-        n_chart = c4.selectbox("Chart", CHART_TYPES, key="nb_chart")
-        n_top = c5.slider("Top N (categories)", 3, 30, 12, key="nb_top")
-        n_width = c6.selectbox("Width", ["Full", "Half"], key="nb_width")
+        c4, c5 = st.columns(2)
+        n_top = c4.slider("Top N (categories)", 3, 50, 15, key="nb_top")
+        n_width = c5.selectbox("Width", ["Full", "Half"], key="nb_width")
         n_title = st.text_input("Panel title", value=f"{n_metric} by {n_group}",
                                 key="nb_title")
-        if st.button("Add panel", type="primary"):
+        if st.button("Add table", type="primary"):
             st.session_state.panels.append({
                 "title": n_title, "metric": n_metric, "group_dim": n_group,
-                "split_dim": n_split, "chart": n_chart, "top": n_top,
-                "width": n_width,
+                "split_dim": n_split, "top": n_top, "width": n_width,
             })
             st.rerun()
 
@@ -784,9 +659,7 @@ with tab_cat:
 with tab_staff:
     sp = L.salesperson_summary(df)
     st.subheader("Salesperson leaderboard")
-    st.caption(f"{len(sp)} salespeople in view")
-    draw_view({"metric": "Sales (₹)", "group_dim": "Salesperson",
-               "chart": "Horizontal bar", "top": 15, "_key": "sp_bar"}, height=520)
+    st.caption(f"{len(sp)} salespeople in view · click a column header to sort")
     st.dataframe(
         sp.rename(columns={L.COL_SALESPERSON: "Salesperson", "sales": "Sales (₹)",
                            "units": "Units", "bills": "Bills", "atv": "ATV (₹)"}),
@@ -809,24 +682,16 @@ with tab_cust:
     c3.metric("Repeat share of bills",
               f"{(cs['repeat']/total_bills*100):.1f}%" if total_bills else "—")
 
-    colA, colB = st.columns(2)
-    with colA:
-        st.subheader("New vs repeat (bills)")
-        pie = pd.DataFrame({"type": ["New", "Repeat"],
-                            "bills": [cs["new"], cs["repeat"]]})
-        fig = px.pie(pie, names="type", values="bills", hole=0.5,
-                     color_discrete_sequence=[GOLD, MAROON])
-        fig.update_layout(height=320, margin=dict(t=10))
-        st.plotly_chart(fig, use_container_width=True)
-    with colB:
+    if not cs["trend"].empty:
         st.subheader("Repeat share by month")
-        if not cs["trend"].empty:
-            fig = px.line(cs["trend"], x="month_label", y="repeat_share", markers=True,
-                          color_discrete_sequence=[MAROON])
-            fig.update_layout(height=320, plot_bgcolor="white",
-                              yaxis_title="Repeat share (%)", xaxis_title="",
-                              margin=dict(t=10))
-            st.plotly_chart(fig, use_container_width=True)
+        rt = cs["trend"][["month_label", "repeat_share", "bills"]].rename(
+            columns={"month_label": "Month", "repeat_share": "Repeat share %",
+                     "bills": "Bills"})
+        st.dataframe(
+            rt, use_container_width=True, hide_index=True,
+            column_config={"Repeat share %":
+                           st.column_config.NumberColumn(format="%.1f%%")},
+        )
 
     st.subheader("Top customers by spend")
     mask_num = st.checkbox("Mask mobile numbers", value=True)
