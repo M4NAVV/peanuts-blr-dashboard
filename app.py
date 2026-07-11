@@ -231,9 +231,6 @@ with st.sidebar.expander("🏬 Store", expanded=False):
     pool = pool[pool[L.COL_CITY].isin(sel_city)] if sel_city else pool
     sel_store = _msel(st, "Store",
                       sorted(pool[L.COL_STORE_LABEL].dropna().unique()), "f_store")
-    sel_format = _msel(st, "Store format",
-                       sorted(df_all[L.COL_FORMAT].dropna().unique()), "f_format") \
-        if L.COL_FORMAT in df_all.columns else []
 
 # ---- Product (cascading: brand → division → section → department) ----
 with st.sidebar.expander("👕 Product", expanded=False):
@@ -268,7 +265,7 @@ granularity = st.sidebar.radio(
     index=2, horizontal=True,
     help="Drives the trend tables and the default in Build-your-view.")
 
-_FILTER_KEYS = ["f_region", "f_state", "f_city", "f_store", "f_format", "f_brand",
+_FILTER_KEYS = ["f_region", "f_state", "f_city", "f_store", "f_brand",
                 "f_div", "f_sec", "f_dep", "f_mwc", "f_size", "f_color", "f_style",
                 "f_sp"]
 if st.sidebar.button("↺ Reset all filters"):
@@ -280,8 +277,7 @@ if st.sidebar.button("↺ Reset all filters"):
 _CAT_FILTERS = [
     ("Region", L.COL_REGION, sel_region), ("State", L.COL_STATE, sel_state),
     ("City", L.COL_CITY, sel_city), ("Store", L.COL_STORE_LABEL, sel_store),
-    ("Format", L.COL_FORMAT, sel_format), ("Brand", L.COL_BRAND, sel_brand),
-    ("Division", L.COL_DIVISION, sel_div),
+    ("Brand", L.COL_BRAND, sel_brand), ("Division", L.COL_DIVISION, sel_div),
     ("Section", L.COL_SECTION, sel_sec), ("Department", L.COL_DEPARTMENT, sel_dep),
     ("M/W/C", L.COL_MWC, sel_mwc), ("Size", L.COL_SIZE, sel_size),
     ("Color", L.COL_COLOR, sel_color), ("Style", L.COL_STYLE, sel_style),
