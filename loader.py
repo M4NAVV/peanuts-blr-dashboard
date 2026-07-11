@@ -49,6 +49,24 @@ COL_STATE = "state"
 COL_CITY = "city"
 COL_FORMAT = "store_format"
 
+# Brand, derived from the Division name (in clean()).
+COL_BRAND = "brand"
+
+
+def _brand_of(division) -> str:
+    d = str(division).upper()
+    if "MOHEY" in d:
+        return "Mohey"
+    if "TWAMEV" in d:
+        return "Twamev"
+    if d == "MEBAZ":
+        return "Mebaz"
+    if d == "MANTHAN":
+        return "Manthan"
+    if d in ("MANU", "DEFUNCT NEW", "OUTPUT ITEM", "NAN", ""):
+        return "Other"
+    return "Manyavar"
+
 _DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
 # Prefer the full multi-store export; fall back to the single-store file.
 _LOCAL_CANDIDATES = ["fulldata.xlsx", "sales.xlsx"]
@@ -148,6 +166,9 @@ def clean(df: pd.DataFrame) -> pd.DataFrame:
     # Net sales after promotion (discount). Promotion is the discount amount.
     df[COL_PROMO] = df[COL_PROMO].fillna(0)
     df["net_amount"] = df[COL_AMOUNT] - df[COL_PROMO]
+
+    # Brand, derived from Division (Manyavar / Mohey / Twamev / …).
+    df[COL_BRAND] = df[COL_DIVISION].map(_brand_of)
 
     # Blank mobiles -> NA so unique-customer counts don't lump them as one.
     df["mobile_clean"] = (
@@ -401,6 +422,8 @@ MONEY_METRICS = {"sales", "net_sales", "discount", "atv", "asp"}
 # Friendly categorical dimension name -> column.
 CAT_DIMS: dict[str, str] = {
     "Store": COL_STORE_LABEL,
+    "Region": COL_REGION,
+    "Brand": COL_BRAND,
     "Division": COL_DIVISION,
     "Section": COL_SECTION,
     "Department": COL_DEPARTMENT,
