@@ -410,16 +410,12 @@ if active_filters:
         for lbl, sel in active_filters)
     st.markdown("**Filters:** " + chips, unsafe_allow_html=True)
 
-_sec = st.tabs(["📊 Performance", "🏬 Stores", "🔍 Explore", "👥 People"])
-with _sec[0]:
-    tab_exec, tab_report, tab_overview = st.tabs(
-        ["📊 Executive", "📋 MTD / YTD Report", "Overview"])
-tab_stores = _sec[1]
-with _sec[2]:
-    tab_build, tab_trends, tab_cat, tab_merch = st.tabs(
-        ["🔧 Build your view", "Trends", "Category mix", "Colors & sizes"])
-with _sec[3]:
-    tab_staff, tab_cust = st.tabs(["Salespeople", "Customers"])
+(tab_report, tab_exec, tab_overview, tab_stores, tab_build, tab_trends,
+ tab_cat, tab_staff, tab_cust, tab_merch) = st.tabs([
+    "📋 MTD / YTD Report", "📊 Executive", "Overview", "🏬 Stores",
+    "🔧 Build your view", "Trends", "Category mix", "Salespeople",
+    "Customers", "Colors & sizes",
+])
 
 # =========================================================================== #
 # MTD / YTD REPORT — region × store, year-on-year (the executive table)
