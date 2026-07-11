@@ -213,14 +213,19 @@ def _msel(container, label, options, key):
     return container.multiselect(label, options, default=[], key=key)
 
 
-# ---- Store (cascading: region → state → city → store) ----
+# ---- Region (prominent — North East vs South) ----
+st.sidebar.markdown("#### 🧭 Region")
+sel_region = st.sidebar.multiselect(
+    "Region", sorted(df_all[L.COL_REGION].dropna().unique()), default=[],
+    key="f_region", label_visibility="collapsed",
+    help="North East vs South — leave empty for all")
+_rpool = df_all[df_all[L.COL_REGION].isin(sel_region)] if sel_region else df_all
+
+# ---- Store (cascading: state → city → store) ----
 with st.sidebar.expander("🏬 Store", expanded=False):
-    sel_region = _msel(st, "Region",
-                       sorted(df_all[L.COL_REGION].dropna().unique()), "f_region")
-    pool = df_all[df_all[L.COL_REGION].isin(sel_region)] if sel_region else df_all
     sel_state = _msel(st, "State",
-                      sorted(pool[L.COL_STATE].dropna().unique()), "f_state")
-    pool = pool[pool[L.COL_STATE].isin(sel_state)] if sel_state else pool
+                      sorted(_rpool[L.COL_STATE].dropna().unique()), "f_state")
+    pool = _rpool[_rpool[L.COL_STATE].isin(sel_state)] if sel_state else _rpool
     sel_city = _msel(st, "City",
                      sorted(pool[L.COL_CITY].dropna().unique()), "f_city")
     pool = pool[pool[L.COL_CITY].isin(sel_city)] if sel_city else pool
@@ -230,11 +235,14 @@ with st.sidebar.expander("🏬 Store", expanded=False):
                        sorted(df_all[L.COL_FORMAT].dropna().unique()), "f_format") \
         if L.COL_FORMAT in df_all.columns else []
 
-# ---- Product (cascading: division → section → department) ----
+# ---- Product (cascading: brand → division → section → department) ----
 with st.sidebar.expander("👕 Product", expanded=False):
+    sel_brand = _msel(st, "Brand",
+                      sorted(df_all[L.COL_BRAND].dropna().unique()), "f_brand")
+    _bpool = df_all[df_all[L.COL_BRAND].isin(sel_brand)] if sel_brand else df_all
     sel_div = _msel(st, "Division",
-                    sorted(df_all[L.COL_DIVISION].dropna().unique()), "f_div")
-    ppool = df_all[df_all[L.COL_DIVISION].isin(sel_div)] if sel_div else df_all
+                    sorted(_bpool[L.COL_DIVISION].dropna().unique()), "f_div")
+    ppool = _bpool[_bpool[L.COL_DIVISION].isin(sel_div)] if sel_div else _bpool
     sel_sec = _msel(st, "Section",
                     sorted(ppool[L.COL_SECTION].dropna().unique()), "f_sec")
     ppool = ppool[ppool[L.COL_SECTION].isin(sel_sec)] if sel_sec else ppool
@@ -260,8 +268,9 @@ granularity = st.sidebar.radio(
     index=2, horizontal=True,
     help="Drives the trend tables and the default in Build-your-view.")
 
-_FILTER_KEYS = ["f_region", "f_state", "f_city", "f_store", "f_format", "f_div",
-                "f_sec", "f_dep", "f_mwc", "f_size", "f_color", "f_style", "f_sp"]
+_FILTER_KEYS = ["f_region", "f_state", "f_city", "f_store", "f_format", "f_brand",
+                "f_div", "f_sec", "f_dep", "f_mwc", "f_size", "f_color", "f_style",
+                "f_sp"]
 if st.sidebar.button("↺ Reset all filters"):
     for _k in _FILTER_KEYS:
         st.session_state.pop(_k, None)
@@ -271,7 +280,8 @@ if st.sidebar.button("↺ Reset all filters"):
 _CAT_FILTERS = [
     ("Region", L.COL_REGION, sel_region), ("State", L.COL_STATE, sel_state),
     ("City", L.COL_CITY, sel_city), ("Store", L.COL_STORE_LABEL, sel_store),
-    ("Format", L.COL_FORMAT, sel_format), ("Division", L.COL_DIVISION, sel_div),
+    ("Format", L.COL_FORMAT, sel_format), ("Brand", L.COL_BRAND, sel_brand),
+    ("Division", L.COL_DIVISION, sel_div),
     ("Section", L.COL_SECTION, sel_sec), ("Department", L.COL_DEPARTMENT, sel_dep),
     ("M/W/C", L.COL_MWC, sel_mwc), ("Size", L.COL_SIZE, sel_size),
     ("Color", L.COL_COLOR, sel_color), ("Style", L.COL_STYLE, sel_style),
