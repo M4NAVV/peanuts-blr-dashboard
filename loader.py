@@ -575,9 +575,10 @@ def window_yoy(df: pd.DataFrame, start: pd.Timestamp, end: pd.Timestamp) -> dict
     }
 
 
-def standard_windows(df: pd.DataFrame) -> dict[str, tuple]:
-    """MTD / QTD / YTD (fiscal) and the last completed month, as (start, end)."""
-    asof = as_of(df)
+def standard_windows(df: pd.DataFrame, asof=None) -> dict[str, tuple]:
+    """MTD / QTD / YTD (fiscal) and the last completed month, as (start, end).
+    `asof` defaults to the latest data date; pass a date to report as of it."""
+    asof = as_of(df) if asof is None else pd.Timestamp(asof)
     mtd = (asof.replace(day=1), asof)
 
     q_start_month = {4: 4, 5: 4, 6: 4, 7: 7, 8: 7, 9: 7,
@@ -594,9 +595,9 @@ def standard_windows(df: pd.DataFrame) -> dict[str, tuple]:
     return {"MTD": mtd, "QTD": qtd, "YTD": ytd, "Last month": last_month}
 
 
-def store_yoy(df: pd.DataFrame, kind: str = "YTD") -> pd.DataFrame:
+def store_yoy(df: pd.DataFrame, kind: str = "YTD", asof=None) -> pd.DataFrame:
     """Per-store sales YoY using per-store takeover-anchored windows + growth %."""
-    cur_f, pri_f = report_frames(df, kind)
+    cur_f, pri_f = report_frames(df, kind, asof=asof)
     cur = cur_f.groupby(COL_STORE_LABEL)[COL_AMOUNT].sum().rename("cur")
     pri = pri_f.groupby(COL_STORE_LABEL)[COL_AMOUNT].sum().rename("prior")
     m = pd.concat([cur, pri], axis=1).fillna(0.0).reset_index()
@@ -646,10 +647,11 @@ def _anchor_md(df: pd.DataFrame):
     return m, d
 
 
-def report_frames(df: pd.DataFrame, kind: str):
+def report_frames(df: pd.DataFrame, kind: str, asof=None):
     """Current & same-period-last-year frames for kind in {MTD, YTD}, with each
-    store's window anchored to its own takeover date (so TY and LY line up)."""
-    asof = as_of(df)
+    store's window anchored to its own takeover date (so TY and LY line up).
+    `asof` (the to-date reference) defaults to the latest data date."""
+    asof = as_of(df) if asof is None else pd.Timestamp(asof)
     fy_year = asof.year if asof.month >= 4 else asof.year - 1
     m, d = _anchor_md(df)
 
@@ -683,9 +685,9 @@ def _frame_metrics(f: pd.DataFrame) -> dict:
             "atv": sales / bills if bills else 0.0}
 
 
-def window_yoy_takeover(df: pd.DataFrame, kind: str) -> dict:
+def window_yoy_takeover(df: pd.DataFrame, kind: str, asof=None) -> dict:
     """YoY for MTD/YTD using per-store takeover-anchored windows (for exec cards)."""
-    cur, prior = report_frames(df, kind)
+    cur, prior = report_frames(df, kind, asof=asof)
     c, p = _frame_metrics(cur), _frame_metrics(prior)
     growth = {k: ((c[k] - p[k]) / p[k] * 100 if p[k] else None) for k in c}
     def _rng(f):
@@ -703,16 +705,18 @@ def _growth_pct(ty: float, ly: float):
     return ((ty - ly) / ly * 100) if ly else None
 
 
-def region_store_report(df: pd.DataFrame):
+def region_store_report(df: pd.DataFrame, asof=None):
     """Region-grouped, store-wise MTD/YTD year-on-year table with subtotals and
     a grand total. Returns (display_df, row_types) where row_types marks each row
-    as 'store' | 'subtotal' | 'grand' for styling."""
-    mtd_cur, mtd_pri = report_frames(df, "MTD")
-    ytd_cur, ytd_pri = report_frames(df, "YTD")
+    as 'store' | 'subtotal' | 'grand' for styling. `asof` = the to-date reference
+    (defaults to the latest data date)."""
+    asof = as_of(df) if asof is None else pd.Timestamp(asof)
+    mtd_cur, mtd_pri = report_frames(df, "MTD", asof=asof)
+    ytd_cur, ytd_pri = report_frames(df, "YTD", asof=asof)
     g = lambda f: f.groupby(COL_STORE_LABEL)[COL_AMOUNT].sum()
     mtd_ty, mtd_ly = g(mtd_cur), g(mtd_pri)
     ytd_ty, ytd_ly = g(ytd_cur), g(ytd_pri)
-    date_str = as_of(df).strftime("%d-%m-%Y")
+    date_str = asof.strftime("%d-%m-%Y")
 
     master = load_store_master()
     master["_rord"] = master["region"].map(

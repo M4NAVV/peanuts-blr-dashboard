@@ -419,11 +419,12 @@ if active_filters:
 with tab_report:
     st.subheader("Store-wise MTD / YTD — Year on Year")
     st.caption(
-        "MTD = current month to date · YTD = financial year (Apr–Mar) to date · "
+        f"**As of {end_d:%d %b %Y}** (follows the date picker). "
+        "MTD = month to date · YTD = financial year (Apr–Mar) to date · "
         "LY = same period last year · TY = this year · GD = growth/degrowth. "
         "All values in ₹, 2 decimals. Red = degrowth."
     )
-    rep, rtypes = L.region_store_report(df_exec)
+    rep, rtypes = L.region_store_report(df_exec, asof=pd.Timestamp(end_d))
 
     compact = st.toggle(
         "📱 Compact view (best on mobile)", value=False,
@@ -479,16 +480,16 @@ with tab_report:
 # EXECUTIVE — MTD / QTD / YTD, all year-on-year (fiscal year Apr–Mar)
 # =========================================================================== #
 with tab_exec:
-    asof = L.as_of(df_exec)
+    asof = pd.Timestamp(end_d)
     st.caption(
-        f"Fiscal year **Apr–Mar**, each store counted from its **takeover date** "
+        f"**As of {asof:%d %b %Y}** (follows the date picker). Fiscal year "
+        f"**Apr–Mar**, each store counted from its **takeover date** "
         f"(South: 19 Apr 2025). All figures **year-on-year** vs the same period "
-        f"last year. Data as of **{asof:%d %b %Y}**. "
-        f"Respects the Store / Division filters (not the date range)."
+        f"last year. Respects the Store / filters."
     )
-    wins = L.standard_windows(df_exec)
-    mtd_r = L.window_yoy_takeover(df_exec, "MTD")
-    ytd_r = L.window_yoy_takeover(df_exec, "YTD")
+    wins = L.standard_windows(df_exec, asof=asof)
+    mtd_r = L.window_yoy_takeover(df_exec, "MTD", asof=asof)
+    ytd_r = L.window_yoy_takeover(df_exec, "YTD", asof=asof)
 
     # Hero scorecard — the headline numbers.
     h = st.columns(4)
@@ -522,7 +523,7 @@ with tab_exec:
     st.subheader("Store YoY — YTD growth / degrowth")
     st.caption("This financial year to date vs same period last year, per store. "
                "Sorted to surface degrowth. “—” = no last-year data (new store).")
-    sy = L.store_yoy(df_exec, "YTD").rename(columns={
+    sy = L.store_yoy(df_exec, "YTD", asof=asof).rename(columns={
         L.COL_STORE_LABEL: "Store", "cur": "YTD (₹)", "prior": "LY YTD (₹)",
         "growth": "Growth %"})
     sy = sy.sort_values("Growth %", ascending=True, na_position="last")
