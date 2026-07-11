@@ -43,6 +43,12 @@ NUMERIC_COLS = [COL_AMOUNT, COL_QTY, COL_PROMO]
 # Cleaned, display-friendly store name (derived in clean()).
 COL_STORE_LABEL = "store"
 
+# Store-master attributes joined onto the data (in _enrich()).
+COL_REGION = "region"
+COL_STATE = "state"
+COL_CITY = "city"
+COL_FORMAT = "store_format"
+
 _DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
 # Prefer the full multi-store export; fall back to the single-store file.
 _LOCAL_CANDIDATES = ["fulldata.xlsx", "sales.xlsx"]
@@ -168,7 +174,21 @@ def clean(df: pd.DataFrame) -> pd.DataFrame:
 
 def load_data() -> pd.DataFrame:
     """Public entry point. Streamlit caching is applied in app.py."""
-    return _apply_takeover_filter(clean(_read_raw()))
+    df = clean(_read_raw())
+    df = _apply_takeover_filter(df)
+    df = _enrich(df)
+    return df
+
+
+def _enrich(df: pd.DataFrame) -> pd.DataFrame:
+    """Join store-master attributes (region / state / city / format) onto rows,
+    so they become filterable dimensions."""
+    m = load_store_master().set_index("tableau_name")
+    for src, dst in [("region", COL_REGION), ("state", COL_STATE),
+                     ("city", COL_CITY), ("format", COL_FORMAT)]:
+        if src in m.columns:
+            df[dst] = df[COL_STORE_LABEL].map(m[src])
+    return df
 
 
 def _apply_takeover_filter(df: pd.DataFrame) -> pd.DataFrame:
