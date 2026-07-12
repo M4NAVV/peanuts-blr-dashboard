@@ -186,66 +186,62 @@ def stat_card(title, rows) -> str:
         f'{body}</div>')
 
 
+GRN_TXT, RED_TXT = "#137a3a", "#C0143C"
+
+
 def styled_report_html(disp, money_cols=(), pct_cols=(), sign_cols=(),
-                       row_types=None, header_bg=MAROON, max_h="72vh"):
-    """Render a report DataFrame as a professional, high-contrast HTML table
-    (bigger text, dark header, zebra rows, right-aligned tabular numbers,
-    shaded subtotals/totals, red/green growth). For on-screen readability."""
-    money, pct = set(money_cols), set(pct_cols)
-    fmt = {}
-    for c in disp.columns:
-        if c in money:
-            fmt[c] = lambda v: fmt_in(v, 2) if pd.notna(v) else "—"
-        elif c in pct:
-            fmt[c] = lambda v: f"{v:,.2f}%" if pd.notna(v) else "—"
-    sty = disp.style.format(fmt)
-    sty.set_table_styles([
-        {"selector": "", "props": [
-            ("border-collapse", "separate"), ("border-spacing", "0"),
-            ("width", "100%"),
-            ("font-family", "Inter,-apple-system,Segoe UI,sans-serif")]},
-        {"selector": "thead th", "props": [
-            ("background", header_bg), ("color", "#ffffff"), ("font-weight", "700"),
-            ("font-size", "12.5px"), ("text-transform", "uppercase"),
-            ("letter-spacing", ".02em"), ("padding", "11px 12px"),
-            ("text-align", "center"), ("position", "sticky"), ("top", "0"),
-            ("z-index", "2"), ("border-bottom", "2px solid rgba(0,0,0,.15)")]},
-        {"selector": "tbody td", "props": [
-            ("padding", "9px 13px"), ("font-size", "14px"), ("color", "#1f2937"),
-            ("border-bottom", "1px solid #ECE4D6"), ("white-space", "nowrap"),
-            ("font-variant-numeric", "tabular-nums")]},
-        {"selector": "tbody tr:nth-child(even) td",
-         "props": [("background-color", "#FBF8F3")]},
-        {"selector": "tbody tr:hover td",
-         "props": [("background-color", "#F1E9DA")]},
-    ])
-    sty.hide(axis="index")
-    num_cols = [c for c in disp.columns if c in money or c in pct]
-    if num_cols:
-        sty.set_properties(subset=num_cols, **{"text-align": "right"})
-    txt_cols = [c for c in disp.columns if c not in num_cols]
-    if txt_cols:
-        sty.set_properties(subset=txt_cols, **{"text-align": "left"})
+                       row_types=None, font_px=12.5):
+    """Compact, high-contrast HTML table built with INLINE styles (so colors
+    always render in Streamlit): maroon header, zebra rows, tabular right-aligned
+    numbers, shaded subtotals/totals, and red/green on growth columns."""
+    money, pct, sign = set(money_cols), set(pct_cols), set(sign_cols)
+    cols = list(disp.columns)
 
-    scols = [c for c in sign_cols if c in disp.columns]
-    if scols:
-        sty.map(lambda v: "color:#C0143C;font-weight:700" if pd.notna(v) and v < 0
-                else ("color:#137a3a;font-weight:700" if pd.notna(v) else ""),
-                subset=scols)
+    def align(c):
+        return "right" if (c in money or c in pct) else "left"
 
-    if row_types is not None:
-        def _rowbg(row):
-            t = row_types[row.name]
-            if t == "subtotal":
-                return ["background-color:#F6D9D5;font-weight:700"] * len(row)
-            if t == "grand":
-                return ["background-color:#CDE8CF;font-weight:800"] * len(row)
-            return [""] * len(row)
-        sty.apply(_rowbg, axis=1)
+    ths = "".join(
+        f'<th style="background:{MAROON};color:#fff;font-weight:700;'
+        f'font-size:{font_px - 1:.0f}px;text-transform:uppercase;letter-spacing:.02em;'
+        f'padding:8px 10px;text-align:{align(c)};position:sticky;top:0;'
+        f'white-space:nowrap;">{c}</th>' for c in cols)
 
-    return (f'<div style="max-height:{max_h};overflow:auto;border:1px solid '
-            f'#E7E1D6;border-radius:12px;box-shadow:0 1px 5px rgba(0,0,0,.06);">'
-            f'{sty.to_html()}</div>')
+    trs = []
+    for i in range(len(disp)):
+        t = row_types[i] if row_types is not None else "store"
+        if t == "subtotal":
+            rbg, fw = "#F6D9D5", "700"
+        elif t == "grand":
+            rbg, fw = "#CDE8CF", "800"
+        else:
+            rbg, fw = ("#FFFFFF" if i % 2 == 0 else "#FAF6EF"), "500"
+        tds = []
+        for c in cols:
+            v = disp.iloc[i][c]
+            if c in money:
+                txt = fmt_in(v, 2) if pd.notna(v) else "—"
+            elif c in pct:
+                txt = f"{v:,.2f}%" if pd.notna(v) else "—"
+            else:
+                txt = "" if (isinstance(v, float) and pd.isna(v)) else str(v)
+            color = "#1f2937"
+            if c in sign and pd.notna(v):
+                try:
+                    color = RED_TXT if float(v) < 0 else GRN_TXT
+                except (TypeError, ValueError):
+                    pass
+            tds.append(
+                f'<td style="padding:5px 10px;text-align:{align(c)};color:{color};'
+                f'font-weight:{fw};background:{rbg};border-bottom:1px solid #ECE4D6;'
+                f'white-space:nowrap;font-variant-numeric:tabular-nums;">{txt}</td>')
+        trs.append(f"<tr>{''.join(tds)}</tr>")
+
+    table = (
+        f'<table style="border-collapse:collapse;width:100%;'
+        f'font-family:Inter,-apple-system,Segoe UI,sans-serif;font-size:{font_px}px;">'
+        f'<thead><tr>{ths}</tr></thead><tbody>{"".join(trs)}</tbody></table>')
+    return (f'<div style="overflow-x:auto;border:1px solid #E7E1D6;'
+            f'border-radius:10px;">{table}</div>')
 
 
 def _fmt_cell_money(v):
@@ -257,9 +253,10 @@ def _fmt_cell_pct(v):
 
 
 def table_to_png(sdf, title, subtitle="", row_bg=None, signed_cols=(),
-                 header_bg="#2E5496"):
-    """Render a string DataFrame to a readable PNG (for sharing). Colors signed
-    columns red/green by sign and shades rows via `row_bg` (list per row)."""
+                 header_bg=MAROON):
+    """Render a string DataFrame to a readable PNG (for sharing), matching the
+    dashboard look. Colors signed columns red/green by sign and shades rows via
+    `row_bg` (list per row)."""
     import io
     import matplotlib
     matplotlib.use("Agg")
@@ -295,7 +292,7 @@ def table_to_png(sdf, title, subtitle="", row_bg=None, signed_cols=(),
             val = str(sdf.iat[i, j]).strip()
             if c in signed and val not in ("", "—"):
                 cell.set_text_props(
-                    color="#C0143C" if val.startswith("-") else "#1B7F3B",
+                    color="#C0143C" if val.startswith("-") else "#137a3a",
                     weight="bold")
             elif bg:
                 cell.set_text_props(weight="bold")
@@ -587,7 +584,7 @@ with tab_report:
         show_cols = ["Region", "STORE CODE", "LOCATION", "Day Sales",
                      "MTD TY", "GD MTD %", "YTD TY", "GD YTD %"]
     else:
-        show_cols = list(rep.columns)
+        show_cols = [c for c in rep.columns if c != "DATE"]  # date is in the caption
     rep_show = rep[show_cols]
 
     val_cols = [c for c in ["Day Sales", "MTD LY", "MTD TY", "GD MTD Value",
@@ -620,7 +617,14 @@ with tab_report:
         for c in _pct:
             sdf[c] = sdf[c].map(_fmt_cell_pct)
         sdf = sdf.astype(str)
-        row_bg = [{"subtotal": "#F4CCCC", "grand": "#D9EAD3"}.get(t) for t in rtypes]
+        row_bg = []
+        for _k, _t in enumerate(rtypes):
+            if _t == "subtotal":
+                row_bg.append("#F6D9D5")
+            elif _t == "grand":
+                row_bg.append("#CDE8CF")
+            else:
+                row_bg.append("#FFFFFF" if _k % 2 == 0 else "#FAF6EF")
         st.session_state["rep_png"] = table_to_png(
             sdf, "", row_bg=row_bg, signed_cols=_money + _pct)
     if st.session_state.get("rep_png"):
@@ -677,8 +681,9 @@ with tab_degrowth:
                 sdf[c] = sdf[c].map(_fmt_cell_money)
             sdf["Degrowth %"] = sdf["Degrowth %"].map(_fmt_cell_pct)
             sdf = sdf.astype(str)
+            dg_bg = ["#FFFFFF" if k % 2 == 0 else "#FAF6EF" for k in range(len(sdf))]
             st.session_state["dg_png"] = table_to_png(
-                sdf, "", signed_cols=["Shortfall", "Degrowth %"])
+                sdf, "", row_bg=dg_bg, signed_cols=["Shortfall", "Degrowth %"])
         if st.session_state.get("dg_png"):
             st.download_button(
                 "⬇ Download image", st.session_state["dg_png"],
