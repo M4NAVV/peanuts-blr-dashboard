@@ -168,6 +168,68 @@ def kpi_card(label, value, delta_pct=None, spark=None, hero=False) -> str:
     )
 
 
+def styled_report_html(disp, money_cols=(), pct_cols=(), sign_cols=(),
+                       row_types=None, header_bg=MAROON, max_h="72vh"):
+    """Render a report DataFrame as a professional, high-contrast HTML table
+    (bigger text, dark header, zebra rows, right-aligned tabular numbers,
+    shaded subtotals/totals, red/green growth). For on-screen readability."""
+    money, pct = set(money_cols), set(pct_cols)
+    fmt = {}
+    for c in disp.columns:
+        if c in money:
+            fmt[c] = lambda v: fmt_in(v, 2) if pd.notna(v) else "—"
+        elif c in pct:
+            fmt[c] = lambda v: f"{v:,.2f}%" if pd.notna(v) else "—"
+    sty = disp.style.format(fmt)
+    sty.set_table_styles([
+        {"selector": "", "props": [
+            ("border-collapse", "separate"), ("border-spacing", "0"),
+            ("width", "100%"),
+            ("font-family", "Inter,-apple-system,Segoe UI,sans-serif")]},
+        {"selector": "thead th", "props": [
+            ("background", header_bg), ("color", "#ffffff"), ("font-weight", "700"),
+            ("font-size", "12.5px"), ("text-transform", "uppercase"),
+            ("letter-spacing", ".02em"), ("padding", "11px 12px"),
+            ("text-align", "center"), ("position", "sticky"), ("top", "0"),
+            ("z-index", "2"), ("border-bottom", "2px solid rgba(0,0,0,.15)")]},
+        {"selector": "tbody td", "props": [
+            ("padding", "9px 13px"), ("font-size", "14px"), ("color", "#1f2937"),
+            ("border-bottom", "1px solid #ECE4D6"), ("white-space", "nowrap"),
+            ("font-variant-numeric", "tabular-nums")]},
+        {"selector": "tbody tr:nth-child(even) td",
+         "props": [("background-color", "#FBF8F3")]},
+        {"selector": "tbody tr:hover td",
+         "props": [("background-color", "#F1E9DA")]},
+    ])
+    sty.hide(axis="index")
+    num_cols = [c for c in disp.columns if c in money or c in pct]
+    if num_cols:
+        sty.set_properties(subset=num_cols, **{"text-align": "right"})
+    txt_cols = [c for c in disp.columns if c not in num_cols]
+    if txt_cols:
+        sty.set_properties(subset=txt_cols, **{"text-align": "left"})
+
+    scols = [c for c in sign_cols if c in disp.columns]
+    if scols:
+        sty.map(lambda v: "color:#C0143C;font-weight:700" if pd.notna(v) and v < 0
+                else ("color:#137a3a;font-weight:700" if pd.notna(v) else ""),
+                subset=scols)
+
+    if row_types is not None:
+        def _rowbg(row):
+            t = row_types[row.name]
+            if t == "subtotal":
+                return ["background-color:#F6D9D5;font-weight:700"] * len(row)
+            if t == "grand":
+                return ["background-color:#CDE8CF;font-weight:800"] * len(row)
+            return [""] * len(row)
+        sty.apply(_rowbg, axis=1)
+
+    return (f'<div style="max-height:{max_h};overflow:auto;border:1px solid '
+            f'#E7E1D6;border-radius:12px;box-shadow:0 1px 5px rgba(0,0,0,.06);">'
+            f'{sty.to_html()}</div>')
+
+
 def _fmt_cell_money(v):
     return fmt_in(v, 2) if pd.notna(v) else "—"
 
@@ -502,32 +564,11 @@ with tab_report:
     sign_cols = [c for c in ["GD MTD Value", "GD MTD %",
                              "GD YTD Value", "GD YTD %"] if c in show_cols]
 
-    def _sign_color(v):
-        if pd.isna(v):
-            return ""
-        return "color: #C0143C" if v < 0 else "color: #1B7F3B"
-
-    def _row_bg(row):
-        t = rtypes[row.name]
-        if t == "subtotal":
-            return ["background-color: #F4CCCC; font-weight: 700"] * len(row)
-        if t == "grand":
-            return ["background-color: #D9EAD3; font-weight: 700"] * len(row)
-        # degrowing store → light red tint
-        if pd.notna(row["GD YTD %"]) and row["GD YTD %"] < 0:
-            return ["background-color: #FCE8E6"] * len(row)
-        return [""] * len(row)
-
-    styler = (
-        rep_show.style
-        .format({**{c: (lambda v: fmt_in(v, 2)) for c in val_cols},
-                 **{c: (lambda v: f"{v:,.2f}%" if pd.notna(v) else "—")
-                    for c in pct_cols}})
-        .apply(_row_bg, axis=1)
-        .map(_sign_color, subset=sign_cols)
-    )
-    st.dataframe(styler, use_container_width=True, hide_index=True,
-                 height=(len(rep_show) + 1) * 36)
+    st.markdown(
+        styled_report_html(rep_show, money_cols=val_cols, pct_cols=pct_cols,
+                           sign_cols=sign_cols, row_types=rtypes),
+        unsafe_allow_html=True)
+    st.write("")
 
     _c1, _c2 = st.columns(2)
     _c1.download_button(
@@ -587,14 +628,11 @@ with tab_degrowth:
             "shortfall": "Shortfall", "growth": "Degrowth %"})
 
         val_cols = ["Day Sales", f"{dg_kind} LY", f"{dg_kind} TY", "Shortfall"]
-        styler = (
-            disp.style
-            .format({**{c: (lambda v: fmt_in(v, 2)) for c in val_cols},
-                     "Degrowth %": lambda v: f"{v:,.2f}%"})
-            .map(lambda v: "color: #C0143C",
-                 subset=["Shortfall", "Degrowth %"]))
-        st.dataframe(styler, use_container_width=True, hide_index=True,
-                     height=(len(disp) + 1) * 36)
+        st.markdown(
+            styled_report_html(disp, money_cols=val_cols, pct_cols=["Degrowth %"],
+                               sign_cols=["Shortfall", "Degrowth %"]),
+            unsafe_allow_html=True)
+        st.write("")
         _d1, _d2 = st.columns(2)
         _d1.download_button(
             "⬇ Download degrowth list (CSV)", disp.to_csv(index=False).encode(),
