@@ -616,9 +616,8 @@ def degrowth_report(df: pd.DataFrame, asof=None, kind: str = "YTD") -> pd.DataFr
     out = sy.merge(m, left_on=COL_STORE_LABEL, right_on="tableau_name", how="left")
     out = out[out["growth"].notna() & (out["growth"] < 0)].copy()
     out["shortfall"] = out["cur"] - out["prior"]
-    rord = {k: i for i, k in enumerate(_REGION_ORDER)}
-    out["_r"] = out["region"].map(rord).fillna(99)
-    out = out.sort_values(["_r", "growth"]).reset_index(drop=True)
+    out["code"] = pd.to_numeric(out["code"], errors="coerce")
+    out = out.sort_values("code").reset_index(drop=True)
     return out[["region", "code", "location", "prior", "cur", "shortfall", "growth"]]
 
 
