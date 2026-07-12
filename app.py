@@ -168,6 +168,24 @@ def kpi_card(label, value, delta_pct=None, spark=None, hero=False) -> str:
     )
 
 
+def stat_card(title, rows) -> str:
+    """A titled card with several label→value rows (colored)."""
+    body = "".join(
+        f'<div style="display:flex;justify-content:space-between;align-items:center;'
+        f'padding:4px 0;">'
+        f'<span style="color:#6b6b6b;font-size:.86rem;">{lbl}</span>'
+        f'<span style="color:{col};font-weight:800;font-size:1.02rem;'
+        f'font-variant-numeric:tabular-nums;">{val}</span></div>'
+        for lbl, val, col in rows)
+    return (
+        f'<div style="background:#fff;border:1px solid #ECE4D6;border-radius:14px;'
+        f'padding:14px 16px;box-shadow:0 1px 4px rgba(0,0,0,.05);min-height:158px;">'
+        f'<div style="color:{MAROON};font-weight:700;font-size:.78rem;'
+        f'text-transform:uppercase;letter-spacing:.03em;margin-bottom:8px;'
+        f'border-bottom:1px solid #EFE7D8;padding-bottom:7px;">{title}</div>'
+        f'{body}</div>')
+
+
 def styled_report_html(disp, money_cols=(), pct_cols=(), sign_cols=(),
                        row_types=None, header_bg=MAROON, max_h="72vh"):
     """Render a report DataFrame as a professional, high-contrast HTML table
@@ -507,13 +525,27 @@ _dlabel = (f"{start_d:%d %b %Y}" if start_d == end_d
            else f"{start_d:%d %b %Y} → {end_d:%d %b %Y}")
 st.caption(f"Peanuts Retail · {scope} · {_dlabel}")
 
-# Selected-period summary bar (reflects current filters + date selection).
-_k = L.headline_kpis(df)
-_sb = st.columns(4)
-_sb[0].metric("Sales (selected)", inr(_k["total_sales"]))
-_sb[1].metric("Bills", f'{_k["bills"]:,}')
-_sb[2].metric("Units", f'{_k["total_units"]:,}')
-_sb[3].metric("Avg Bill", inr(_k["atv"]))
+# Store & value movement (MTD / YTD, YoY) — respects filters + as-of date.
+_mv = L.movement_summary(df_exec, asof=pd.Timestamp(end_d))
+_m, _y = _mv["MTD"], _mv["YTD"]
+GRN, RED = "#137a3a", "#C0143C"
+_c = st.columns(4)
+_c[0].markdown(stat_card("MTD · Stores", [
+    ("Total Stores", f"{_m['total']}", INK),
+    ("Growing", f"{_m['growing']}", GRN),
+    ("De-Growing", f"{_m['degrowing']}", RED)]), unsafe_allow_html=True)
+_c[1].markdown(stat_card("YTD · Stores", [
+    ("Total Stores", f"{_y['total']}", INK),
+    ("Growing", f"{_y['growing']}", GRN),
+    ("De-Growing", f"{_y['degrowing']}", RED)]), unsafe_allow_html=True)
+_c[2].markdown(stat_card("MTD · Growth / Degrowth Value", [
+    ("Total (Net)", inr(_m["net_value"]), GRN if _m["net_value"] >= 0 else RED),
+    ("Growth Value", inr(_m["growth_value"]), GRN),
+    ("Degrowth Value", inr(_m["degrowth_value"]), RED)]), unsafe_allow_html=True)
+_c[3].markdown(stat_card("YTD · Growth / Degrowth Value", [
+    ("Total (Net)", inr(_y["net_value"]), GRN if _y["net_value"] >= 0 else RED),
+    ("Growth Value", inr(_y["growth_value"]), GRN),
+    ("Degrowth Value", inr(_y["degrowth_value"]), RED)]), unsafe_allow_html=True)
 
 # Active-filter chips.
 if active_filters:

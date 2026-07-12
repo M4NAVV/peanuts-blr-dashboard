@@ -627,6 +627,30 @@ def degrowth_report(df: pd.DataFrame, asof=None, kind: str = "YTD") -> pd.DataFr
                 "shortfall", "growth"]]
 
 
+def movement_summary(df: pd.DataFrame, asof=None) -> dict:
+    """Store-count and value movement (growing vs degrowing) for MTD and YTD,
+    year-on-year. Respects whatever `df` is filtered to and the `asof` date."""
+    master_names = set(load_store_master()["tableau_name"])
+    present = [s for s in df[COL_STORE_LABEL].dropna().unique() if s in master_names]
+    res = {}
+    for kind in ("MTD", "YTD"):
+        cur_f, pri_f = report_frames(df, kind, asof=asof)
+        ty = (cur_f.groupby(COL_STORE_LABEL)[COL_AMOUNT].sum()
+              .reindex(present, fill_value=0.0))
+        ly = (pri_f.groupby(COL_STORE_LABEL)[COL_AMOUNT].sum()
+              .reindex(present, fill_value=0.0))
+        diff = ty - ly
+        res[kind] = {
+            "total": len(present),
+            "growing": int((diff > 0).sum()),
+            "degrowing": int((diff < 0).sum()),
+            "growth_value": float(diff[diff > 0].sum()),
+            "degrowth_value": float(diff[diff < 0].sum()),
+            "net_value": float(diff.sum()),
+        }
+    return res
+
+
 # --------------------------------------------------------------------------- #
 # Region × store MTD/YTD YoY report (the executive table)
 # --------------------------------------------------------------------------- #
