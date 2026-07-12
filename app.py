@@ -581,10 +581,10 @@ with tab_report:
         "📱 Compact view (best on mobile)", value=False,
         help="Shows the key columns only — easier to read on a phone.")
     if compact:
-        show_cols = ["Region", "STORE CODE", "LOCATION", "Day Sales",
+        show_cols = ["Region", "DATE", "STORE CODE", "LOCATION", "Day Sales",
                      "MTD TY", "GD MTD %", "YTD TY", "GD YTD %"]
     else:
-        show_cols = [c for c in rep.columns if c != "DATE"]  # date is in the caption
+        show_cols = list(rep.columns)
     rep_show = rep[show_cols]
 
     val_cols = [c for c in ["Day Sales", "MTD LY", "MTD TY", "GD MTD Value",
