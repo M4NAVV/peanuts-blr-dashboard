@@ -168,6 +168,62 @@ def kpi_card(label, value, delta_pct=None, spark=None, hero=False) -> str:
     )
 
 
+def _fmt_cell_money(v):
+    return fmt_in(v, 2) if pd.notna(v) else "—"
+
+
+def _fmt_cell_pct(v):
+    return f"{v:,.2f}%" if pd.notna(v) else "—"
+
+
+def table_to_png(sdf, title, subtitle="", row_bg=None, signed_cols=(),
+                 header_bg="#2E5496"):
+    """Render a string DataFrame to a readable PNG (for sharing). Colors signed
+    columns red/green by sign and shades rows via `row_bg` (list per row)."""
+    import io
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    cols = list(sdf.columns)
+    nrow, ncol = len(sdf), len(cols)
+    widths = [max([len(str(c))] + [len(str(x)) for x in sdf[c]]) for c in cols]
+    fig_w = min(1.0 + 0.135 * sum(widths), 30)
+    fig_h = 1.2 + (nrow + 1) * 0.36
+    fig, ax = plt.subplots(figsize=(fig_w, fig_h), dpi=170)
+    ax.axis("off")
+    ax.set_title(title + (f"\n{subtitle}" if subtitle else ""),
+                 fontsize=13, weight="bold", color="#7A1F2B", pad=12)
+    tbl = ax.table(cellText=sdf.values.tolist(), colLabels=cols,
+                   cellLoc="center", loc="center")
+    tbl.auto_set_font_size(False)
+    tbl.set_fontsize(10)
+    tbl.scale(1, 1.45)
+    tbl.auto_set_column_width(list(range(ncol)))
+    signed = set(signed_cols)
+    for j in range(ncol):
+        h = tbl[0, j]
+        h.set_facecolor(header_bg)
+        h.set_text_props(color="white", weight="bold")
+    for i in range(nrow):
+        bg = row_bg[i] if row_bg else None
+        for j, c in enumerate(cols):
+            cell = tbl[i + 1, j]
+            if bg:
+                cell.set_facecolor(bg)
+            val = str(sdf.iat[i, j]).strip()
+            if c in signed and val not in ("", "—"):
+                cell.set_text_props(
+                    color="#C0143C" if val.startswith("-") else "#1B7F3B",
+                    weight="bold")
+            elif bg:
+                cell.set_text_props(weight="bold")
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", bbox_inches="tight", facecolor="white")
+    plt.close(fig)
+    return buf.getvalue()
+
+
 try:
     df_all = get_data()
 except FileNotFoundError as e:
@@ -472,12 +528,35 @@ with tab_report:
     st.dataframe(styler, use_container_width=True, hide_index=True,
                  height=(len(rep_show) + 1) * 36)
 
-    st.download_button(
+    _c1, _c2 = st.columns(2)
+    _c1.download_button(
         "⬇ Download report (CSV)",
         rep.to_csv(index=False).encode(),
-        file_name=f"peanuts_mtd_ytd_report_{L.as_of(df_exec):%Y%m%d}.csv",
-        mime="text/csv",
+        file_name=f"peanuts_mtd_ytd_report_{end_d:%Y%m%d}.csv",
+        mime="text/csv", use_container_width=True,
     )
+    if _c2.button("🖼️ Generate shareable image (PNG)", key="rep_png_btn",
+                  use_container_width=True):
+        sdf = rep_show.copy()
+        _money = [c for c in ["MTD LY", "MTD TY", "GD MTD Value",
+                              "YTD LY", "YTD TY", "GD YTD Value"] if c in sdf.columns]
+        _pct = [c for c in ["GD MTD %", "GD YTD %"] if c in sdf.columns]
+        for c in _money:
+            sdf[c] = sdf[c].map(_fmt_cell_money)
+        for c in _pct:
+            sdf[c] = sdf[c].map(_fmt_cell_pct)
+        sdf = sdf.astype(str)
+        row_bg = [{"subtotal": "#F4CCCC", "grand": "#D9EAD3"}.get(t) for t in rtypes]
+        st.session_state["rep_png"] = table_to_png(
+            sdf, "Peanuts Retail — Store-wise MTD / YTD (Year on Year)",
+            subtitle=f"As of {end_d:%d %b %Y} · all figures in ₹",
+            row_bg=row_bg, signed_cols=_money + _pct)
+    if st.session_state.get("rep_png"):
+        st.download_button(
+            "⬇ Download image", st.session_state["rep_png"],
+            file_name=f"peanuts_mtd_ytd_{end_d:%Y%m%d}.png", mime="image/png")
+        st.image(st.session_state["rep_png"],
+                 caption="Preview — share this picture in the group")
 
 # =========================================================================== #
 # DEGROWTH — stores below last year (watchlist)
@@ -513,10 +592,29 @@ with tab_degrowth:
                  subset=["Shortfall", "Degrowth %"]))
         st.dataframe(styler, use_container_width=True, hide_index=True,
                      height=(len(disp) + 1) * 36)
-        st.download_button(
+        _d1, _d2 = st.columns(2)
+        _d1.download_button(
             "⬇ Download degrowth list (CSV)", disp.to_csv(index=False).encode(),
             file_name=f"peanuts_degrowth_{dg_kind}_{end_d:%Y%m%d}.csv",
-            mime="text/csv")
+            mime="text/csv", use_container_width=True)
+        if _d2.button("🖼️ Generate shareable image (PNG)", key="dg_png_btn",
+                      use_container_width=True):
+            sdf = disp.copy()
+            for c in [f"{dg_kind} LY", f"{dg_kind} TY", "Shortfall"]:
+                sdf[c] = sdf[c].map(_fmt_cell_money)
+            sdf["Degrowth %"] = sdf["Degrowth %"].map(_fmt_cell_pct)
+            sdf = sdf.astype(str)
+            st.session_state["dg_png"] = table_to_png(
+                sdf, "Peanuts Retail — Degrowth watchlist",
+                subtitle=f"{dg_kind} · as of {end_d:%d %b %Y} · figures in ₹",
+                signed_cols=["Shortfall", "Degrowth %"])
+        if st.session_state.get("dg_png"):
+            st.download_button(
+                "⬇ Download image", st.session_state["dg_png"],
+                file_name=f"peanuts_degrowth_{dg_kind}_{end_d:%Y%m%d}.png",
+                mime="image/png")
+            st.image(st.session_state["dg_png"],
+                     caption="Preview — share this picture in the group")
 
 # =========================================================================== #
 # EXECUTIVE — MTD / QTD / YTD, all year-on-year (fiscal year Apr–Mar)
