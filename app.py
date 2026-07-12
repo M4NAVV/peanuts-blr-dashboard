@@ -490,13 +490,13 @@ with tab_report:
         "📱 Compact view (best on mobile)", value=False,
         help="Shows the key columns only — easier to read on a phone.")
     if compact:
-        show_cols = ["Region", "STORE CODE", "LOCATION",
+        show_cols = ["Region", "STORE CODE", "LOCATION", "Day Sales",
                      "MTD TY", "GD MTD %", "YTD TY", "GD YTD %"]
     else:
         show_cols = list(rep.columns)
     rep_show = rep[show_cols]
 
-    val_cols = [c for c in ["MTD LY", "MTD TY", "GD MTD Value",
+    val_cols = [c for c in ["Day Sales", "MTD LY", "MTD TY", "GD MTD Value",
                             "YTD LY", "YTD TY", "GD YTD Value"] if c in show_cols]
     pct_cols = [c for c in ["GD MTD %", "GD YTD %"] if c in show_cols]
     sign_cols = [c for c in ["GD MTD Value", "GD MTD %",
@@ -539,7 +539,7 @@ with tab_report:
     if _c2.button("🖼️ Generate shareable image (PNG)", key="rep_png_btn",
                   use_container_width=True):
         sdf = rep_show.copy()
-        _money = [c for c in ["MTD LY", "MTD TY", "GD MTD Value",
+        _money = [c for c in ["Day Sales", "MTD LY", "MTD TY", "GD MTD Value",
                               "YTD LY", "YTD TY", "GD YTD Value"] if c in sdf.columns]
         _pct = [c for c in ["GD MTD %", "GD YTD %"] if c in sdf.columns]
         for c in _money:
@@ -580,10 +580,10 @@ with tab_degrowth:
         disp.insert(0, "DATE", f"{end_d:%d-%m-%Y}")
         disp = disp.rename(columns={
             "region": "Region", "code": "STORE CODE", "location": "LOCATION",
-            "prior": f"{dg_kind} LY", "cur": f"{dg_kind} TY",
+            "day": "Day Sales", "prior": f"{dg_kind} LY", "cur": f"{dg_kind} TY",
             "shortfall": "Shortfall", "growth": "Degrowth %"})
 
-        val_cols = [f"{dg_kind} LY", f"{dg_kind} TY", "Shortfall"]
+        val_cols = ["Day Sales", f"{dg_kind} LY", f"{dg_kind} TY", "Shortfall"]
         styler = (
             disp.style
             .format({**{c: (lambda v: fmt_in(v, 2)) for c in val_cols},
@@ -600,7 +600,7 @@ with tab_degrowth:
         if _d2.button("🖼️ Generate shareable image (PNG)", key="dg_png_btn",
                       use_container_width=True):
             sdf = disp.copy()
-            for c in [f"{dg_kind} LY", f"{dg_kind} TY", "Shortfall"]:
+            for c in ["Day Sales", f"{dg_kind} LY", f"{dg_kind} TY", "Shortfall"]:
                 sdf[c] = sdf[c].map(_fmt_cell_money)
             sdf["Degrowth %"] = sdf["Degrowth %"].map(_fmt_cell_pct)
             sdf = sdf.astype(str)
