@@ -611,14 +611,20 @@ def store_yoy(df: pd.DataFrame, kind: str = "YTD", asof=None) -> pd.DataFrame:
 def degrowth_report(df: pd.DataFrame, asof=None, kind: str = "YTD") -> pd.DataFrame:
     """Stores in `kind` (MTD/YTD) degrowth — This Year < Last Year — worst first,
     with the ₹ shortfall and degrowth %. Respects whatever `df` is filtered to."""
+    asof_ts = as_of(df) if asof is None else pd.Timestamp(asof)
     sy = store_yoy(df, kind, asof=asof)
+    day = (df[df["date"] == asof_ts].groupby(COL_STORE_LABEL)[COL_AMOUNT].sum()
+           .rename("day"))
+    sy = sy.merge(day, left_on=COL_STORE_LABEL, right_index=True, how="left")
+    sy["day"] = sy["day"].fillna(0.0)
     m = load_store_master()[["tableau_name", "code", "location", "region"]]
     out = sy.merge(m, left_on=COL_STORE_LABEL, right_on="tableau_name", how="left")
     out = out[out["growth"].notna() & (out["growth"] < 0)].copy()
     out["shortfall"] = out["cur"] - out["prior"]
     out["code"] = pd.to_numeric(out["code"], errors="coerce")
     out = out.sort_values("code").reset_index(drop=True)
-    return out[["region", "code", "location", "prior", "cur", "shortfall", "growth"]]
+    return out[["region", "code", "location", "day", "prior", "cur",
+                "shortfall", "growth"]]
 
 
 # --------------------------------------------------------------------------- #
@@ -629,7 +635,7 @@ _MASTER_PATH = os.path.join(os.path.dirname(__file__), "store_master.csv")
 _REGION_ORDER = ["East & NE", "South"]
 
 REPORT_COLS = [
-    "Region", "DATE", "STORE CODE", "LOCATION",
+    "Region", "DATE", "STORE CODE", "LOCATION", "Day Sales",
     "MTD LY", "MTD TY", "GD MTD Value", "GD MTD %",
     "YTD LY", "YTD TY", "GD YTD Value", "GD YTD %",
 ]
@@ -729,6 +735,7 @@ def region_store_report(df: pd.DataFrame, asof=None):
     g = lambda f: f.groupby(COL_STORE_LABEL)[COL_AMOUNT].sum()
     mtd_ty, mtd_ly = g(mtd_cur), g(mtd_pri)
     ytd_ty, ytd_ly = g(ytd_cur), g(ytd_pri)
+    day_ty = g(df[df["date"] == asof])   # sales on the as-of day
     date_str = asof.strftime("%d-%m-%Y")
 
     master = load_store_master()
@@ -745,10 +752,10 @@ def region_store_report(df: pd.DataFrame, asof=None):
 
     rows, types = [], []
 
-    def _store_row(region, code, loc, mly, mty, yly, yty):
+    def _store_row(region, code, loc, day, mly, mty, yly, yty):
         return {
             "Region": region, "DATE": date_str, "STORE CODE": code, "LOCATION": loc,
-            "MTD LY": mly, "MTD TY": mty,
+            "Day Sales": day, "MTD LY": mly, "MTD TY": mty,
             "GD MTD Value": mty - mly, "GD MTD %": _growth_pct(mty, mly),
             "YTD LY": yly, "YTD TY": yty,
             "GD YTD Value": yty - yly, "GD YTD %": _growth_pct(yty, yly),
@@ -759,7 +766,7 @@ def region_store_report(df: pd.DataFrame, asof=None):
         yly, yty = sub["YTD LY"].sum(), sub["YTD TY"].sum()
         return {
             "Region": label, "DATE": "", "STORE CODE": "", "LOCATION": "",
-            "MTD LY": mly, "MTD TY": mty,
+            "Day Sales": sub["Day Sales"].sum(), "MTD LY": mly, "MTD TY": mty,
             "GD MTD Value": mty - mly, "GD MTD %": _growth_pct(mty, mly),
             "YTD LY": yly, "YTD TY": yty,
             "GD YTD Value": yty - yly, "GD YTD %": _growth_pct(yty, yly),
@@ -771,7 +778,7 @@ def region_store_report(df: pd.DataFrame, asof=None):
         for _, r in grp.iterrows():
             name = r["tableau_name"]
             sr = _store_row(
-                region, r["code"], r["location"],
+                region, r["code"], r["location"], float(day_ty.get(name, 0.0)),
                 float(mtd_ly.get(name, 0.0)), float(mtd_ty.get(name, 0.0)),
                 float(ytd_ly.get(name, 0.0)), float(ytd_ty.get(name, 0.0)),
             )
