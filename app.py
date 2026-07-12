@@ -572,9 +572,12 @@ with tab_degrowth:
         st.success("🎉 No stores in degrowth for this selection.")
     else:
         _tot = dg["shortfall"].sum()
-        c1, c2 = st.columns(2)
+        _ly = dg["prior"].sum()
+        _pct = (_tot / _ly * 100) if _ly else 0
+        c1, c2, c3 = st.columns(3)
         c1.metric("Stores degrowing", f"{len(dg)}")
-        c2.metric("Total shortfall", f"-₹{fmt_in(abs(_tot), 2)}")
+        c2.metric("Total shortfall", inr(_tot))
+        c3.metric("Degrowth %", f"{_pct:.2f}%")
 
         disp = dg.copy()
         disp.insert(0, "DATE", f"{end_d:%d-%m-%Y}")
