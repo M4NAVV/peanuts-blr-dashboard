@@ -258,16 +258,21 @@ def table_to_png(sdf, title, subtitle="", row_bg=None, signed_cols=(),
     dashboard look. Colors signed columns red/green by sign and shades rows via
     `row_bg` (list per row)."""
     import io
-    import matplotlib
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
+    # Use matplotlib's object-oriented API (Figure + Agg canvas) rather than
+    # pyplot. pyplot keeps a global, non-thread-safe figure-manager state; when
+    # invoked from Streamlit's ScriptRunner worker thread it segfaults the Agg
+    # C-extension. Building a Figure directly touches no global state.
+    from matplotlib.figure import Figure
+    from matplotlib.backends.backend_agg import FigureCanvasAgg
 
     cols = list(sdf.columns)
     nrow, ncol = len(sdf), len(cols)
     widths = [max([len(str(c))] + [len(str(x)) for x in sdf[c]]) for c in cols]
     fig_w = min(1.0 + 0.135 * sum(widths), 30)
     fig_h = 1.2 + (nrow + 1) * 0.36
-    fig, ax = plt.subplots(figsize=(fig_w, fig_h), dpi=170)
+    fig = Figure(figsize=(fig_w, fig_h), dpi=170)
+    FigureCanvasAgg(fig)
+    ax = fig.subplots()
     ax.axis("off")
     if title or subtitle:
         ax.set_title("\n".join(t for t in (title, subtitle) if t),
@@ -298,7 +303,6 @@ def table_to_png(sdf, title, subtitle="", row_bg=None, signed_cols=(),
                 cell.set_text_props(weight="bold")
     buf = io.BytesIO()
     fig.savefig(buf, format="png", bbox_inches="tight", facecolor="white")
-    plt.close(fig)
     return buf.getvalue()
 
 
