@@ -565,15 +565,16 @@ with tab_degrowth:
     dg_kind = st.radio("Period", ["YTD", "MTD"], horizontal=True, key="dg_kind")
     st.caption(
         f"Stores where **{dg_kind} This Year < Last Year**, as of "
-        f"**{end_d:%d %b %Y}** — worst degrowth first. Respects all filters.")
+        f"**{end_d:%d %b %Y}** — sorted by store code. Respects all filters.")
     dg = L.degrowth_report(df_exec, asof=pd.Timestamp(end_d), kind=dg_kind)
 
     if dg.empty:
         st.success("🎉 No stores in degrowth for this selection.")
     else:
+        _tot = dg["shortfall"].sum()
         c1, c2 = st.columns(2)
         c1.metric("Stores degrowing", f"{len(dg)}")
-        c2.metric("Total shortfall", inr(dg["shortfall"].sum()))
+        c2.metric("Total shortfall", f"-₹{fmt_in(abs(_tot), 2)}")
 
         disp = dg.copy()
         disp.insert(0, "DATE", f"{end_d:%d-%m-%Y}")
