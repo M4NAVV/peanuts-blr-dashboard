@@ -192,8 +192,9 @@ def table_to_png(sdf, title, subtitle="", row_bg=None, signed_cols=(),
     fig_h = 1.2 + (nrow + 1) * 0.36
     fig, ax = plt.subplots(figsize=(fig_w, fig_h), dpi=170)
     ax.axis("off")
-    ax.set_title(title + (f"\n{subtitle}" if subtitle else ""),
-                 fontsize=13, weight="bold", color="#7A1F2B", pad=12)
+    if title or subtitle:
+        ax.set_title("\n".join(t for t in (title, subtitle) if t),
+                     fontsize=13, weight="bold", color="#7A1F2B", pad=12)
     tbl = ax.table(cellText=sdf.values.tolist(), colLabels=cols,
                    cellLoc="center", loc="center")
     tbl.auto_set_font_size(False)
@@ -548,9 +549,7 @@ with tab_report:
         sdf = sdf.astype(str)
         row_bg = [{"subtotal": "#F4CCCC", "grand": "#D9EAD3"}.get(t) for t in rtypes]
         st.session_state["rep_png"] = table_to_png(
-            sdf, "Peanuts Retail — Store-wise MTD / YTD (Year on Year)",
-            subtitle=f"As of {end_d:%d %b %Y} · all figures in ₹",
-            row_bg=row_bg, signed_cols=_money + _pct)
+            sdf, "", row_bg=row_bg, signed_cols=_money + _pct)
     if st.session_state.get("rep_png"):
         st.download_button(
             "⬇ Download image", st.session_state["rep_png"],
@@ -605,9 +604,7 @@ with tab_degrowth:
             sdf["Degrowth %"] = sdf["Degrowth %"].map(_fmt_cell_pct)
             sdf = sdf.astype(str)
             st.session_state["dg_png"] = table_to_png(
-                sdf, "Peanuts Retail — Degrowth watchlist",
-                subtitle=f"{dg_kind} · as of {end_d:%d %b %Y} · figures in ₹",
-                signed_cols=["Shortfall", "Degrowth %"])
+                sdf, "", signed_cols=["Shortfall", "Degrowth %"])
         if st.session_state.get("dg_png"):
             st.download_button(
                 "⬇ Download image", st.session_state["dg_png"],
