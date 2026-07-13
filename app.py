@@ -248,32 +248,72 @@ def styled_report_html(disp, money_cols=(), pct_cols=(), sign_cols=(),
             f'border-radius:10px;">{table}</div>')
 
 
-def render_fit_to_screen(table_html, height_px):
-    """Render a table scaled (via CSS transform) to fit entirely inside a
-    height_px-tall, full-width box — no scrollbars — so a single screenshot
-    captures every row and column. JS recomputes the scale on load/resize."""
+def render_fit_to_screen(table_html, panel_h=680):
+    """Render the report with a 'Full screen' button. Clicking it overlays the
+    whole browser window and scales the table (CSS transform) to fit exactly —
+    no scrollbars, nothing cut off — so a single screenshot of the screen
+    captures every row and column. Esc or the button exits. Auto-refits on
+    load / resize / enter / exit."""
     doc = f"""
-    <div id="fitwrap" style="width:100%;height:{height_px}px;overflow:hidden;
-         background:#fff;display:flex;justify-content:center;align-items:flex-start;">
-      <div id="fittable" style="transform-origin:top center;padding:4px;">
-        {table_html}
+    <div id="fitwrap" style="width:100%;height:{panel_h}px;overflow:hidden;
+         background:#fff;display:flex;flex-direction:column;align-items:center;">
+      <button id="fsbtn" style="align-self:flex-start;margin:2px 0 10px;padding:9px 18px;
+              border:0;border-radius:8px;background:{MAROON};color:#fff;font-weight:700;
+              font-size:14px;cursor:pointer;font-family:Inter,Segoe UI,sans-serif;">
+        ⛶ Full screen — fit all data
+      </button>
+      <div id="fitinner" style="flex:1;width:100%;overflow:hidden;display:flex;
+           justify-content:center;align-items:flex-start;">
+        <div id="fittable" style="transform-origin:top center;">{table_html}</div>
       </div>
     </div>
     <script>
-      function fitTable() {{
-        var w = document.getElementById('fitwrap');
-        var t = document.getElementById('fittable');
-        t.style.transform = 'scale(1)';
-        var s = Math.min(w.clientWidth / t.scrollWidth,
-                         w.clientHeight / t.scrollHeight);
-        s = Math.min(s, 1.8);           // allow modest upscaling for small reports
-        t.style.transform = 'scale(' + s + ')';
+      var wrap=document.getElementById('fitwrap');
+      var inner=document.getElementById('fitinner');
+      var t=document.getElementById('fittable');
+      var btn=document.getElementById('fsbtn');
+      var big=false, saved={{}};
+      function fit() {{
+        t.style.transform='scale(1)';
+        var s=Math.min(inner.clientWidth/t.scrollWidth,
+                       inner.clientHeight/t.scrollHeight);
+        t.style.transform='scale('+Math.min(s,2.6)+')';
       }}
-      window.addEventListener('load', fitTable);
-      window.addEventListener('resize', fitTable);
-      setTimeout(fitTable, 50); setTimeout(fitTable, 300);
+      function chrome(hide) {{
+        try {{
+          var d=window.parent.document;
+          d.querySelectorAll('header[data-testid="stHeader"]')
+           .forEach(function(e){{ e.style.display = hide?'none':''; }});
+        }} catch(e){{}}
+      }}
+      function enter() {{
+        var f=window.frameElement;
+        try {{
+          saved={{pos:f.style.position,top:f.style.top,left:f.style.left,
+                 w:f.style.width,h:f.style.height,z:f.style.zIndex}};
+          f.style.position='fixed'; f.style.top='0'; f.style.left='0';
+          f.style.width='100vw'; f.style.height='100vh'; f.style.zIndex='2147483647';
+        }} catch(e){{}}
+        wrap.style.height='100vh'; inner.style.alignItems='center';
+        chrome(true); big=true; btn.textContent='✕  Exit full screen (Esc)';
+        setTimeout(fit,30); setTimeout(fit,150);
+      }}
+      function exit() {{
+        var f=window.frameElement;
+        try {{ f.style.position=saved.pos||''; f.style.top=saved.top||'';
+               f.style.left=saved.left||''; f.style.width=saved.w||'';
+               f.style.height=saved.h||''; f.style.zIndex=saved.z||''; }} catch(e){{}}
+        wrap.style.height='{panel_h}px'; inner.style.alignItems='flex-start';
+        chrome(false); big=false; btn.textContent='⛶ Full screen — fit all data';
+        setTimeout(fit,30);
+      }}
+      btn.addEventListener('click', function(){{ big?exit():enter(); }});
+      document.addEventListener('keydown', function(e){{ if(e.key==='Escape'&&big) exit(); }});
+      window.addEventListener('resize', fit);
+      window.addEventListener('load', fit);
+      setTimeout(fit,50); setTimeout(fit,300);
     </script>"""
-    components.html(doc, height=height_px, scrolling=False)
+    components.html(doc, height=panel_h, scrolling=False)
 
 
 def _fmt_cell_money(v):
@@ -635,23 +675,13 @@ with tab_report:
                              "GD YTD Value", "GD YTD %"] if c in show_cols]
 
     if fullscreen:
-        # Strip the surrounding chrome and go full-bleed so the fit box owns the
-        # screen; then render the table scaled to fit (width + height) with no
-        # scrollbars → one screenshot grabs the whole thing.
-        st.markdown(
-            "<style>header[data-testid='stHeader']{display:none;}"
-            ".block-container{max-width:100% !important;padding-top:1rem;}</style>",
-            unsafe_allow_html=True)
-        st.caption("Tip: collapse the sidebar (top-left ‹ arrow) for maximum width, "
-                   "then screenshot. Adjust the height below to match your screen.")
-        fit_h = st.slider(
-            "Fit height (px)", min_value=480, max_value=1200, value=760, step=20,
-            help="Raise until the table fills your screen; lower it if it overflows.")
+        st.caption("Click **Full screen** below — the whole table scales to fit your "
+                   "screen with nothing cut off. Take your screenshot, then press Esc "
+                   "(or the button) to exit.")
         render_fit_to_screen(
             styled_report_html(rep_show, money_cols=val_cols, pct_cols=pct_cols,
                                sign_cols=sign_cols, row_types=rtypes,
-                               full_width=False),
-            fit_h)
+                               full_width=False))
     else:
         st.markdown(
             styled_report_html(rep_show, money_cols=val_cols, pct_cols=pct_cols,
