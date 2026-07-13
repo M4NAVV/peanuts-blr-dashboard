@@ -248,72 +248,48 @@ def styled_report_html(disp, money_cols=(), pct_cols=(), sign_cols=(),
             f'border-radius:10px;">{table}</div>')
 
 
-def render_fit_to_screen(table_html, panel_h=680):
-    """Render the report with a 'Full screen' button. Clicking it overlays the
-    whole browser window and scales the table (CSS transform) to fit exactly —
-    no scrollbars, nothing cut off — so a single screenshot of the screen
-    captures every row and column. Esc or the button exits. Auto-refits on
-    load / resize / enter / exit."""
+def render_fit_to_screen(table_html, panel_h=600):
+    """A single button that opens the table in native browser full screen,
+    auto-scaled to fit — no scrollbars, nothing cut off. The full-screen area
+    holds only the table (the button is outside it), so a screenshot is clean.
+    Esc exits, browser-native — no on-screen controls."""
     doc = f"""
-    <div id="fitwrap" style="width:100%;height:{panel_h}px;overflow:hidden;
-         background:#fff;display:flex;flex-direction:column;align-items:center;">
-      <button id="fsbtn" style="align-self:flex-start;margin:2px 0 10px;padding:9px 18px;
-              border:0;border-radius:8px;background:{MAROON};color:#fff;font-weight:700;
-              font-size:14px;cursor:pointer;font-family:Inter,Segoe UI,sans-serif;">
-        ⛶ Full screen — fit all data
-      </button>
-      <div id="fitinner" style="flex:1;width:100%;overflow:hidden;display:flex;
-           justify-content:center;align-items:flex-start;">
-        <div id="fittable" style="transform-origin:top center;">{table_html}</div>
-      </div>
+    <button id="fsbtn" style="padding:9px 18px;border:0;border-radius:8px;
+            background:{MAROON};color:#fff;font-weight:700;font-size:14px;cursor:pointer;
+            font-family:Inter,Segoe UI,sans-serif;margin:0 0 10px;">
+      ⛶ Open in full screen
+    </button>
+    <div id="stage" style="width:100%;height:{panel_h}px;overflow:hidden;background:#fff;
+         display:flex;justify-content:center;align-items:flex-start;">
+      <div id="fittable" style="transform-origin:top center;">{table_html}</div>
     </div>
     <script>
-      var wrap=document.getElementById('fitwrap');
-      var inner=document.getElementById('fitinner');
-      var t=document.getElementById('fittable');
-      var btn=document.getElementById('fsbtn');
-      var big=false, saved={{}};
+      var stage=document.getElementById('stage'),
+          t=document.getElementById('fittable'),
+          btn=document.getElementById('fsbtn');
       function fit() {{
         t.style.transform='scale(1)';
-        var s=Math.min(inner.clientWidth/t.scrollWidth,
-                       inner.clientHeight/t.scrollHeight);
+        var s=Math.min(stage.clientWidth/t.scrollWidth,
+                       stage.clientHeight/t.scrollHeight);
         t.style.transform='scale('+Math.min(s,2.6)+')';
       }}
-      function chrome(hide) {{
-        try {{
-          var d=window.parent.document;
-          d.querySelectorAll('header[data-testid="stHeader"]')
-           .forEach(function(e){{ e.style.display = hide?'none':''; }});
-        }} catch(e){{}}
-      }}
-      function enter() {{
-        var f=window.frameElement;
-        try {{
-          saved={{pos:f.style.position,top:f.style.top,left:f.style.left,
-                 w:f.style.width,h:f.style.height,z:f.style.zIndex}};
-          f.style.position='fixed'; f.style.top='0'; f.style.left='0';
-          f.style.width='100vw'; f.style.height='100vh'; f.style.zIndex='2147483647';
-        }} catch(e){{}}
-        wrap.style.height='100vh'; inner.style.alignItems='center';
-        chrome(true); big=true; btn.textContent='✕  Exit full screen (Esc)';
+      btn.onclick=function(){{
+        var req=stage.requestFullscreen||stage.webkitRequestFullscreen;
+        if(req) req.call(stage);
+      }};
+      function onFs(){{
+        var on=(document.fullscreenElement||document.webkitFullscreenElement)===stage;
+        stage.style.height=on?'100vh':'{panel_h}px';
+        stage.style.alignItems=on?'center':'flex-start';
         setTimeout(fit,30); setTimeout(fit,150);
       }}
-      function exit() {{
-        var f=window.frameElement;
-        try {{ f.style.position=saved.pos||''; f.style.top=saved.top||'';
-               f.style.left=saved.left||''; f.style.width=saved.w||'';
-               f.style.height=saved.h||''; f.style.zIndex=saved.z||''; }} catch(e){{}}
-        wrap.style.height='{panel_h}px'; inner.style.alignItems='flex-start';
-        chrome(false); big=false; btn.textContent='⛶ Full screen — fit all data';
-        setTimeout(fit,30);
-      }}
-      btn.addEventListener('click', function(){{ big?exit():enter(); }});
-      document.addEventListener('keydown', function(e){{ if(e.key==='Escape'&&big) exit(); }});
-      window.addEventListener('resize', fit);
-      window.addEventListener('load', fit);
+      document.addEventListener('fullscreenchange',onFs);
+      document.addEventListener('webkitfullscreenchange',onFs);
+      window.addEventListener('resize',fit);
+      window.addEventListener('load',fit);
       setTimeout(fit,50); setTimeout(fit,300);
     </script>"""
-    components.html(doc, height=panel_h, scrolling=False)
+    components.html(doc, height=panel_h+58, scrolling=False)
 
 
 def _fmt_cell_money(v):
@@ -675,9 +651,8 @@ with tab_report:
                              "GD YTD Value", "GD YTD %"] if c in show_cols]
 
     if fullscreen:
-        st.caption("Click **Full screen** below — the whole table scales to fit your "
-                   "screen with nothing cut off. Take your screenshot, then press Esc "
-                   "(or the button) to exit.")
+        st.caption("Opens the whole table in full screen, scaled to fit — nothing "
+                   "cut off. Screenshot it, then press Esc to exit.")
         render_fit_to_screen(
             styled_report_html(rep_show, money_cols=val_cols, pct_cols=pct_cols,
                                sign_cols=sign_cols, row_types=rtypes,
