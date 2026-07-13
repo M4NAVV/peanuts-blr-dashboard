@@ -70,11 +70,26 @@ st.markdown(
 
 
 # --------------------------------------------------------------------------- #
-# Data loading (cached; TTL gives the "auto-update" behaviour)
+# Data loading (cached). The sheet is refreshed once a day (morning re-import),
+# so we cache for 6h — after the first load everyone gets it instantly — and
+# expose a manual "Refresh" button + a "data as of" timestamp for on-demand
+# updates. This avoids re-downloading the ~265k-row sheet on a short TTL.
 # --------------------------------------------------------------------------- #
-@st.cache_data(ttl=1800, show_spinner="Loading sales data…")
+@st.cache_data(ttl=21600, show_spinner="Loading sales data… (first load ~10s)")
+def _load_cached():
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    df = L.load_data()
+    return df, datetime.now(ZoneInfo("Asia/Kolkata"))
+
+
 def get_data() -> pd.DataFrame:
-    return L.load_data()
+    return _load_cached()[0]
+
+
+def data_loaded_at():
+    """When the currently-cached data was fetched (IST)."""
+    return _load_cached()[1]
 
 
 def inr(x: float) -> str:
@@ -489,9 +504,10 @@ active_filters = [(lbl, sel) for lbl, _col, sel in _CAT_FILTERS if sel]
 
 st.sidebar.markdown("---")
 st.sidebar.caption(
-    f"**Data through:** {fresh['max_date']:%d %b %Y}  \n**Rows:** {fresh['rows']:,}")
+    f"**Data through:** {fresh['max_date']:%d %b %Y}  \n**Rows:** {fresh['rows']:,}  \n"
+    f"**Loaded:** {data_loaded_at():%d %b, %I:%M %p} IST")
 if st.sidebar.button("🔄 Refresh data now"):
-    get_data.clear()
+    _load_cached.clear()
     st.rerun()
 
 if df.empty:
