@@ -611,19 +611,14 @@ def store_yoy(df: pd.DataFrame, kind: str = "YTD", asof=None) -> pd.DataFrame:
 def degrowth_report(df: pd.DataFrame, asof=None, kind: str = "YTD") -> pd.DataFrame:
     """Stores in `kind` (MTD/YTD) degrowth — This Year < Last Year — worst first,
     with the ₹ shortfall and degrowth %. Respects whatever `df` is filtered to."""
-    asof_ts = as_of(df) if asof is None else pd.Timestamp(asof)
     sy = store_yoy(df, kind, asof=asof)
-    day = (df[df["date"] == asof_ts].groupby(COL_STORE_LABEL)[COL_AMOUNT].sum()
-           .rename("day"))
-    sy = sy.merge(day, left_on=COL_STORE_LABEL, right_index=True, how="left")
-    sy["day"] = sy["day"].fillna(0.0)
     m = load_store_master()[["tableau_name", "code", "location", "region"]]
     out = sy.merge(m, left_on=COL_STORE_LABEL, right_on="tableau_name", how="left")
     out = out[out["growth"].notna() & (out["growth"] < 0)].copy()
     out["shortfall"] = out["cur"] - out["prior"]
     out["code"] = pd.to_numeric(out["code"], errors="coerce")
     out = out.sort_values("code").reset_index(drop=True)
-    return out[["region", "code", "location", "day", "prior", "cur",
+    return out[["region", "code", "location", "prior", "cur",
                 "shortfall", "growth"]]
 
 
