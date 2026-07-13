@@ -654,8 +654,8 @@ _MASTER_PATH = os.path.join(os.path.dirname(__file__), "store_master.csv")
 _REGION_ORDER = ["East & NE", "South"]
 
 REPORT_COLS = [
-    "Region", "DATE", "STORE CODE", "LOCATION", "Day Sales",
-    "MTD LY", "MTD TY", "GD MTD Value", "GD MTD %",
+    "Region", "DATE", "STORE CODE", "LOCATION",
+    "MTD LY", "MTD TY", "GD MTD Value", "GD MTD %", "Day Sales",
     "YTD LY", "YTD TY", "GD YTD Value", "GD YTD %",
 ]
 
