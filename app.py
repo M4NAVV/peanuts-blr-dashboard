@@ -664,10 +664,10 @@ with tab_degrowth:
         disp.insert(0, "DATE", f"{end_d:%d-%m-%Y}")
         disp = disp.rename(columns={
             "region": "Region", "code": "STORE CODE", "location": "LOCATION",
-            "day": "Day Sales", "prior": f"{dg_kind} LY", "cur": f"{dg_kind} TY",
+            "prior": f"{dg_kind} LY", "cur": f"{dg_kind} TY",
             "shortfall": "Shortfall", "growth": "Degrowth %"})
 
-        val_cols = ["Day Sales", f"{dg_kind} LY", f"{dg_kind} TY", "Shortfall"]
+        val_cols = [f"{dg_kind} LY", f"{dg_kind} TY", "Shortfall"]
         st.markdown(
             styled_report_html(disp, money_cols=val_cols, pct_cols=["Degrowth %"],
                                sign_cols=["Shortfall", "Degrowth %"]),
@@ -681,7 +681,7 @@ with tab_degrowth:
         if _d2.button("🖼️ Generate shareable image (PNG)", key="dg_png_btn",
                       use_container_width=True):
             sdf = disp.copy()
-            for c in ["Day Sales", f"{dg_kind} LY", f"{dg_kind} TY", "Shortfall"]:
+            for c in [f"{dg_kind} LY", f"{dg_kind} TY", "Shortfall"]:
                 sdf[c] = sdf[c].map(_fmt_cell_money)
             sdf["Degrowth %"] = sdf["Degrowth %"].map(_fmt_cell_pct)
             sdf = sdf.astype(str)
