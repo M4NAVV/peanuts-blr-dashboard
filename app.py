@@ -17,6 +17,7 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
+import streamlit.components.v1 as components
 
 import loader as L
 
@@ -190,7 +191,7 @@ GRN_TXT, RED_TXT = "#137a3a", "#C0143C"
 
 
 def styled_report_html(disp, money_cols=(), pct_cols=(), sign_cols=(),
-                       row_types=None, font_px=12.5):
+                       row_types=None, font_px=12.5, full_width=True):
     """Compact, high-contrast HTML table built with INLINE styles (so colors
     always render in Streamlit): maroon header, zebra rows, tabular right-aligned
     numbers, shaded subtotals/totals, and red/green on growth columns."""
@@ -236,12 +237,43 @@ def styled_report_html(disp, money_cols=(), pct_cols=(), sign_cols=(),
                 f'white-space:nowrap;font-variant-numeric:tabular-nums;">{txt}</td>')
         trs.append(f"<tr>{''.join(tds)}</tr>")
 
+    width_css = "width:100%;" if full_width else "width:auto;"
     table = (
-        f'<table style="border-collapse:collapse;width:100%;'
+        f'<table style="border-collapse:collapse;{width_css}'
         f'font-family:Inter,-apple-system,Segoe UI,sans-serif;font-size:{font_px}px;">'
         f'<thead><tr>{ths}</tr></thead><tbody>{"".join(trs)}</tbody></table>')
+    if not full_width:
+        return table
     return (f'<div style="overflow-x:auto;border:1px solid #E7E1D6;'
             f'border-radius:10px;">{table}</div>')
+
+
+def render_fit_to_screen(table_html, height_px):
+    """Render a table scaled (via CSS transform) to fit entirely inside a
+    height_px-tall, full-width box — no scrollbars — so a single screenshot
+    captures every row and column. JS recomputes the scale on load/resize."""
+    doc = f"""
+    <div id="fitwrap" style="width:100%;height:{height_px}px;overflow:hidden;
+         background:#fff;display:flex;justify-content:center;align-items:flex-start;">
+      <div id="fittable" style="transform-origin:top center;padding:4px;">
+        {table_html}
+      </div>
+    </div>
+    <script>
+      function fitTable() {{
+        var w = document.getElementById('fitwrap');
+        var t = document.getElementById('fittable');
+        t.style.transform = 'scale(1)';
+        var s = Math.min(w.clientWidth / t.scrollWidth,
+                         w.clientHeight / t.scrollHeight);
+        s = Math.min(s, 1.8);           // allow modest upscaling for small reports
+        t.style.transform = 'scale(' + s + ')';
+      }}
+      window.addEventListener('load', fitTable);
+      window.addEventListener('resize', fitTable);
+      setTimeout(fitTable, 50); setTimeout(fitTable, 300);
+    </script>"""
+    components.html(doc, height=height_px, scrolling=False)
 
 
 def _fmt_cell_money(v):
@@ -581,9 +613,14 @@ with tab_report:
         st.info("No stores match the current filters.")
         st.stop()
 
-    compact = st.toggle(
+    _t1, _t2 = st.columns(2)
+    compact = _t1.toggle(
         "📱 Compact view (best on mobile)", value=False,
         help="Shows the key columns only — easier to read on a phone.")
+    fullscreen = _t2.toggle(
+        "🖥️ Full-screen fit view (for screenshots)", value=False,
+        help="Scales the whole table to fit one screen — no scrolling — so a "
+             "single screenshot captures every row and column.")
     if compact:
         show_cols = ["Region", "DATE", "STORE CODE", "LOCATION",
                      "MTD TY", "GD MTD %", "Day Sales", "YTD TY", "GD YTD %"]
@@ -597,10 +634,29 @@ with tab_report:
     sign_cols = [c for c in ["GD MTD Value", "GD MTD %",
                              "GD YTD Value", "GD YTD %"] if c in show_cols]
 
-    st.markdown(
-        styled_report_html(rep_show, money_cols=val_cols, pct_cols=pct_cols,
-                           sign_cols=sign_cols, row_types=rtypes),
-        unsafe_allow_html=True)
+    if fullscreen:
+        # Strip the surrounding chrome and go full-bleed so the fit box owns the
+        # screen; then render the table scaled to fit (width + height) with no
+        # scrollbars → one screenshot grabs the whole thing.
+        st.markdown(
+            "<style>header[data-testid='stHeader']{display:none;}"
+            ".block-container{max-width:100% !important;padding-top:1rem;}</style>",
+            unsafe_allow_html=True)
+        st.caption("Tip: collapse the sidebar (top-left ‹ arrow) for maximum width, "
+                   "then screenshot. Adjust the height below to match your screen.")
+        fit_h = st.slider(
+            "Fit height (px)", min_value=480, max_value=1200, value=760, step=20,
+            help="Raise until the table fills your screen; lower it if it overflows.")
+        render_fit_to_screen(
+            styled_report_html(rep_show, money_cols=val_cols, pct_cols=pct_cols,
+                               sign_cols=sign_cols, row_types=rtypes,
+                               full_width=False),
+            fit_h)
+    else:
+        st.markdown(
+            styled_report_html(rep_show, money_cols=val_cols, pct_cols=pct_cols,
+                               sign_cols=sign_cols, row_types=rtypes),
+            unsafe_allow_html=True)
     st.write("")
 
     _c1, _c2 = st.columns(2)
