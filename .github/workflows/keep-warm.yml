@@ -21,8 +21,17 @@ jobs:
     steps:
       - name: Ping the app
         run: |
+          UA="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36"
           URL="https://peanuts-blr.streamlit.app"
+          JAR="$(mktemp)"
+          # Streamlit Community Cloud public apps run an anonymous-session
+          # handshake (redirects that set a cookie) before serving the app; a
+          # plain request loops on it. Carry a cookie jar so we complete the
+          # handshake like a real browser and actually reach the container —
+          # THAT is what registers as activity and keeps it awake.
           for path in "/" "/_stcore/health"; do
-            code=$(curl -s -o /dev/null -w "%{http_code}" -L --max-time 40 "$URL$path" || echo "000")
-            echo "$(date -u '+%Y-%m-%d %H:%M:%SZ')  $URL$path -> $code"
+            code=$(curl -s -A "$UA" -c "$JAR" -b "$JAR" -L --max-redirs 30 \
+              --max-time 60 -o /dev/null -w "%{http_code}" "$URL$path" || echo "000")
+            echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ')  $path -> $code"
           done
+          rm -f "$JAR"
