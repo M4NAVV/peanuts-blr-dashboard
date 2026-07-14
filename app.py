@@ -20,6 +20,7 @@ import streamlit as st
 import streamlit.components.v1 as components
 
 import loader as L
+from imaging import table_to_png
 
 st.set_page_config(
     page_title="Peanuts Retail — Sales Dashboard",
@@ -315,58 +316,30 @@ def _fmt_cell_pct(v):
     return f"{v:,.2f}%" if pd.notna(v) else "—"
 
 
-def table_to_png(sdf, title, subtitle="", row_bg=None, signed_cols=(),
-                 header_bg=MAROON):
-    """Render a string DataFrame to a readable PNG (for sharing), matching the
-    dashboard look. Colors signed columns red/green by sign and shades rows via
-    `row_bg` (list per row)."""
-    import io
-    # Use matplotlib's object-oriented API (Figure + Agg canvas) rather than
-    # pyplot. pyplot keeps a global, non-thread-safe figure-manager state; when
-    # invoked from Streamlit's ScriptRunner worker thread it segfaults the Agg
-    # C-extension. Building a Figure directly touches no global state.
-    from matplotlib.figure import Figure
-    from matplotlib.backends.backend_agg import FigureCanvasAgg
+# st.dataframe serializes to Arrow via pyarrow, which can segfault on object
+# columns holding non-primitive Python values. Route every st.dataframe through
+# this: it str-casts ONLY columns that actually contain such values, leaving
+# clean numeric/string frames (and their column_config formatting) untouched.
+_st_dataframe = st.dataframe
 
-    cols = list(sdf.columns)
-    nrow, ncol = len(sdf), len(cols)
-    widths = [max([len(str(c))] + [len(str(x)) for x in sdf[c]]) for c in cols]
-    fig_w = min(1.0 + 0.135 * sum(widths), 30)
-    fig_h = 1.2 + (nrow + 1) * 0.36
-    fig = Figure(figsize=(fig_w, fig_h), dpi=170)
-    FigureCanvasAgg(fig)
-    ax = fig.subplots()
-    ax.axis("off")
-    if title or subtitle:
-        ax.set_title("\n".join(t for t in (title, subtitle) if t),
-                     fontsize=13, weight="bold", color="#7A1F2B", pad=12)
-    tbl = ax.table(cellText=sdf.values.tolist(), colLabels=cols,
-                   cellLoc="center", loc="center")
-    tbl.auto_set_font_size(False)
-    tbl.set_fontsize(10)
-    tbl.scale(1, 1.45)
-    tbl.auto_set_column_width(list(range(ncol)))
-    signed = set(signed_cols)
-    for j in range(ncol):
-        h = tbl[0, j]
-        h.set_facecolor(header_bg)
-        h.set_text_props(color="white", weight="bold")
-    for i in range(nrow):
-        bg = row_bg[i] if row_bg else None
-        for j, c in enumerate(cols):
-            cell = tbl[i + 1, j]
-            if bg:
-                cell.set_facecolor(bg)
-            val = str(sdf.iat[i, j]).strip()
-            if c in signed and val not in ("", "—"):
-                cell.set_text_props(
-                    color="#C0143C" if val.startswith("-") else "#137a3a",
-                    weight="bold")
-            elif bg:
-                cell.set_text_props(weight="bold")
-    buf = io.BytesIO()
-    fig.savefig(buf, format="png", bbox_inches="tight", facecolor="white")
-    return buf.getvalue()
+
+def _arrow_safe(df):
+    if not isinstance(df, pd.DataFrame):
+        return df  # Stylers etc. — leave as-is
+    out = None
+    for c in df.columns:
+        if df[c].dtype == object:
+            col = df[c]
+            ok = col.map(lambda v: v is None or isinstance(v, (str, int, float, bool)))
+            if not bool(ok.all()):
+                if out is None:
+                    out = df.copy()
+                out[c] = col.astype(str)
+    return out if out is not None else df
+
+
+def _safe_dataframe(data, **kwargs):
+    _st_dataframe(_arrow_safe(data), **kwargs)
 
 
 try:
@@ -548,15 +521,15 @@ def draw_view(cfg: dict, height: int = 360):
         if is_money:
             for c in pivot.columns[1:]:
                 pivot[c] = pivot[c].map(lambda v: fmt_in(v, 2))
-        st.dataframe(pivot, use_container_width=True, hide_index=True)
+        _safe_dataframe(pivot, use_container_width=True, hide_index=True)
     else:
         t = data[["group", "value"]].rename(columns={"group": cfg["group_dim"]})
         if is_money:
             t[view["metric"]] = t.pop("value").map(lambda v: fmt_in(v, 2))
-            st.dataframe(t, use_container_width=True, hide_index=True)
+            _safe_dataframe(t, use_container_width=True, hide_index=True)
         else:
             t = t.rename(columns={"value": view["metric"]})
-            st.dataframe(
+            _safe_dataframe(
                 t, use_container_width=True, hide_index=True,
                 column_config={view["metric"]:
                                st.column_config.NumberColumn(format="%.2f")},
@@ -824,7 +797,7 @@ with tab_exec:
         L.COL_STORE_LABEL: "Store", "cur": "YTD (₹)", "prior": "LY YTD (₹)",
         "growth": "Growth %"})
     sy = sy.sort_values("Growth %", ascending=True, na_position="last")
-    st.dataframe(
+    _safe_dataframe(
         sy, use_container_width=True, hide_index=True,
         column_config={
             "YTD (₹)": st.column_config.NumberColumn(format="₹%.2f"),
@@ -891,7 +864,7 @@ with tab_stores:
         "bills": "Bills", "customers": "Customers", "atv": "ATV (₹)",
         "upt": "UPT", "asp": "ASP (₹)", "carpet_area": "Carpet Area (sqft)",
         "sales_psf": "Sales/sqft (₹)"})
-    st.dataframe(
+    _safe_dataframe(
         ss, use_container_width=True, hide_index=True,
         column_config={
             "Sales (₹)": st.column_config.NumberColumn(format="₹%.2f"),
@@ -1042,7 +1015,7 @@ with tab_staff:
     sp = L.salesperson_summary(df)
     st.subheader("Salesperson leaderboard")
     st.caption(f"{len(sp)} salespeople in view · click a column header to sort")
-    st.dataframe(
+    _safe_dataframe(
         sp.rename(columns={L.COL_SALESPERSON: "Salesperson", "sales": "Sales (₹)",
                            "units": "Units", "bills": "Bills", "atv": "ATV (₹)"}),
         use_container_width=True, hide_index=True,
@@ -1069,7 +1042,7 @@ with tab_cust:
         rt = cs["trend"][["month_label", "repeat_share", "bills"]].rename(
             columns={"month_label": "Month", "repeat_share": "Repeat share %",
                      "bills": "Bills"})
-        st.dataframe(
+        _safe_dataframe(
             rt, use_container_width=True, hide_index=True,
             column_config={"Repeat share %":
                            st.column_config.NumberColumn(format="%.1f%%")},
@@ -1082,7 +1055,7 @@ with tab_cust:
     if mask_num:
         top["Mobile"] = top["Mobile"].astype(str).apply(
             lambda m: m[:2] + "•••" + m[-2:] if len(m) >= 4 else "•••")
-    st.dataframe(
+    _safe_dataframe(
         top, use_container_width=True, hide_index=True,
         column_config={"Spend (₹)": st.column_config.NumberColumn(format="₹%.2f")},
     )
