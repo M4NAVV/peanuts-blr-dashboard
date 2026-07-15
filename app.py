@@ -230,6 +230,8 @@ def styled_report_html(disp, money_cols=(), pct_cols=(), sign_cols=(),
             rbg, fw = "#F6D9D5", "700"
         elif t == "grand":
             rbg, fw = "#CDE8CF", "800"
+        elif t == "storetotal":
+            rbg, fw = "#FBEEE6", "700"
         else:
             rbg, fw = ("#FFFFFF" if i % 2 == 0 else "#FAF6EF"), "500"
         tds = []
@@ -595,9 +597,185 @@ if active_filters:
         for lbl, sel in active_filters)
     st.markdown("**Filters:** " + chips, unsafe_allow_html=True)
 
-(tab_report, tab_degrowth, tab_exec, tab_overview, tab_stores, tab_build,
+# --------------------------------------------------------------------------- #
+# Gender / Brand growth-degrowth rendering helpers
+# --------------------------------------------------------------------------- #
+GD_MONEY = ["YTD LY", "YTD TY", "MTD LY", "MTD TY", "Day Sales", "Month Sale LY",
+            "Projected MTD", "LY Full Sales", "Projected YTD"]
+GD_PCT = ["GD YTD %", "GD MTD %"]
+GD_ORDER = ["YTD LY", "YTD TY", "GD YTD %", "MTD LY", "MTD TY", "GD MTD %",
+            "Day Sales", "Month Sale LY", "Projected MTD", "LY Full Sales",
+            "Projected YTD"]
+
+
+def _gd_total(rows_df, label_cols, label):
+    """A totals row: sum money cols, recompute GD% from the summed LY/TY."""
+    r = {c: "" for c in rows_df.columns}
+    for c in label_cols:
+        r[c] = ""
+    r[label_cols[0]] = label
+    for c in GD_MONEY:
+        if c in rows_df.columns:
+            r[c] = pd.to_numeric(rows_df[c], errors="coerce").sum()
+    r["GD YTD %"] = ((r["YTD TY"] - r["YTD LY"]) / r["YTD LY"] * 100
+                     if r.get("YTD LY") else None)
+    r["GD MTD %"] = ((r["MTD TY"] - r["MTD LY"]) / r["MTD LY"] * 100
+                     if r.get("MTD LY") else None)
+    return r
+
+
+def render_gd_table(disp, label_cols, key, region_grouped=False):
+    """Render a growth/degrowth DataFrame styled like the source sheet: money
+    columns, red/green GD%, region subtotals (optional) + grand total, CSV/PNG."""
+    cols = list(label_cols) + [c for c in GD_ORDER if c in disp.columns]
+    disp = disp[cols].copy()
+    rows, rtypes = [], []
+    if region_grouped and "Region" in disp.columns:
+        for reg in [r for r in ["East & NE", "South"] if r in disp["Region"].unique()]:
+            sub = disp[disp["Region"] == reg]
+            for _, rr in sub.iterrows():
+                rows.append(rr.to_dict())
+                rtypes.append("store")
+            rows.append(_gd_total(sub, label_cols, f"{reg} Total"))
+            rtypes.append("subtotal")
+    else:
+        for _, rr in disp.iterrows():
+            rows.append(rr.to_dict())
+            rtypes.append("store")
+    rows.append(_gd_total(disp, label_cols, "Grand Total"))
+    rtypes.append("grand")
+    table = pd.DataFrame(rows)[cols]
+
+    money = [c for c in GD_MONEY if c in cols]
+    st.markdown(
+        styled_report_html(table, money_cols=money, pct_cols=GD_PCT,
+                           sign_cols=GD_PCT, row_types=rtypes),
+        unsafe_allow_html=True)
+    st.write("")
+    st.download_button("⬇ Download (CSV)", table.to_csv(index=False).encode(),
+                       file_name=f"{key}.csv", mime="text/csv",
+                       key=f"{key}_csv", use_container_width=True)
+    return table
+
+
+def gd_basis_control(key, picker_date):
+    """Renders the 'Live to-date / Month-end review' toggle shared by the G/D
+    tabs and returns the resolved as-of date. Month-end review snaps to the last
+    day of the month *before* the picker's month, reproducing a monthly review
+    sheet (takeover-anchoring is unchanged either way)."""
+    basis = st.radio(
+        "As-of basis", ["Live to-date", "Month-end review"], horizontal=True,
+        key=key, label_visibility="collapsed",
+        help="Live = up to the date picker. Month-end = the last completed "
+             "month, matching the monthly G/D sheet.")
+    d = pd.Timestamp(picker_date)
+    if basis == "Month-end review":
+        asof = d.replace(day=1) - pd.Timedelta(days=1)
+        st.caption(f"Reviewing **{asof:%B %Y}** (month-end · matches the monthly "
+                   "G/D sheet). Stores counted from their takeover date.")
+    else:
+        asof = d
+        st.caption(f"Live to **{asof:%d %b %Y}** (follows the date picker). "
+                   "Stores counted from their takeover date.")
+    return asof
+
+
+def _grouped_gd_rows(detail, sum_cols, pct_fill, label_cols):
+    """Region → Store → row grouping shared by the detailed pages-10-15 views.
+    Emits data rows + a per-store total (only when a store has >1 sub-row),
+    region subtotals, and a grand total. `sum_cols` are summed on total rows;
+    `pct_fill(total_dict, sub_df)` sets the %/derived columns. Returns
+    (rows, row_types)."""
+    def total_row(sub, put_col, label):
+        r = {c: "" for c in detail.columns}
+        r[put_col] = label
+        for c in sum_cols:
+            r[c] = pd.to_numeric(sub[c], errors="coerce").sum()
+        pct_fill(r, sub)
+        return r
+
+    rows, rtypes = [], []
+    for reg in [r for r in ["East & NE", "South"] if r in detail["Region"].unique()]:
+        rsub = detail[detail["Region"] == reg]
+        for code in pd.unique(rsub["Store Code"]):
+            ssub = rsub[rsub["Store Code"] == code]
+            for _, rr in ssub.iterrows():
+                rows.append(rr.to_dict())
+                rtypes.append("store")
+            if len(ssub) > 1:                      # per-store total, gender-split
+                tr = total_row(ssub, "Gender", "Total")
+                tr["Store Code"] = code
+                tr["Location"] = ssub["Location"].iloc[0]
+                rows.append(tr)
+                rtypes.append("storetotal")
+        rows.append(total_row(rsub, "Region", f"{reg} Total"))
+        rtypes.append("subtotal")
+    rows.append(total_row(detail, "Region", "Grand Total"))
+    rtypes.append("grand")
+    return rows, rtypes
+
+
+def render_gd_grouped(detail, key):
+    """Store × gender growth/degrowth, PDF pages 10-12 format: Region → Store →
+    Gender, per-store totals, region subtotals, grand total; full GD columns."""
+    label_cols = ["Region", "Master Location", "Store Code", "Location", "Gender"]
+    cols = label_cols + [c for c in GD_ORDER if c in detail.columns]
+    detail = detail[cols].copy()
+
+    def pct_fill(r, _sub):
+        r["GD YTD %"] = ((r["YTD TY"] - r["YTD LY"]) / r["YTD LY"] * 100
+                         if r.get("YTD LY") else None)
+        r["GD MTD %"] = ((r["MTD TY"] - r["MTD LY"]) / r["MTD LY"] * 100
+                         if r.get("MTD LY") else None)
+
+    rows, rtypes = _grouped_gd_rows(
+        detail, [c for c in GD_MONEY if c in cols], pct_fill, label_cols)
+    table = pd.DataFrame(rows)[cols]
+    money = [c for c in GD_MONEY if c in cols]
+    st.markdown(
+        styled_report_html(table, money_cols=money, pct_cols=GD_PCT,
+                           sign_cols=GD_PCT, row_types=rtypes),
+        unsafe_allow_html=True)
+    st.write("")
+    st.download_button("⬇ Download (CSV)", table.to_csv(index=False).encode(),
+                       file_name=f"{key}.csv", mime="text/csv",
+                       key=f"{key}_csv", use_container_width=True)
+    return table
+
+
+def render_gender_mix_grouped(detail, key):
+    """Store × gender contribution %, PDF pages 13-15 format: Region → Store →
+    Gender, per-store totals (=100%), region subtotals, grand total."""
+    cols = ["Region", "Master Location", "Store Code", "Location", "Gender",
+            "MTD TY", "Contrib MTD %", "YTD TY", "Contrib YTD %"]
+    cols = [c for c in cols if c in detail.columns]
+    detail = detail[cols].copy()
+
+    def pct_fill(r, _sub):
+        r["Contrib MTD %"] = 100.0
+        r["Contrib YTD %"] = 100.0
+
+    rows, rtypes = _grouped_gd_rows(
+        detail, ["MTD TY", "YTD TY"], pct_fill, cols)
+    table = pd.DataFrame(rows)[cols]
+    st.markdown(
+        styled_report_html(table, money_cols=["MTD TY", "YTD TY"],
+                           pct_cols=["Contrib MTD %", "Contrib YTD %"],
+                           row_types=rtypes),
+        unsafe_allow_html=True)
+    st.write("")
+    st.download_button("⬇ Download (CSV)", table.to_csv(index=False).encode(),
+                       file_name=f"{key}.csv", mime="text/csv",
+                       key=f"{key}_csv", use_container_width=True)
+    return table
+
+
+(tab_report, tab_degrowth, tab_gender_gd, tab_brand_gd, tab_gender_mix,
+ tab_exec, tab_overview, tab_stores, tab_build,
  tab_trends, tab_cat, tab_staff, tab_cust, tab_merch) = st.tabs([
-    "📋 MTD / YTD Report", "📉 Degrowth", "📊 Executive", "Overview", "🏬 Stores",
+    "📋 MTD / YTD Report", "📉 Degrowth",
+    "🧑‍🤝‍🧑 Gender G/D", "🏷️ Brand G/D", "⚖️ Gender Mix",
+    "📊 Executive", "Overview", "🏬 Stores",
     "🔧 Build your view", "Trends", "Category mix", "Salespeople",
     "Customers", "Colors & sizes",
 ])
@@ -745,6 +923,94 @@ with tab_degrowth:
                 mime="image/png")
             st.image(st.session_state["dg_png"],
                      caption="Preview — share this picture in the group")
+
+# =========================================================================== #
+# GENDER-WISE GROWTH / DEGROWTH  (Region → Gender, FY YoY)
+# =========================================================================== #
+with tab_gender_gd:
+    st.subheader("Gender-wise Growth / Degrowth")
+    st.caption("Store × gender, MTD & YTD this year vs last (fiscal Apr–Mar). "
+               "Red = degrowth. Gender follows the brand line "
+               "(Mohey / Twamev-Women / Mebaz = Women).")
+    c1, c2 = st.columns(2)
+    with c1:
+        view = st.radio("View", ["Store detail", "Region summary"], horizontal=True,
+                        key="gender_gd_view", label_visibility="collapsed")
+    with c2:
+        gd_asof = gd_basis_control("gender_gd_basis", end_d)
+    if view == "Store detail":
+        g = L.gender_store_gd(df_exec, asof=gd_asof)
+        if g.empty:
+            st.info("No data for the current filters.")
+        else:
+            render_gd_grouped(g, f"gender_gd_store_{gd_asof:%Y%m%d}")
+    else:
+        g = L.gender_wise_gd(df_exec, asof=gd_asof)
+        if g.empty:
+            st.info("No data for the current filters.")
+        else:
+            render_gd_table(g, ["Region", "Gender"], f"gender_gd_{gd_asof:%Y%m%d}",
+                            region_grouped=True)
+
+# =========================================================================== #
+# BRAND-WISE GROWTH / DEGROWTH  (Manyavar / Mohey / Twamev / …, FY YoY)
+# =========================================================================== #
+with tab_brand_gd:
+    st.subheader("Brand-wise Growth / Degrowth")
+    st.caption("MTD & YTD YoY by brand. Scope = the Manyavar-group brands in "
+               "the sales feed.")
+    gd_asof = gd_basis_control("brand_gd_basis", end_d)
+    b = L.brand_wise_gd(df_exec, asof=gd_asof)
+    if b.empty:
+        st.info("No data for the current filters.")
+    else:
+        render_gd_table(b, ["Brand"], f"brand_gd_{gd_asof:%Y%m%d}")
+
+# =========================================================================== #
+# GENDER MIX — contribution %  (Region × Gender + store detail)
+# =========================================================================== #
+with tab_gender_mix:
+    st.subheader("Gender-wise Contribution %")
+    st.caption("Each gender's share of sales, MTD & YTD.")
+    c1, c2 = st.columns(2)
+    with c1:
+        view = st.radio("View", ["Store detail", "Region summary"], horizontal=True,
+                        key="gender_mix_view", label_visibility="collapsed")
+    with c2:
+        gd_asof = gd_basis_control("gender_mix_basis", end_d)
+    detail, summary = L.gender_contribution(df_exec, asof=gd_asof)
+    if summary.empty:
+        st.info("No data for the current filters.")
+    elif view == "Store detail":
+        render_gender_mix_grouped(detail, f"gender_mix_store_{gd_asof:%Y%m%d}")
+    else:
+        srows, srtypes = [], []
+        for reg in [r for r in ["East & NE", "South"] if r in summary["Region"].unique()]:
+            sub = summary[summary["Region"] == reg]
+            for _, rr in sub.iterrows():
+                srows.append(rr.to_dict())
+                srtypes.append("store")
+            srows.append({"Region": f"{reg} Total", "Gender": "",
+                          "MTD TY": sub["MTD TY"].sum(), "Contrib MTD %": 100.0,
+                          "YTD TY": sub["YTD TY"].sum(), "Contrib YTD %": 100.0})
+            srtypes.append("subtotal")
+        gt = {"Region": "Grand Total", "Gender": "",
+              "MTD TY": summary["MTD TY"].sum(), "Contrib MTD %": 100.0,
+              "YTD TY": summary["YTD TY"].sum(), "Contrib YTD %": 100.0}
+        srows.append(gt)
+        srtypes.append("grand")
+        stab = pd.DataFrame(srows)[["Region", "Gender", "MTD TY",
+                                    "Contrib MTD %", "YTD TY", "Contrib YTD %"]]
+        st.markdown(
+            styled_report_html(stab, money_cols=["MTD TY", "YTD TY"],
+                               pct_cols=["Contrib MTD %", "Contrib YTD %"],
+                               row_types=srtypes),
+            unsafe_allow_html=True)
+        st.write("")
+        st.download_button(
+            "⬇ Download (CSV)", summary.to_csv(index=False).encode(),
+            file_name=f"gender_mix_{gd_asof:%Y%m%d}.csv", mime="text/csv",
+            use_container_width=True)
 
 # =========================================================================== #
 # EXECUTIVE — MTD / QTD / YTD, all year-on-year (fiscal year Apr–Mar)
