@@ -689,8 +689,12 @@ def takeover_map() -> dict:
     return dict(zip(m["tableau_name"], m["takeover_date"]))
 
 
-def _anchor_md(df: pd.DataFrame):
-    """Per-row (month, day) of each store's takeover date; default 1 Apr."""
+def _anchor_md(df: pd.DataFrame, anchor_takeover: bool = True):
+    """Per-row (month, day) of each store's window start. With `anchor_takeover`
+    (default) that's the store's takeover date; otherwise it's a plain fiscal-year
+    start (1 Apr) for every store — which is how the monthly source sheet counts."""
+    if not anchor_takeover:
+        return (pd.Series(4, index=df.index), pd.Series(1, index=df.index))
     tk = takeover_map()
     md = {s: ((d.month, d.day) if pd.notna(d) else (4, 1)) for s, d in tk.items()}
     m = df[COL_STORE_LABEL].map(lambda s: md.get(s, (4, 1))[0]).astype(int)
@@ -698,13 +702,14 @@ def _anchor_md(df: pd.DataFrame):
     return m, d
 
 
-def report_frames(df: pd.DataFrame, kind: str, asof=None):
-    """Current & same-period-last-year frames for kind in {MTD, YTD}, with each
-    store's window anchored to its own takeover date (so TY and LY line up).
-    `asof` (the to-date reference) defaults to the latest data date."""
+def report_frames(df: pd.DataFrame, kind: str, asof=None, anchor_takeover: bool = True):
+    """Current & same-period-last-year frames for kind in {MTD, YTD}. Each store's
+    window is anchored to its takeover date (so TY and LY line up); pass
+    `anchor_takeover=False` to use a plain 1-Apr fiscal start instead (matches the
+    monthly review sheet). `asof` (the to-date reference) defaults to latest data."""
     asof = as_of(df) if asof is None else pd.Timestamp(asof)
     fy_year = asof.year if asof.month >= 4 else asof.year - 1
-    m, d = _anchor_md(df)
+    m, d = _anchor_md(df, anchor_takeover=anchor_takeover)
 
     if kind == "YTD":
         cur_start = pd.to_datetime(pd.DataFrame({"year": fy_year, "month": m, "day": d}))
@@ -902,3 +907,183 @@ def build_view(
         "order": gorder,
         "is_money": metric_key in MONEY_METRICS,
     }
+
+
+# --------------------------------------------------------------------------- #
+# Gender-wise & Brand-wise Growth/Degrowth + Gender contribution %
+# (FY YoY, takeover-anchored — mirrors the "GROWTH DEGROWTH SHEET" tabs)
+# --------------------------------------------------------------------------- #
+GENDER_ORDER = ["MEN", "WOMEN"]
+BRAND_ORDER = ["Manyavar", "Mohey", "Twamev", "Mebaz", "Manthan", "Other"]
+
+
+def brand_gender(df: pd.DataFrame) -> pd.Series:
+    """Source-sheet gender: classify each line by its BRAND-LINE, not the
+    product Men/Women/Child category. WOMEN = Mohey* / Twamev-Women / Mebaz;
+    everything else (Manyavar incl. its kids items, Manthan, Twamev-Men) = MEN.
+    This mirrors how the GROWTH DEGROWTH sheet assigns MEN/WOMEN."""
+    div = df[COL_DIVISION].astype(str).str.upper()
+    is_women = (div.str.startswith("MOHEY")
+                | div.str.contains("TWAMEV-WOMEN", regex=False)
+                | div.eq("MEBAZ"))
+    g = pd.Series("MEN", index=df.index)
+    g[is_women] = "WOMEN"
+    return g
+
+# Column layout mirroring the source pivot (BRAND_WISE_GD / VFL tabs).
+GD_VALUE_COLS = ["YTD LY", "YTD TY", "MTD LY", "MTD TY", "Day Sales",
+                 "Month Sale LY", "Projected MTD", "LY Full Sales",
+                 "Projected YTD"]
+
+
+def _extra_gd_windows(df: pd.DataFrame, asof=None):
+    """Frames for the non-YoY columns: today's day-sale, last-year same calendar
+    month (full), and the prior full fiscal year (Apr–Mar)."""
+    asof = as_of(df) if asof is None else pd.Timestamp(asof)
+    day = df[df["date"] == asof]
+    ly_m_start = asof.replace(day=1) - pd.DateOffset(years=1)
+    ly_m_end = ly_m_start + pd.offsets.MonthEnd(0)
+    ly_month = df[(df["date"] >= ly_m_start) & (df["date"] <= ly_m_end)]
+    fy_year = asof.year if asof.month >= 4 else asof.year - 1
+    ly_full = df[(df["date"] >= pd.Timestamp(fy_year - 1, 4, 1)) &
+                 (df["date"] <= pd.Timestamp(fy_year, 3, 31))]
+    return asof, day, ly_month, ly_full
+
+
+def _gd_by(df: pd.DataFrame, keys, asof=None, anchor_takeover: bool = True) -> pd.DataFrame:
+    """Growth/degrowth grouped by `keys` (list of columns). YTD/MTD TY & LY come
+    from report_frames (takeover-anchored unless `anchor_takeover=False`); adds
+    day-sale, LY same-month, LY full year, run-rate projections and GD% columns."""
+    import calendar
+    asof, day, ly_month, ly_full = _extra_gd_windows(df, asof)
+    ycur, ypri = report_frames(df, "YTD", asof=asof, anchor_takeover=anchor_takeover)
+    mcur, mpri = report_frames(df, "MTD", asof=asof, anchor_takeover=anchor_takeover)
+
+    def g(f):
+        return f.groupby(keys)[COL_AMOUNT].sum()
+
+    out = pd.DataFrame({
+        "YTD LY": g(ypri), "YTD TY": g(ycur),
+        "MTD LY": g(mpri), "MTD TY": g(mcur),
+        "Day Sales": g(day), "Month Sale LY": g(ly_month),
+        "LY Full Sales": g(ly_full),
+    }).fillna(0.0)
+
+    # Simple run-rate projections (calendar-day based). NOTE: the source sheet
+    # projects on OPERATIONAL days — calibrate here once that formula is known.
+    dim_total = calendar.monthrange(asof.year, asof.month)[1]
+    fy_year = asof.year if asof.month >= 4 else asof.year - 1
+    days_elapsed = (asof - pd.Timestamp(fy_year, 4, 1)).days + 1
+    out["Projected MTD"] = out["MTD TY"] * dim_total / max(asof.day, 1)
+    out["Projected YTD"] = out["YTD TY"] * 365.0 / max(days_elapsed, 1)
+
+    ly_ytd = out["YTD LY"].replace(0, pd.NA)
+    ly_mtd = out["MTD LY"].replace(0, pd.NA)
+    out["GD YTD %"] = (out["YTD TY"] - out["YTD LY"]) / ly_ytd * 100
+    out["GD MTD %"] = (out["MTD TY"] - out["MTD LY"]) / ly_mtd * 100
+    return out.reset_index()
+
+
+def brand_wise_gd(df: pd.DataFrame, asof=None, anchor_takeover: bool = True) -> pd.DataFrame:
+    """Brand-wise growth/degrowth (Manyavar / Mohey / Twamev / Mebaz / Manthan),
+    columns ordered like the BRAND_WISE_GD tab. Respects the filtered `df`."""
+    out = _gd_by(df, [COL_BRAND], asof=asof, anchor_takeover=anchor_takeover).rename(
+        columns={COL_BRAND: "Brand"})
+    out["__o"] = out["Brand"].map({b: i for i, b in enumerate(BRAND_ORDER)}).fillna(99)
+    out = out.sort_values("__o").drop(columns="__o").reset_index(drop=True)
+    cols = ["Brand", "YTD LY", "YTD TY", "GD YTD %", "MTD LY", "MTD TY",
+            "GD MTD %", "Day Sales", "Month Sale LY", "Projected MTD",
+            "LY Full Sales", "Projected YTD"]
+    return out[cols]
+
+
+def gender_wise_gd(df: pd.DataFrame, asof=None, anchor_takeover: bool = True) -> pd.DataFrame:
+    """Gender-wise growth/degrowth, Region → Gender (MEN/WOMEN), classified by
+    brand-line to match the source sheet."""
+    df = df.copy()
+    df["_gender"] = brand_gender(df)
+    out = _gd_by(df, [COL_REGION, "_gender"], asof=asof,
+                 anchor_takeover=anchor_takeover).rename(
+        columns={COL_REGION: "Region", "_gender": "Gender"})
+    out["__g"] = out["Gender"].map({g: i for i, g in enumerate(GENDER_ORDER)}).fillna(99)
+    out["__r"] = out["Region"].map({r: i for i, r in enumerate(_REGION_ORDER)}).fillna(99)
+    out = out.sort_values(["__r", "__g"]).drop(columns=["__r", "__g"]).reset_index(drop=True)
+    cols = ["Region", "Gender", "YTD LY", "YTD TY", "GD YTD %", "MTD LY",
+            "MTD TY", "GD MTD %", "Day Sales", "Month Sale LY", "Projected MTD",
+            "LY Full Sales", "Projected YTD"]
+    return out[cols]
+
+
+def gender_contribution(df: pd.DataFrame, asof=None, anchor_takeover: bool = True):
+    """Gender contribution %: store × gender with MTD_TY & YTD_TY and each
+    gender's share within its store; plus a region × gender summary. Mirrors
+    the VFL_GENDER tab. Returns (detail_df, summary_df)."""
+    asof = as_of(df) if asof is None else pd.Timestamp(asof)
+    df = df.copy()
+    df["_gender"] = brand_gender(df)
+    ycur, _ = report_frames(df, "YTD", asof=asof, anchor_takeover=anchor_takeover)
+    mcur, _ = report_frames(df, "MTD", asof=asof, anchor_takeover=anchor_takeover)
+    master = load_store_master()[["tableau_name", "code", "location", "city", "region"]]
+
+    def by(f, keys):
+        return f.groupby(keys)[COL_AMOUNT].sum()
+
+    # ---- store × gender detail ----
+    d = pd.DataFrame({
+        "MTD TY": by(mcur, [COL_STORE_LABEL, "_gender"]),
+        "YTD TY": by(ycur, [COL_STORE_LABEL, "_gender"]),
+    }).fillna(0.0).reset_index()
+    d = d.merge(master, left_on=COL_STORE_LABEL, right_on="tableau_name", how="left")
+    st_mtd = d.groupby(COL_STORE_LABEL)["MTD TY"].transform("sum")
+    st_ytd = d.groupby(COL_STORE_LABEL)["YTD TY"].transform("sum")
+    d["Contrib MTD %"] = d["MTD TY"] / st_mtd.replace(0, pd.NA) * 100
+    d["Contrib YTD %"] = d["YTD TY"] / st_ytd.replace(0, pd.NA) * 100
+    d["code"] = pd.to_numeric(d["code"], errors="coerce")
+    d["__g"] = d["_gender"].map({g: i for i, g in enumerate(GENDER_ORDER)}).fillna(99)
+    d["__r"] = d["region"].map({r: i for i, r in enumerate(_REGION_ORDER)}).fillna(99)
+    d = d.sort_values(["__r", "code", "__g"]).reset_index(drop=True)
+    detail = d[["region", "city", "location", "code", "_gender", "MTD TY",
+                "Contrib MTD %", "YTD TY", "Contrib YTD %"]].rename(
+        columns={"region": "Region", "city": "Master Location",
+                 "location": "Location", "code": "Store Code", "_gender": "Gender"})
+
+    # ---- region × gender summary ----
+    s = pd.DataFrame({
+        "MTD TY": by(mcur, [COL_REGION, "_gender"]),
+        "YTD TY": by(ycur, [COL_REGION, "_gender"]),
+    }).fillna(0.0).reset_index()
+    r_mtd = s.groupby(COL_REGION)["MTD TY"].transform("sum")
+    r_ytd = s.groupby(COL_REGION)["YTD TY"].transform("sum")
+    s["Contrib MTD %"] = s["MTD TY"] / r_mtd.replace(0, pd.NA) * 100
+    s["Contrib YTD %"] = s["YTD TY"] / r_ytd.replace(0, pd.NA) * 100
+    s["__g"] = s["_gender"].map({g: i for i, g in enumerate(GENDER_ORDER)}).fillna(99)
+    s["__r"] = s[COL_REGION].map({r: i for i, r in enumerate(_REGION_ORDER)}).fillna(99)
+    s = s.sort_values(["__r", "__g"]).reset_index(drop=True)
+    summary = s[[COL_REGION, "_gender", "MTD TY", "Contrib MTD %", "YTD TY",
+                 "Contrib YTD %"]].rename(columns={COL_REGION: "Region",
+                                                    "_gender": "Gender"})
+    return detail, summary
+
+
+def gender_store_gd(df: pd.DataFrame, asof=None, anchor_takeover: bool = True) -> pd.DataFrame:
+    """Store × gender growth/degrowth (brand-line gender), like the VFL tab
+    (pages 10-12): one row per store per gender, with the full GD column set.
+    Region / Master Location / Store Code / Location come from the master."""
+    df = df.copy()
+    df["_gender"] = brand_gender(df)
+    out = _gd_by(df, [COL_STORE_LABEL, "_gender"], asof=asof,
+                 anchor_takeover=anchor_takeover)
+    master = load_store_master()[["tableau_name", "code", "location", "city", "region"]]
+    out = out.merge(master, left_on=COL_STORE_LABEL, right_on="tableau_name", how="left")
+    out["code"] = pd.to_numeric(out["code"], errors="coerce")
+    out["__g"] = out["_gender"].map({g: i for i, g in enumerate(GENDER_ORDER)}).fillna(9)
+    out["__r"] = out["region"].map({r: i for i, r in enumerate(_REGION_ORDER)}).fillna(9)
+    out = out.sort_values(["__r", "code", "__g"]).reset_index(drop=True)
+    out = out.rename(columns={"region": "Region", "city": "Master Location",
+                              "location": "Location", "code": "Store Code",
+                              "_gender": "Gender"})
+    cols = ["Region", "Master Location", "Store Code", "Location", "Gender",
+            "YTD LY", "YTD TY", "GD YTD %", "MTD LY", "MTD TY", "GD MTD %",
+            "Day Sales", "Projected MTD", "Month Sale LY", "Projected YTD",
+            "LY Full Sales"]
+    return out[cols]
