@@ -243,6 +243,8 @@ def styled_report_html(disp, money_cols=(), pct_cols=(), sign_cols=(),
             rbg, fw = "#CDE8CF", "800"
         elif t == "storetotal":
             rbg, fw = "#FBEEE6", "700"
+        elif t == "block":
+            rbg, fw = "#D6E4F5", "800"          # store-block total (blue)
         else:
             rbg, fw = ("#FFFFFF" if i % 2 == 0 else "#FAF6EF"), "500"
         tds = []
@@ -786,11 +788,75 @@ def render_gender_mix_grouped(detail, key):
     return table
 
 
-(tab_report, tab_degrowth, tab_gender_gd, tab_brand_gd, tab_gender_mix,
- tab_exec, tab_overview, tab_stores, tab_build,
+def build_store_brand_gd(detail):
+    """Store × brand-line G/D grouped for display: per store, MEN brand-lines +
+    MEN Total (peach), WOMEN brand-lines + WOMEN Total (peach), a store total
+    (blue block), then region subtotals (pink) and a grand total (green).
+    Returns (table, cols, rtypes)."""
+    label_cols = ["Region", "Master Location", "Store Code", "Location", "DOO", "Brand"]
+    val_order = [c for c in GD_ORDER if c in detail.columns]
+    out_cols = label_cols + val_order
+
+    def total_row(sub, put_col, label):
+        r = {c: "" for c in out_cols}
+        r[put_col] = label
+        for c in GD_MONEY:
+            if c in val_order:
+                r[c] = pd.to_numeric(sub[c], errors="coerce").sum()
+        r["GD YTD %"] = ((r["YTD TY"] - r["YTD LY"]) / r["YTD LY"] * 100
+                         if r.get("YTD LY") else None)
+        r["GD MTD %"] = ((r["MTD TY"] - r["MTD LY"]) / r["MTD LY"] * 100
+                         if r.get("MTD LY") else None)
+        return r
+
+    rows, rtypes = [], []
+    for reg in [r for r in ["East & NE", "South"] if r in detail["Region"].unique()]:
+        rsub = detail[detail["Region"] == reg]
+        for code in pd.unique(rsub["Store Code"]):
+            ssub = rsub[rsub["Store Code"] == code]
+            loc, doo = ssub["Location"].iloc[0], ssub["DOO"].iloc[0]
+            for gender in ["MEN", "WOMEN"]:
+                gsub = ssub[ssub["Gender"] == gender]
+                if gsub.empty:
+                    continue
+                for _, rr in gsub.iterrows():
+                    rows.append({c: rr[c] for c in out_cols})
+                    rtypes.append("store")
+                gt = total_row(gsub, "Brand", f"{gender} Total")
+                gt["Location"], gt["DOO"], gt["Store Code"] = loc, doo, code
+                rows.append(gt)
+                rtypes.append("storetotal")            # peach gender subtotal
+            stt = total_row(ssub, "Brand", "Store Total")
+            stt["Location"], stt["DOO"], stt["Store Code"] = loc, doo, code
+            rows.append(stt)
+            rtypes.append("block")                     # blue store total
+        rows.append(total_row(rsub, "Region", f"{reg} Total"))
+        rtypes.append("subtotal")                      # pink region subtotal
+    rows.append(total_row(detail, "Region", "Grand Total"))
+    rtypes.append("grand")                             # green grand total
+    return pd.DataFrame(rows)[out_cols], out_cols, rtypes
+
+
+def render_store_brand_gd(detail, key):
+    """Render the store × brand-line G/D table (widest sheet → compact)."""
+    table, cols, rtypes = build_store_brand_gd(detail)
+    money = [c for c in GD_MONEY if c in cols]
+    st.markdown(
+        styled_report_html(table, money_cols=money, pct_cols=GD_PCT,
+                           sign_cols=GD_PCT, row_types=rtypes, compact=True),
+        unsafe_allow_html=True)
+    st.write("")
+    st.download_button("⬇ Download (CSV)", table.to_csv(index=False).encode(),
+                       file_name=f"{key}.csv", mime="text/csv",
+                       key=f"{key}_csv", use_container_width=True)
+    return table
+
+
+(tab_report, tab_degrowth, tab_gender_gd, tab_brand_gd, tab_storebrand,
+ tab_gender_mix, tab_exec, tab_overview, tab_stores, tab_build,
  tab_trends, tab_cat, tab_staff, tab_cust, tab_merch) = st.tabs([
     "📋 MTD / YTD Report", "📉 Degrowth",
-    "🧑‍🤝‍🧑 Gender G/D", "🏷️ Brand G/D", "⚖️ Gender Mix",
+    "🧑‍🤝‍🧑 Gender G/D", "🏷️ Brand G/D", "🏬 Store × Brand G/D", "⚖️ Gender Mix",
     "📊 Executive", "Overview", "🏬 Stores",
     "🔧 Build your view", "Trends", "Category mix", "Salespeople",
     "Customers", "Colors & sizes",
@@ -981,6 +1047,23 @@ with tab_brand_gd:
         st.info("No data for the current filters.")
     else:
         render_gd_table(b, ["Brand"], f"brand_gd_{gd_asof:%Y%m%d}")
+
+# =========================================================================== #
+# STORE × BRAND G/D — brand-line detail within each store (deepest VFL level)
+# =========================================================================== #
+with tab_storebrand:
+    st.subheader("Store × Brand-line Growth / Degrowth")
+    st.caption("Each store broken down by brand-line (Manyavar / Twamev Men / "
+               "Manthan / Mohey / Twamev-Women / Mebaz — any other division folds "
+               "into Manyavar), grouped by gender: **MEN Total** and **WOMEN "
+               "Total** (peach), a **Store Total** (blue), then region & grand "
+               "totals. Takeover-anchored, red = degrowth.")
+    sb_asof = gd_basis_control("storebrand_basis", end_d)
+    sb = L.store_brand_gd(df_exec, asof=sb_asof)
+    if sb.empty:
+        st.info("No data for the current filters.")
+    else:
+        render_store_brand_gd(sb, f"store_brand_gd_{sb_asof:%Y%m%d}")
 
 # =========================================================================== #
 # GENDER MIX — contribution %  (Region × Gender + store detail)
