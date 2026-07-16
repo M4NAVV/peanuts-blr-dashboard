@@ -213,15 +213,16 @@ def styled_report_html(disp, money_cols=(), pct_cols=(), sign_cols=(),
     always render in Streamlit): maroon header, zebra rows, tabular right-aligned
     numbers, shaded subtotals/totals, and red/green on growth columns.
 
-    `compact=True` wraps multi-word headers onto two lines, tightens padding and
-    drops the paise on money cells, so very wide sheets (e.g. the 16-column
-    Gender G/D detail) fit on one screen without horizontal scrolling."""
+    Headers always wrap onto multiple lines (never truncated), so columns size to
+    their data rather than to a long header — keeping every report compact and
+    readable at full font. `compact=True` adds extra width-savers for the very
+    wide sheets (tighter padding + whole-rupee money on the 16-column Gender G/D
+    detail) so they fit one screen without shrinking the font."""
     money, pct, sign = set(money_cols), set(pct_cols), set(sign_cols)
     cols = list(disp.columns)
     money_dp = 0 if compact else 2
     th_pad = "6px 6px" if compact else "8px 10px"
     td_pad = "3px 7px" if compact else "5px 10px"
-    th_ws = "normal" if compact else "nowrap"     # wrap headers when compact
 
     def align(c):
         return "right" if (c in money or c in pct) else "left"
@@ -230,7 +231,7 @@ def styled_report_html(disp, money_cols=(), pct_cols=(), sign_cols=(),
         f'<th style="background:{MAROON};color:#fff;font-weight:700;'
         f'font-size:{font_px - 1:.0f}px;text-transform:uppercase;letter-spacing:.01em;'
         f'padding:{th_pad};text-align:{align(c)};position:sticky;top:0;'
-        f'line-height:1.15;white-space:{th_ws};vertical-align:bottom;">{c}</th>'
+        f'line-height:1.15;white-space:normal;vertical-align:bottom;">{c}</th>'
         for c in cols)
 
     trs = []
@@ -746,8 +747,7 @@ def render_gd_grouped(detail, key):
     money = [c for c in GD_MONEY if c in cols]
     st.markdown(
         styled_report_html(table, money_cols=money, pct_cols=GD_PCT,
-                           sign_cols=GD_PCT, row_types=rtypes,
-                           font_px=11, compact=True),
+                           sign_cols=GD_PCT, row_types=rtypes, compact=True),
         unsafe_allow_html=True)
     st.write("")
     st.download_button("⬇ Download (CSV)", table.to_csv(index=False).encode(),
