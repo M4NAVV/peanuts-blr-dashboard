@@ -207,21 +207,31 @@ GRN_TXT, RED_TXT = "#137a3a", "#C0143C"
 
 
 def styled_report_html(disp, money_cols=(), pct_cols=(), sign_cols=(),
-                       row_types=None, font_px=12.5, full_width=True):
+                       row_types=None, font_px=12.5, full_width=True,
+                       compact=False):
     """Compact, high-contrast HTML table built with INLINE styles (so colors
     always render in Streamlit): maroon header, zebra rows, tabular right-aligned
-    numbers, shaded subtotals/totals, and red/green on growth columns."""
+    numbers, shaded subtotals/totals, and red/green on growth columns.
+
+    `compact=True` wraps multi-word headers onto two lines, tightens padding and
+    drops the paise on money cells, so very wide sheets (e.g. the 16-column
+    Gender G/D detail) fit on one screen without horizontal scrolling."""
     money, pct, sign = set(money_cols), set(pct_cols), set(sign_cols)
     cols = list(disp.columns)
+    money_dp = 0 if compact else 2
+    th_pad = "6px 6px" if compact else "8px 10px"
+    td_pad = "3px 7px" if compact else "5px 10px"
+    th_ws = "normal" if compact else "nowrap"     # wrap headers when compact
 
     def align(c):
         return "right" if (c in money or c in pct) else "left"
 
     ths = "".join(
         f'<th style="background:{MAROON};color:#fff;font-weight:700;'
-        f'font-size:{font_px - 1:.0f}px;text-transform:uppercase;letter-spacing:.02em;'
-        f'padding:8px 10px;text-align:{align(c)};position:sticky;top:0;'
-        f'white-space:nowrap;">{c}</th>' for c in cols)
+        f'font-size:{font_px - 1:.0f}px;text-transform:uppercase;letter-spacing:.01em;'
+        f'padding:{th_pad};text-align:{align(c)};position:sticky;top:0;'
+        f'line-height:1.15;white-space:{th_ws};vertical-align:bottom;">{c}</th>'
+        for c in cols)
 
     trs = []
     for i in range(len(disp)):
@@ -238,7 +248,7 @@ def styled_report_html(disp, money_cols=(), pct_cols=(), sign_cols=(),
         for c in cols:
             v = disp.iloc[i][c]
             if c in money:
-                txt = fmt_in(v, 2) if pd.notna(v) else "—"
+                txt = fmt_in(v, money_dp) if pd.notna(v) else "—"
             elif c in pct:
                 txt = f"{v:,.2f}%" if pd.notna(v) else "—"
             else:
@@ -250,7 +260,7 @@ def styled_report_html(disp, money_cols=(), pct_cols=(), sign_cols=(),
                 except (TypeError, ValueError):
                     pass
             tds.append(
-                f'<td style="padding:5px 10px;text-align:{align(c)};color:{color};'
+                f'<td style="padding:{td_pad};text-align:{align(c)};color:{color};'
                 f'font-weight:{fw};background:{rbg};border-bottom:1px solid #ECE4D6;'
                 f'white-space:nowrap;font-variant-numeric:tabular-nums;">{txt}</td>')
         trs.append(f"<tr>{''.join(tds)}</tr>")
@@ -717,7 +727,9 @@ def _grouped_gd_rows(detail, sum_cols, pct_fill, label_cols):
 
 def render_gd_grouped(detail, key):
     """Store × gender growth/degrowth, PDF pages 10-12 format: Region → Store →
-    Gender, per-store totals, region subtotals, grand total; full GD columns."""
+    Gender, per-store totals, region subtotals, grand total; full GD columns.
+    Rendered compact (wrapped headers, tight columns, whole-rupee) so all 16
+    columns fit on one screen without horizontal scrolling."""
     label_cols = ["Region", "Master Location", "Store Code", "Location", "Gender"]
     cols = label_cols + [c for c in GD_ORDER if c in detail.columns]
     detail = detail[cols].copy()
@@ -734,7 +746,8 @@ def render_gd_grouped(detail, key):
     money = [c for c in GD_MONEY if c in cols]
     st.markdown(
         styled_report_html(table, money_cols=money, pct_cols=GD_PCT,
-                           sign_cols=GD_PCT, row_types=rtypes),
+                           sign_cols=GD_PCT, row_types=rtypes,
+                           font_px=11, compact=True),
         unsafe_allow_html=True)
     st.write("")
     st.download_button("⬇ Download (CSV)", table.to_csv(index=False).encode(),
