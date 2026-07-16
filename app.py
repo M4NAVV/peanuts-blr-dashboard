@@ -266,15 +266,18 @@ def styled_report_html(disp, money_cols=(), pct_cols=(), sign_cols=(),
                 f'white-space:nowrap;font-variant-numeric:tabular-nums;">{txt}</td>')
         trs.append(f"<tr>{''.join(tds)}</tr>")
 
-    width_css = "width:100%;" if full_width else "width:auto;"
+    # Always size the table to its content (width:auto) so column widths depend
+    # only on the data, never on the container — no stretching / no dead
+    # whitespace inside columns when the page is wide or zoomed out. `full_width`
+    # only controls whether we add the horizontal-scroll wrapper.
     table = (
-        f'<table style="border-collapse:collapse;{width_css}'
+        f'<table style="border-collapse:collapse;width:auto;'
         f'font-family:Inter,-apple-system,Segoe UI,sans-serif;font-size:{font_px}px;">'
         f'<thead><tr>{ths}</tr></thead><tbody>{"".join(trs)}</tbody></table>')
     if not full_width:
         return table
-    return (f'<div style="overflow-x:auto;border:1px solid #E7E1D6;'
-            f'border-radius:10px;">{table}</div>')
+    return (f'<div style="overflow-x:auto;max-width:100%;border:1px solid #E7E1D6;'
+            f'border-radius:10px;display:inline-block;">{table}</div>')
 
 
 def render_fit_to_screen(table_html, panel_h=600):
