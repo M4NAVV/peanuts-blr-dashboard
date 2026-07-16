@@ -930,6 +930,28 @@ def brand_gender(df: pd.DataFrame) -> pd.Series:
     g[is_women] = "WOMEN"
     return g
 
+
+# Fine brand-line for the store×brand report (deepest VFL level). Each line is
+# gender-pure, so it rolls up cleanly into the MEN/WOMEN totals of brand_gender.
+BRANDLINE_ORDER = ["MANYAVAR", "TWAMEV MEN", "MANTHAN",
+                   "MOHEY", "TWAMEV-WOMEN", "MEBAZ"]
+BRANDLINE_GENDER = {"MANYAVAR": "MEN", "TWAMEV MEN": "MEN", "MANTHAN": "MEN",
+                    "MOHEY": "WOMEN", "TWAMEV-WOMEN": "WOMEN", "MEBAZ": "WOMEN"}
+
+
+def brand_line(df: pd.DataFrame) -> pd.Series:
+    """Fine brand-line per row: MANYAVAR / TWAMEV MEN / MANTHAN / MOHEY /
+    TWAMEV-WOMEN / MEBAZ. Everything else (any other Division) folds into
+    MANYAVAR, per the source sheet."""
+    d = df[COL_DIVISION].astype(str).str.upper()
+    out = pd.Series("MANYAVAR", index=df.index)          # others -> Manyavar
+    out[d.str.contains("TWAMEV-MEN", regex=False)] = "TWAMEV MEN"
+    out[d.eq("MANTHAN")] = "MANTHAN"
+    out[d.str.startswith("MOHEY")] = "MOHEY"
+    out[d.str.contains("TWAMEV-WOMEN", regex=False)] = "TWAMEV-WOMEN"
+    out[d.eq("MEBAZ")] = "MEBAZ"
+    return out
+
 # Column layout mirroring the source pivot (BRAND_WISE_GD / VFL tabs).
 GD_VALUE_COLS = ["YTD LY", "YTD TY", "MTD LY", "MTD TY", "Day Sales",
                  "Month Sale LY", "Projected MTD", "LY Full Sales",
@@ -1086,4 +1108,35 @@ def gender_store_gd(df: pd.DataFrame, asof=None, anchor_takeover: bool = True) -
             "YTD LY", "YTD TY", "GD YTD %", "MTD LY", "MTD TY", "GD MTD %",
             "Day Sales", "Projected MTD", "Month Sale LY", "Projected YTD",
             "LY Full Sales"]
+    return out[cols]
+
+
+def store_brand_gd(df: pd.DataFrame, asof=None, anchor_takeover: bool = True) -> pd.DataFrame:
+    """Store × brand-line growth/degrowth — the deepest VFL level: one row per
+    brand-line per store (MANYAVAR / TWAMEV MEN / MANTHAN / MOHEY / TWAMEV-WOMEN /
+    MEBAZ), ordered by gender then brand, with the DOO (takeover date). The app
+    adds the MEN/WOMEN gender subtotals, per-store totals, region + grand totals.
+    Gender is carried as a helper column (each brand-line is gender-pure, so the
+    MEN/WOMEN totals match the Gender G/D report)."""
+    df = df.copy()
+    df["_bl"] = brand_line(df)
+    out = _gd_by(df, [COL_STORE_LABEL, "_bl"], asof=asof,
+                 anchor_takeover=anchor_takeover)
+    master = load_store_master()[["tableau_name", "code", "location", "city",
+                                  "region", "takeover_date"]]
+    out = out.merge(master, left_on=COL_STORE_LABEL, right_on="tableau_name", how="left")
+    out["code"] = pd.to_numeric(out["code"], errors="coerce")
+    out["_gender"] = out["_bl"].map(BRANDLINE_GENDER).fillna("MEN")
+    out["__r"] = out["region"].map({r: i for i, r in enumerate(_REGION_ORDER)}).fillna(9)
+    out["__g"] = out["_gender"].map({"MEN": 0, "WOMEN": 1}).fillna(9)
+    out["__b"] = out["_bl"].map({b: i for i, b in enumerate(BRANDLINE_ORDER)}).fillna(99)
+    out = out.sort_values(["__r", "code", "__g", "__b"]).reset_index(drop=True)
+    out["DOO"] = pd.to_datetime(out["takeover_date"], errors="coerce").dt.strftime("%d-%m-%Y")
+    out = out.rename(columns={"region": "Region", "city": "Master Location",
+                              "location": "Location", "code": "Store Code",
+                              "_bl": "Brand", "_gender": "Gender"})
+    cols = ["Region", "Master Location", "Store Code", "Location", "DOO",
+            "Gender", "Brand", "YTD LY", "YTD TY", "GD YTD %", "MTD LY", "MTD TY",
+            "GD MTD %", "Day Sales", "Month Sale LY", "Projected MTD",
+            "LY Full Sales", "Projected YTD"]
     return out[cols]
