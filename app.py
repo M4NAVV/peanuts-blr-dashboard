@@ -23,8 +23,8 @@ import loader as L
 from imaging import table_to_png
 
 st.set_page_config(
-    page_title="Peanuts Retail — Sales Dashboard",
-    page_icon="🥜",
+    page_title="VFL × Peanuts Retail — Sales Dashboard",
+    page_icon="Ⓜ️",
     layout="wide",
     initial_sidebar_state="auto",  # collapses on mobile, open on desktop
 )
@@ -376,8 +376,18 @@ fresh = L.data_freshness(df_all)
 # Sidebar — exhaustive, cascading filters + view settings
 # --------------------------------------------------------------------------- #
 n_stores_all = df_all[L.COL_STORE_LABEL].nunique()
-st.sidebar.title("🥜 Peanuts Retail")
-st.sidebar.caption(f"All {n_stores_all} stores · Bengaluru + East India")
+_regions_txt = ", ".join(
+    r for r in ["East & NE", "South"]
+    if r in set(df_all[L.COL_REGION].dropna().unique())) or "—"
+st.sidebar.markdown(
+    f'<div style="display:flex;align-items:center;gap:10px;margin:0 0 2px;">'
+    f'<div style="width:38px;height:38px;border-radius:9px;background:{MAROON};'
+    f'color:#fff;font-weight:800;font-size:23px;font-family:Georgia,serif;'
+    f'display:flex;align-items:center;justify-content:center;flex:0 0 auto;">M</div>'
+    f'<div style="font-size:19px;font-weight:800;color:{MAROON};line-height:1.12;">'
+    f'VFL <span style="color:{GOLD};">×</span> Peanuts Retail</div></div>',
+    unsafe_allow_html=True)
+st.sidebar.caption(f"Store Count {n_stores_all} · {_regions_txt}")
 
 min_d, max_d = fresh["min_date"].date(), fresh["max_date"].date()
 
@@ -579,7 +589,7 @@ st.title("Sales Dashboard")
 scope = f"{len(sel_store)} store(s)" if sel_store else f"all {n_stores_all} stores"
 _dlabel = (f"{start_d:%d %b %Y}" if start_d == end_d
            else f"{start_d:%d %b %Y} → {end_d:%d %b %Y}")
-st.caption(f"Peanuts Retail · {scope} · {_dlabel}")
+st.caption(f"VFL × Peanuts Retail · {scope} · {_dlabel}")
 
 # Store & value movement (MTD / YTD, YoY) — respects filters + as-of date.
 _mv = L.movement_summary(df_exec, asof=pd.Timestamp(end_d))
