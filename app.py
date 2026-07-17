@@ -230,7 +230,7 @@ def styled_report_html(disp, money_cols=(), pct_cols=(), sign_cols=(),
     ths = "".join(
         f'<th style="background:{MAROON};color:#fff;font-weight:700;'
         f'font-size:{font_px - 1:.0f}px;text-transform:uppercase;letter-spacing:.01em;'
-        f'padding:{th_pad};text-align:{align(c)};position:sticky;top:0;'
+        f'padding:{th_pad};text-align:center;position:sticky;top:0;'
         f'line-height:1.15;white-space:normal;vertical-align:bottom;">{c}</th>'
         for c in cols)
 
@@ -793,7 +793,7 @@ def build_store_brand_gd(detail):
     MEN Total (peach), WOMEN brand-lines + WOMEN Total (peach), a store total
     (blue block), then region subtotals (pink) and a grand total (green).
     Returns (table, cols, rtypes)."""
-    label_cols = ["Region", "Master Location", "Store Code", "Location", "DOO", "Brand"]
+    label_cols = ["Region", "Master Location", "Store Code", "Location", "Brand"]
     val_order = [c for c in GD_ORDER if c in detail.columns]
     out_cols = label_cols + val_order
 
@@ -814,7 +814,7 @@ def build_store_brand_gd(detail):
         rsub = detail[detail["Region"] == reg]
         for code in pd.unique(rsub["Store Code"]):
             ssub = rsub[rsub["Store Code"] == code]
-            loc, doo = ssub["Location"].iloc[0], ssub["DOO"].iloc[0]
+            loc = ssub["Location"].iloc[0]
             for gender in ["MEN", "WOMEN"]:
                 gsub = ssub[ssub["Gender"] == gender]
                 if gsub.empty:
@@ -823,11 +823,11 @@ def build_store_brand_gd(detail):
                     rows.append({c: rr[c] for c in out_cols})
                     rtypes.append("store")
                 gt = total_row(gsub, "Brand", f"{gender} Total")
-                gt["Location"], gt["DOO"], gt["Store Code"] = loc, doo, code
+                gt["Location"], gt["Store Code"] = loc, code
                 rows.append(gt)
                 rtypes.append("storetotal")            # peach gender subtotal
             stt = total_row(ssub, "Brand", "Store Total")
-            stt["Location"], stt["DOO"], stt["Store Code"] = loc, doo, code
+            stt["Location"], stt["Store Code"] = loc, code
             rows.append(stt)
             rtypes.append("block")                     # blue store total
         rows.append(total_row(rsub, "Region", f"{reg} Total"))
