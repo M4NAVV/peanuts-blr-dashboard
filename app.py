@@ -48,6 +48,49 @@ st.markdown(
         padding: 14px 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.04);
       }}
 
+      /* ---- Top navigation: 7 report pills + a "More" overflow menu ---- */
+      [data-testid="stButtonGroup"] {{ margin: 16px 0 !important; }}
+      [data-testid^="stBaseButton-segmented_control"] {{
+        border-radius: 999px !important; padding: 4px 12px !important;
+        font-weight: 600 !important; font-size: 0.78rem !important;
+        white-space: nowrap !important; min-height: 34px !important;
+        color: {MAROON} !important; background: #FFFFFF !important;
+        border: 1px solid #ECE4D6 !important; transition: all .12s ease;
+      }}
+      [data-testid^="stBaseButton-segmented_control"] p {{
+        color: {MAROON} !important; white-space: nowrap !important; font-size: 0.78rem !important;
+      }}
+      [data-testid^="stBaseButton-segmented_control"]:hover {{
+        background: #FBEFEA !important; border-color: {MAROON} !important;
+      }}
+      [data-testid="stBaseButton-segmented_controlActive"] {{
+        background: {MAROON} !important; border-color: {MAROON} !important;
+        box-shadow: 0 1px 4px rgba(122,31,43,.28);
+      }}
+      [data-testid="stBaseButton-segmented_controlActive"] p {{ color: #FFFFFF !important; }}
+
+      /* "More" popover trigger — same pill look + height as the tabs */
+      [data-testid="stPopoverButton"] {{
+        border-radius: 999px !important; padding: 4px 14px !important;
+        min-height: 34px !important; font-weight: 600 !important;
+        font-size: 0.78rem !important; color: {MAROON} !important;
+        background: #FFFFFF !important; border: 1px solid #ECE4D6 !important;
+      }}
+      [data-testid="stPopoverButton"] p {{ font-size: 0.78rem !important; }}
+      [data-testid="stPopoverButton"]:hover {{
+        background: #FBEFEA !important; border-color: {MAROON} !important;
+      }}
+      /* menu items inside the "More" popover — clean left-aligned list */
+      [data-testid="stPopoverBody"] [data-testid="stButton"] button {{
+        justify-content: flex-start !important; text-align: left !important;
+        border: none !important; background: transparent !important;
+        color: {INK} !important; font-weight: 500 !important;
+        border-radius: 8px !important; padding: 6px 10px !important;
+      }}
+      [data-testid="stPopoverBody"] [data-testid="stButton"] button:hover {{
+        background: #FBEFEA !important; color: {MAROON} !important;
+      }}
+
       /* ---- Mobile responsiveness (phones / narrow screens) ---- */
       @media (max-width: 640px) {{
         /* Let column rows wrap instead of squishing side by side */
@@ -872,20 +915,59 @@ def render_store_brand_gd(detail, key):
     return table
 
 
-(tab_report, tab_degrowth, tab_gender_gd, tab_brand_gd, tab_storebrand,
- tab_gender_mix, tab_exec, tab_overview, tab_stores, tab_build,
- tab_trends, tab_cat, tab_staff, tab_cust, tab_merch) = st.tabs([
+# Top-level navigation (NOT st.tabs, which snaps back to the first tab on every
+# rerun). The 7 main reports show as pills; the rest live in a "More" overflow
+# menu. Selection lives in session_state (active_nav), so it PERSISTS on rerun.
+_TAB_LABELS = [
     "📋 MTD / YTD Report", "📉 Degrowth",
     "🧑‍🤝‍🧑 Gender G/D", "🏷️ Brand G/D", "🏬 Store × Brand G/D", "⚖️ Gender Mix",
     "📊 Executive", "Overview", "🏬 Stores",
     "🔧 Build your view", "Trends", "Category mix", "Salespeople",
     "Customers", "Colors & sizes",
-])
+]
+_PILL_TABS = _TAB_LABELS[:7]          # main reports shown as pills
+_MORE_TABS = _TAB_LABELS[7:]          # the rest, in a "More" overflow menu
+
+if "active_nav" not in st.session_state:
+    st.session_state["active_nav"] = _PILL_TABS[0]
+    st.session_state["nav_pills"] = _PILL_TABS[0]
+
+
+def _on_pills():                      # a pill was clicked → it becomes the section
+    v = st.session_state.get("nav_pills")
+    if v:
+        st.session_state["active_nav"] = v
+
+
+def _pick_more(lbl):                  # a "More" item was picked → clear the pills
+    st.session_state["active_nav"] = lbl
+    st.session_state["nav_pills"] = None
+
+
+nav = st.session_state["active_nav"]
+_more_active = nav in _MORE_TABS
+if _more_active:                      # tint the "More" button when its section is open
+    st.markdown(
+        f"<style>[data-testid='stPopoverButton']{{background:{MAROON}!important;"
+        f"border-color:{MAROON}!important;}}"
+        f"[data-testid='stPopoverButton'] p{{color:#fff!important;}}</style>",
+        unsafe_allow_html=True)
+
+_nav_l, _nav_r = st.columns([5, 1], vertical_alignment="center", gap="small")
+with _nav_l:
+    st.segmented_control("Section", _PILL_TABS, key="nav_pills",
+                         on_change=_on_pills, label_visibility="collapsed")
+with _nav_r:
+    with st.popover("More  ▾", use_container_width=True):
+        st.caption("Jump to a section")
+        for _lbl in _MORE_TABS:
+            st.button(_lbl, key=f"more_{_lbl}", use_container_width=True,
+                      on_click=_pick_more, args=(_lbl,))
 
 # =========================================================================== #
 # MTD / YTD REPORT — region × store, year-on-year (the executive table)
 # =========================================================================== #
-with tab_report:
+if nav == "📋 MTD / YTD Report":
     st.subheader("Store-wise MTD / YTD — Year on Year")
     st.caption(
         f"**As of {end_d:%d %b %Y}** (follows the date picker). "
@@ -971,7 +1053,7 @@ with tab_report:
 # =========================================================================== #
 # DEGROWTH — stores below last year (watchlist)
 # =========================================================================== #
-with tab_degrowth:
+if nav == "📉 Degrowth":
     st.subheader("Degrowth watchlist")
     dg_kind = st.radio("Period", ["YTD", "MTD"], horizontal=True, key="dg_kind")
     st.caption(
@@ -1029,7 +1111,7 @@ with tab_degrowth:
 # =========================================================================== #
 # GENDER-WISE GROWTH / DEGROWTH  (Region → Gender, FY YoY)
 # =========================================================================== #
-with tab_gender_gd:
+if nav == "🧑‍🤝‍🧑 Gender G/D":
     st.subheader("Gender-wise Growth / Degrowth")
     st.caption("Store × gender, MTD & YTD this year vs last (fiscal Apr–Mar). "
                "Red = degrowth. Gender follows the brand line "
@@ -1057,7 +1139,7 @@ with tab_gender_gd:
 # =========================================================================== #
 # BRAND-WISE GROWTH / DEGROWTH  (Manyavar / Mohey / Twamev / …, FY YoY)
 # =========================================================================== #
-with tab_brand_gd:
+if nav == "🏷️ Brand G/D":
     st.subheader("Brand-wise Growth / Degrowth")
     st.caption("MTD & YTD YoY by brand. Scope = the Manyavar-group brands in "
                "the sales feed.")
@@ -1071,7 +1153,7 @@ with tab_brand_gd:
 # =========================================================================== #
 # STORE × BRAND G/D — brand-line detail within each store (deepest VFL level)
 # =========================================================================== #
-with tab_storebrand:
+if nav == "🏬 Store × Brand G/D":
     st.subheader("Store × Brand-line Growth / Degrowth")
     st.caption("Each store broken down by brand-line (Manyavar / Twamev Men / "
                "Manthan / Mohey / Twamev-Women / Mebaz — any other division folds "
@@ -1088,7 +1170,7 @@ with tab_storebrand:
 # =========================================================================== #
 # GENDER MIX — contribution %  (Region × Gender + store detail)
 # =========================================================================== #
-with tab_gender_mix:
+if nav == "⚖️ Gender Mix":
     st.subheader("Gender-wise Contribution %")
     st.caption("Each gender's share of sales, MTD & YTD.")
     c1, c2 = st.columns(2)
@@ -1134,7 +1216,7 @@ with tab_gender_mix:
 # =========================================================================== #
 # EXECUTIVE — MTD / QTD / YTD, all year-on-year (fiscal year Apr–Mar)
 # =========================================================================== #
-with tab_exec:
+if nav == "📊 Executive":
     asof = pd.Timestamp(end_d)
     st.caption(
         f"**As of {asof:%d %b %Y}** (follows the date picker). Fiscal year "
@@ -1194,7 +1276,7 @@ with tab_exec:
 # =========================================================================== #
 # OVERVIEW — selectable KPI cards + trend at chosen granularity
 # =========================================================================== #
-with tab_overview:
+if nav == "Overview":
     scalar = L.all_scalar_kpis(df)
     default_cards = [
         "Sales (₹)", "Bills", "Units", "Active Stores",
@@ -1228,7 +1310,7 @@ with tab_overview:
 # =========================================================================== #
 # STORES — multi-store comparison
 # =========================================================================== #
-with tab_stores:
+if nav == "🏬 Stores":
     st.subheader("Store comparison")
     rank_metric = st.selectbox(
         "Break stores down by", list(L.METRICS.keys()), index=0,
@@ -1264,7 +1346,7 @@ with tab_stores:
 # =========================================================================== #
 # BUILD YOUR VIEW — per-session panel builder
 # =========================================================================== #
-with tab_build:
+if nav == "🔧 Build your view":
     st.subheader("Build your own view")
     st.caption(
         "Pick a metric and a dimension to break it down by (optionally a second "
@@ -1343,7 +1425,7 @@ with tab_build:
 # =========================================================================== #
 # TRENDS — respect chosen granularity
 # =========================================================================== #
-with tab_trends:
+if nav == "Trends":
     st.subheader(f"Sales — by {granularity}")
     draw_view({"metric": "Sales (₹)", "group_dim": granularity, "chart": "Area",
                "_key": "tr_sales"}, height=340)
@@ -1371,7 +1453,7 @@ with tab_trends:
 # =========================================================================== #
 # CATEGORY MIX
 # =========================================================================== #
-with tab_cat:
+if nav == "Category mix":
     colA, colB = st.columns([2, 1])
     with colA:
         st.subheader("Sales by Division")
@@ -1396,7 +1478,7 @@ with tab_cat:
 # =========================================================================== #
 # SALESPEOPLE
 # =========================================================================== #
-with tab_staff:
+if nav == "Salespeople":
     sp = L.salesperson_summary(df)
     st.subheader("Salesperson leaderboard")
     st.caption(f"{len(sp)} salespeople in view · click a column header to sort")
@@ -1413,7 +1495,7 @@ with tab_staff:
 # =========================================================================== #
 # CUSTOMERS
 # =========================================================================== #
-with tab_cust:
+if nav == "Customers":
     cs = L.customer_stats(df)
     c1, c2, c3 = st.columns(3)
     total_bills = cs["new"] + cs["repeat"]
@@ -1448,7 +1530,7 @@ with tab_cust:
 # =========================================================================== #
 # COLORS & SIZES
 # =========================================================================== #
-with tab_merch:
+if nav == "Colors & sizes":
     c1, c2 = st.columns(2)
     with c1:
         st.subheader("Best-selling colors")
