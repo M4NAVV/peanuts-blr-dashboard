@@ -452,6 +452,21 @@ with st.sidebar.expander("🧑‍💼 People", expanded=False):
     sel_sp = _msel(st, "Salesperson",
                    sorted(df_all[L.COL_SALESPERSON].dropna().unique()), "f_sp")
 
+# ---- Growth / Degrowth (stores by YTD YoY — same dropdown format) ----
+with st.sidebar.expander("🌱 Growth / Degrowth", expanded=False):
+    sel_gd = _msel(st, "Growth / Degrowth", ["Growing", "De-Growing"], "f_gd")
+    st.caption("Stores whose YTD sales are up / down vs last year "
+               "(takeover-anchored, as of the date picker).")
+
+gd_stores = None
+if sel_gd:
+    _yoy = L.store_yoy(df_all, kind="YTD", asof=pd.Timestamp(end_d))
+    gd_stores = set()
+    if "Growing" in sel_gd:
+        gd_stores |= set(_yoy.loc[_yoy["growth"] > 0, L.COL_STORE_LABEL])
+    if "De-Growing" in sel_gd:
+        gd_stores |= set(_yoy.loc[_yoy["growth"] < 0, L.COL_STORE_LABEL])
+
 st.sidebar.markdown("#### View settings")
 granularity = st.sidebar.radio(
     "Time granularity", ["Day", "Week", "Month", "Quarter", "Year"],
@@ -460,7 +475,7 @@ granularity = st.sidebar.radio(
 
 _FILTER_KEYS = ["f_region", "f_state", "f_city", "f_store", "f_brand",
                 "f_div", "f_sec", "f_dep", "f_mwc", "f_size", "f_color", "f_style",
-                "f_sp"]
+                "f_sp", "f_gd"]
 if st.sidebar.button("↺ Reset all filters"):
     for _k in _FILTER_KEYS:
         st.session_state.pop(_k, None)
@@ -483,6 +498,8 @@ def _cat_mask(frame):
     for _lbl, col, sel in _CAT_FILTERS:
         if sel and col in frame.columns:
             m &= frame[col].isin(sel)
+    if gd_stores is not None:                       # growth/degrowth store filter
+        m &= frame[L.COL_STORE_LABEL].isin(gd_stores)
     return m
 
 
@@ -493,6 +510,8 @@ df = df_all[cat_mask & date_mask].copy()
 df_exec = df_all[cat_mask].copy()
 
 active_filters = [(lbl, sel) for lbl, _col, sel in _CAT_FILTERS if sel]
+if sel_gd:
+    active_filters.append(("Growth/Degrowth", sel_gd))
 
 st.sidebar.markdown("---")
 st.sidebar.caption(
