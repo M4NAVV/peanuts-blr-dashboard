@@ -915,13 +915,118 @@ def render_store_brand_gd(detail, key):
     return table
 
 
+def render_loc_gd(detail, key):
+    """City / location-wise G/D: stores grouped by city with per-city subtotals
+    and a grand total (mirrors the source LOC_WISE_GD sheet)."""
+    label_cols = ["City", "Region", "Store Code", "Location"]
+    cols = label_cols + [c for c in GD_ORDER if c in detail.columns]
+    disp = detail[cols].copy()
+    rows, rtypes = [], []
+    for city in [c for c in pd.unique(disp["City"]) if pd.notna(c)]:
+        sub = disp[disp["City"] == city]
+        for _, rr in sub.iterrows():
+            rows.append(rr.to_dict())
+            rtypes.append("store")
+        rows.append(_gd_total(sub, label_cols, f"{city} Total"))
+        rtypes.append("subtotal")
+    rows.append(_gd_total(disp, label_cols, "Grand Total"))
+    rtypes.append("grand")
+    table = pd.DataFrame(rows)[cols]
+    money = [c for c in GD_MONEY if c in cols]
+    st.markdown(
+        styled_report_html(table, money_cols=money, pct_cols=GD_PCT,
+                           sign_cols=GD_PCT, row_types=rtypes, compact=True),
+        unsafe_allow_html=True)
+    st.write("")
+    st.download_button("⬇ Download (CSV)", table.to_csv(index=False).encode(),
+                       file_name=f"{key}.csv", mime="text/csv",
+                       key=f"{key}_csv", use_container_width=True)
+    return table
+
+
+def render_monthly_contrib(mc, key):
+    """Monthly-contribution table + a grand-total row."""
+    grand = mc["Total Sale"].sum()
+    tot = {"Month": "Grand Total", "East & NE": mc["East & NE"].sum(),
+           "South": mc["South"].sum(), "Total Sale": grand,
+           "Month Contrib %": 100.0,
+           "East & NE %": (mc["East & NE"].sum() / grand * 100) if grand else None,
+           "South %": (mc["South"].sum() / grand * 100) if grand else None}
+    disp = pd.concat([mc, pd.DataFrame([tot])], ignore_index=True)
+    rtypes = ["store"] * len(mc) + ["grand"]
+    st.markdown(
+        styled_report_html(disp, money_cols=["East & NE", "South", "Total Sale"],
+                           pct_cols=["Month Contrib %", "East & NE %", "South %"],
+                           row_types=rtypes),
+        unsafe_allow_html=True)
+    st.write("")
+    st.download_button("⬇ Download (CSV)", disp.to_csv(index=False).encode(),
+                       file_name=f"{key}.csv", mime="text/csv",
+                       key=f"{key}_csv", use_container_width=True)
+    return disp
+
+
+def render_productivity(pr, key):
+    """Store productivity table (SBA/CA area, YTD, GD%, op days, avg day/month
+    sale, PSFPD), region-grouped with subtotals where ratios are recomputed."""
+    cols = ["Region", "Store Code", "Location", "City", "SBA", "CA", "YTD LY",
+            "YTD TY", "GD YTD %", "Op Days", "Avg Day Sale", "Avg Month Sale", "PSFPD"]
+    money = ["YTD LY", "YTD TY", "Avg Day Sale", "Avg Month Sale", "PSFPD"]
+    intcols = ["SBA", "CA", "Op Days"]
+
+    def total(sub, label):
+        ca = pd.to_numeric(sub["CA"], errors="coerce").sum()
+        ly = pd.to_numeric(sub["YTD LY"], errors="coerce").sum()
+        ty = pd.to_numeric(sub["YTD TY"], errors="coerce").sum()
+        opd = pd.to_numeric(sub["Op Days"], errors="coerce").mean()
+        return {"Region": label, "Store Code": "", "Location": "", "City": "",
+                "SBA": pd.to_numeric(sub["SBA"], errors="coerce").sum(), "CA": ca,
+                "YTD LY": ly, "YTD TY": ty,
+                "GD YTD %": ((ty - ly) / ly * 100) if ly else None,
+                "Op Days": opd,
+                "Avg Day Sale": ty / opd if opd else None,
+                "Avg Month Sale": (ty / opd * 30) if opd else None,
+                "PSFPD": (ty / opd / ca) if ca and opd else None}
+
+    rows, rtypes = [], []
+    for reg in [r for r in ["East & NE", "South"] if r in pr["Region"].unique()]:
+        sub = pr[pr["Region"] == reg]
+        for _, r in sub.iterrows():
+            rows.append(r.to_dict())
+            rtypes.append("store")
+        rows.append(total(sub, f"{reg} Total"))
+        rtypes.append("subtotal")
+    rows.append(total(pr, "Grand Total"))
+    rtypes.append("grand")
+    table = pd.DataFrame(rows)[cols]
+
+    def _intfmt(v):
+        try:
+            return f"{float(v):,.0f}" if pd.notna(v) and str(v) != "" else ""
+        except (TypeError, ValueError):
+            return str(v)
+    for c in intcols:
+        table[c] = table[c].map(_intfmt)
+
+    st.markdown(
+        styled_report_html(table, money_cols=money, pct_cols=["GD YTD %"],
+                           sign_cols=["GD YTD %"], row_types=rtypes),
+        unsafe_allow_html=True)
+    st.write("")
+    st.download_button("⬇ Download (CSV)", table.to_csv(index=False).encode(),
+                       file_name=f"{key}.csv", mime="text/csv",
+                       key=f"{key}_csv", use_container_width=True)
+    return table
+
+
 # Top-level navigation (NOT st.tabs, which snaps back to the first tab on every
 # rerun). The 7 main reports show as pills; the rest live in a "More" overflow
 # menu. Selection lives in session_state (active_nav), so it PERSISTS on rerun.
 _TAB_LABELS = [
     "📋 MTD / YTD Report", "📉 Degrowth",
     "🧑‍🤝‍🧑 Gender G/D", "🏷️ Brand G/D", "🏬 Store × Brand G/D", "⚖️ Gender Mix",
-    "📊 Executive", "Overview", "🏬 Stores",
+    "📊 Executive", "🏙️ City-wise G/D", "📅 Monthly Contribution",
+    "📐 Store Productivity", "Overview", "🏬 Stores",
     "🔧 Build your view", "Trends", "Category mix", "Salespeople",
     "Customers", "Colors & sizes",
 ]
@@ -1272,6 +1377,52 @@ if nav == "📊 Executive":
             "Growth %": st.column_config.NumberColumn(format="%.1f%%"),
         },
     )
+
+# =========================================================================== #
+# CITY-WISE G/D — stores grouped by city (LOC_WISE_GD)
+# =========================================================================== #
+if nav == "🏙️ City-wise G/D":
+    st.subheader("City / Location-wise Growth / Degrowth")
+    st.caption("Stores grouped by **city**, with per-city subtotals and a grand "
+               "total. Same G/D columns as the store report, takeover-anchored. "
+               "**Manyavar & Mohey only** (the report's city totals also include "
+               "other brands, which aren't in this data feed).")
+    cg_asof = gd_basis_control("citygd_basis", end_d)
+    lg = L.loc_store_gd(df_exec, asof=cg_asof)
+    if lg.empty:
+        st.info("No data for the current filters.")
+    else:
+        render_loc_gd(lg, f"city_gd_{cg_asof:%Y%m%d}")
+
+# =========================================================================== #
+# MONTHLY CONTRIBUTION — month × sales, contribution %, region split (MW_DATA)
+# =========================================================================== #
+if nav == "📅 Monthly Contribution":
+    st.subheader("Monthly Contribution")
+    st.caption(f"Each month of the current fiscal year (as of {end_d:%d %b %Y}): "
+               "sales, its **share of the year**, and the **East & NE / South "
+               "split** with each region's share of the month. "
+               "**Manyavar & Mohey only.**")
+    mc = L.monthly_contribution(df_exec, asof=pd.Timestamp(end_d))
+    if mc.empty:
+        st.info("No data for the current filters.")
+    else:
+        render_monthly_contrib(mc, f"monthly_contrib_{end_d:%Y%m%d}")
+
+# =========================================================================== #
+# STORE PRODUCTIVITY — per sq ft / per day (AVG BRAND WISE / PSFPD)
+# =========================================================================== #
+if nav == "📐 Store Productivity":
+    st.subheader("Store Productivity — SBA / CA, avg sale, PSFPD")
+    st.caption("Per-store floor area (**SBA** super-built, **CA** carpet, sq ft), "
+               "YTD sales & GD%, operational days, **avg day/month sale** and "
+               "**PSFPD** (sales per sq ft per day). Region subtotals recompute "
+               "the ratios. **Manyavar & Mohey only.**")
+    pr = L.store_productivity(df_exec, asof=pd.Timestamp(end_d))
+    if pr.empty or pr["SBA"].fillna(0).eq(0).all():
+        st.info("No area data for the current filters.")
+    else:
+        render_productivity(pr, f"productivity_{end_d:%Y%m%d}")
 
 # =========================================================================== #
 # OVERVIEW — selectable KPI cards + trend at chosen granularity

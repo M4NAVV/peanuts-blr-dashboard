@@ -702,11 +702,15 @@ def _anchor_md(df: pd.DataFrame, anchor_takeover: bool = True):
     return m, d
 
 
-def report_frames(df: pd.DataFrame, kind: str, asof=None, anchor_takeover: bool = True):
+def report_frames(df: pd.DataFrame, kind: str, asof=None, anchor_takeover: bool = True,
+                  new_store_no_ly: bool = False):
     """Current & same-period-last-year frames for kind in {MTD, YTD}. Each store's
     window is anchored to its takeover date (so TY and LY line up); pass
     `anchor_takeover=False` to use a plain 1-Apr fiscal start instead (matches the
-    monthly review sheet). `asof` (the to-date reference) defaults to latest data."""
+    monthly review sheet). `new_store_no_ly=True` zeros the last-year frame for
+    stores whose opening date (store_master) is in the current FY — the report's
+    new-store view. Off by default so the main dashboard stays historical.
+    `asof` (the to-date reference) defaults to latest data."""
     asof = as_of(df) if asof is None else pd.Timestamp(asof)
     fy_year = asof.year if asof.month >= 4 else asof.year - 1
     m, d = _anchor_md(df, anchor_takeover=anchor_takeover)
@@ -729,7 +733,14 @@ def report_frames(df: pd.DataFrame, kind: str, asof=None, anchor_takeover: bool 
     cur_end = asof
     prior_end = asof - pd.DateOffset(years=1)
     cur = df[(df["date"] >= cur_start) & (df["date"] <= cur_end)]
-    prior = df[(df["date"] >= prior_start) & (df["date"] <= prior_end)]
+    prior_mask = (df["date"] >= prior_start) & (df["date"] <= prior_end)
+    if new_store_no_ly:
+        # Stores that opened THIS fiscal year (per the store master) have no
+        # comparable last year — zero their prior frame, matching the source sheet
+        # (new stores show YTD_LY = "-" / GD = new).
+        opened = pd.to_datetime(df[COL_STORE_LABEL].map(takeover_map()), errors="coerce")
+        prior_mask &= ~(opened >= pd.Timestamp(fy_year, 4, 1))
+    prior = df[prior_mask]
     return cur, prior
 
 
@@ -972,14 +983,18 @@ def _extra_gd_windows(df: pd.DataFrame, asof=None):
     return asof, day, ly_month, ly_full
 
 
-def _gd_by(df: pd.DataFrame, keys, asof=None, anchor_takeover: bool = True) -> pd.DataFrame:
+def _gd_by(df: pd.DataFrame, keys, asof=None, anchor_takeover: bool = True,
+           new_store_no_ly: bool = False) -> pd.DataFrame:
     """Growth/degrowth grouped by `keys` (list of columns). YTD/MTD TY & LY come
     from report_frames (takeover-anchored unless `anchor_takeover=False`); adds
-    day-sale, LY same-month, LY full year, run-rate projections and GD% columns."""
+    day-sale, LY same-month, LY full year, run-rate projections and GD% columns.
+    `new_store_no_ly=True` zeros last-year for stores opened this FY (report view)."""
     import calendar
     asof, day, ly_month, ly_full = _extra_gd_windows(df, asof)
-    ycur, ypri = report_frames(df, "YTD", asof=asof, anchor_takeover=anchor_takeover)
-    mcur, mpri = report_frames(df, "MTD", asof=asof, anchor_takeover=anchor_takeover)
+    ycur, ypri = report_frames(df, "YTD", asof=asof, anchor_takeover=anchor_takeover,
+                               new_store_no_ly=new_store_no_ly)
+    mcur, mpri = report_frames(df, "MTD", asof=asof, anchor_takeover=anchor_takeover,
+                               new_store_no_ly=new_store_no_ly)
 
     def g(f):
         return f.groupby(keys)[COL_AMOUNT].sum()
@@ -1140,3 +1155,119 @@ def store_brand_gd(df: pd.DataFrame, asof=None, anchor_takeover: bool = True) ->
             "GD MTD %", "Day Sales", "Month Sale LY", "Projected MTD",
             "LY Full Sales", "Projected YTD"]
     return out[cols]
+
+
+_GD_OUT_COLS = ["YTD LY", "YTD TY", "GD YTD %", "MTD LY", "MTD TY", "GD MTD %",
+                "Day Sales", "Month Sale LY", "Projected MTD", "LY Full Sales",
+                "Projected YTD"]
+
+
+def loc_store_gd(df: pd.DataFrame, asof=None, anchor_takeover: bool = True) -> pd.DataFrame:
+    """Store G/D tagged with city, for the LOCATION-WISE report (the app groups
+    by city with per-city subtotals). Mirrors the source LOC_WISE_GD sheet —
+    new-this-FY stores (e.g. Bengaluru) show no last year, to tally with the report."""
+    out = _gd_by(df, [COL_STORE_LABEL], asof=asof, anchor_takeover=anchor_takeover,
+                 new_store_no_ly=True)
+    master = load_store_master()[["tableau_name", "code", "location", "city", "region"]]
+    out = out.merge(master, left_on=COL_STORE_LABEL, right_on="tableau_name", how="left")
+    out["code"] = pd.to_numeric(out["code"], errors="coerce")
+    out["__r"] = out["region"].map({r: i for i, r in enumerate(_REGION_ORDER)}).fillna(9)
+    out = out.sort_values(["city", "__r", "code"]).reset_index(drop=True)
+    out = out.rename(columns={"city": "City", "region": "Region",
+                              "code": "Store Code", "location": "Location"})
+    return out[["City", "Region", "Store Code", "Location"] + _GD_OUT_COLS]
+
+
+def store_lfl(df: pd.DataFrame, asof=None, anchor_takeover: bool = True) -> pd.DataFrame:
+    """Store G/D with a like-for-like class derived from each store's FIRST sale
+    date in the data: 'Like-for-like' (open before last FY), 'Opened last FY'
+    (partial LY) or 'New this FY' (no LY). Mirrors the source NEW/OLD FY/PY/NA
+    split, so same-store growth can be read apart from new-store growth."""
+    asof = as_of(df) if asof is None else pd.Timestamp(asof)
+    fy_year = asof.year if asof.month >= 4 else asof.year - 1
+    cur_start = pd.Timestamp(fy_year, 4, 1)
+    prior_start = pd.Timestamp(fy_year - 1, 4, 1)
+    first = df.groupby(COL_STORE_LABEL)["date"].min()
+
+    def _cls(store):
+        fs = first.get(store)
+        if pd.isna(fs):
+            return "New this FY"
+        fs = pd.Timestamp(fs)
+        if fs >= cur_start:
+            return "New this FY"
+        if fs >= prior_start:
+            return "Opened last FY"
+        return "Like-for-like"
+
+    out = _gd_by(df, [COL_STORE_LABEL], asof=asof, anchor_takeover=anchor_takeover)
+    out["Class"] = out[COL_STORE_LABEL].map(_cls)
+    master = load_store_master()[["tableau_name", "code", "location", "city", "region"]]
+    out = out.merge(master, left_on=COL_STORE_LABEL, right_on="tableau_name", how="left")
+    out["code"] = pd.to_numeric(out["code"], errors="coerce")
+    _corder = {"Like-for-like": 0, "Opened last FY": 1, "New this FY": 2}
+    out["__r"] = out["region"].map({r: i for i, r in enumerate(_REGION_ORDER)}).fillna(9)
+    out["__c"] = out["Class"].map(_corder).fillna(9)
+    out = out.sort_values(["__r", "__c", "code"]).reset_index(drop=True)
+    out = out.rename(columns={"region": "Region", "code": "Store Code",
+                              "location": "Location", "city": "City"})
+    return out[["Region", "Class", "Store Code", "Location", "City"] + _GD_OUT_COLS]
+
+
+def monthly_contribution(df: pd.DataFrame, asof=None) -> pd.DataFrame:
+    """Month-by-month sales for the current fiscal year with each month's share
+    of the YTD total, split East & NE / South and each region's share of the
+    month. Mirrors the source MW_DATA monthly-contribution view."""
+    asof = as_of(df) if asof is None else pd.Timestamp(asof)
+    fy_year = asof.year if asof.month >= 4 else asof.year - 1
+    cur = df[(df["date"] >= pd.Timestamp(fy_year, 4, 1)) & (df["date"] <= asof)].copy()
+    cur["_m"] = cur["date"].values.astype("datetime64[M]")
+    piv = cur.pivot_table(index="_m", columns=COL_REGION, values=COL_AMOUNT,
+                          aggfunc="sum", fill_value=0.0).sort_index()
+    for r in _REGION_ORDER:
+        if r not in piv.columns:
+            piv[r] = 0.0
+    piv["Total"] = piv[_REGION_ORDER].sum(axis=1)
+    grand = piv["Total"].sum()
+    tot = piv["Total"].replace(0, pd.NA)
+    return pd.DataFrame({
+        "Month": [pd.Timestamp(m).strftime("%b %Y") for m in piv.index],
+        "East & NE": piv["East & NE"].values,
+        "South": piv["South"].values,
+        "Total Sale": piv["Total"].values,
+        "Month Contrib %": (piv["Total"] / grand * 100).values if grand else 0.0,
+        "East & NE %": (piv["East & NE"] / tot * 100).values,
+        "South %": (piv["South"] / tot * 100).values,
+    })
+
+
+def store_productivity(df: pd.DataFrame, asof=None, anchor_takeover: bool = True) -> pd.DataFrame:
+    """Per-store productivity: YTD sales, floor area (sq ft), operational days,
+    average daily sale, sales per sq ft, and sales per sq ft per day. Mirrors the
+    source AVG BRAND WISE / PSFPD sheet (area from store_master.sb)."""
+    asof = as_of(df) if asof is None else pd.Timestamp(asof)
+    fy_year = asof.year if asof.month >= 4 else asof.year - 1
+    fy_start = pd.Timestamp(fy_year, 4, 1)
+    out = _gd_by(df, [COL_STORE_LABEL], asof=asof, anchor_takeover=anchor_takeover,
+                 new_store_no_ly=True)
+    master = load_store_master()[["tableau_name", "code", "location", "city",
+                                  "region", "sb", "ca", "takeover_date"]]
+    out = out.merge(master, left_on=COL_STORE_LABEL, right_on="tableau_name", how="left")
+    out["code"] = pd.to_numeric(out["code"], errors="coerce")
+    out["SBA"] = pd.to_numeric(out["sb"], errors="coerce")
+    out["CA"] = pd.to_numeric(out["ca"], errors="coerce")
+    tk = pd.to_datetime(out["takeover_date"], errors="coerce")
+    start = tk.where(tk > fy_start, fy_start)
+    out["Op Days"] = ((asof - start).dt.days + 1).clip(lower=1)
+    yt = out["YTD TY"]
+    out["Avg Day Sale"] = yt / out["Op Days"]
+    out["Avg Month Sale"] = out["Avg Day Sale"] * 30.0
+    # PSFPD (per sq ft per day) is on CARPET area in the source sheet
+    out["PSFPD"] = out["Avg Day Sale"] / out["CA"].replace(0, pd.NA)
+    out["__r"] = out["region"].map({r: i for i, r in enumerate(_REGION_ORDER)}).fillna(9)
+    out = out.sort_values(["__r", "code"]).reset_index(drop=True)
+    out = out.rename(columns={"region": "Region", "code": "Store Code",
+                              "location": "Location", "city": "City"})
+    return out[["Region", "Store Code", "Location", "City", "SBA", "CA",
+                "YTD LY", "YTD TY", "GD YTD %", "Op Days", "Avg Day Sale",
+                "Avg Month Sale", "PSFPD"]]
