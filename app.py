@@ -391,36 +391,27 @@ st.sidebar.caption(f"Store Count {n_stores_all} · {_regions_txt}")
 
 min_d, max_d = fresh["min_date"].date(), fresh["max_date"].date()
 
-# ---- Date: single day or custom range ----
+# ---- Date: custom range ----
 st.sidebar.markdown("#### 📅 Date")
-date_mode = st.sidebar.radio(
-    "Date mode", ["Custom range", "Single day"], horizontal=True,
-    label_visibility="collapsed", key="f_date_mode")
-if date_mode == "Single day":
-    one = st.sidebar.date_input("Day", value=max_d, min_value=min_d,
-                                max_value=max_d, key="f_day")
-    start_d = end_d = one
+dr = st.sidebar.date_input("Range", value=(min_d, max_d), min_value=min_d,
+                           max_value=max_d, key="f_range",
+                           label_visibility="collapsed")
+if isinstance(dr, tuple) and len(dr) == 2:
+    start_d, end_d = dr
+elif isinstance(dr, tuple) and len(dr) == 1:
+    start_d = end_d = dr[0]
 else:
-    dr = st.sidebar.date_input("Range", value=(min_d, max_d), min_value=min_d,
-                               max_value=max_d, key="f_range")
-    if isinstance(dr, tuple) and len(dr) == 2:
-        start_d, end_d = dr
-    elif isinstance(dr, tuple) and len(dr) == 1:
-        start_d = end_d = dr[0]
-    else:
-        start_d = end_d = dr
+    start_d = end_d = dr
 
 
 def _msel(container, label, options, key):
     return container.multiselect(label, options, default=[], key=key)
 
 
-# ---- Region (prominent — North East vs South) ----
-st.sidebar.markdown("#### 🧭 Region")
-sel_region = st.sidebar.multiselect(
-    "Region", sorted(df_all[L.COL_REGION].dropna().unique()), default=[],
-    key="f_region", label_visibility="collapsed",
-    help="North East vs South — leave empty for all")
+# ---- Region (same dropdown format as the other filters) ----
+with st.sidebar.expander("🧭 Region", expanded=False):
+    sel_region = _msel(st, "Region",
+                       sorted(df_all[L.COL_REGION].dropna().unique()), "f_region")
 _rpool = df_all[df_all[L.COL_REGION].isin(sel_region)] if sel_region else df_all
 
 # ---- Store (cascading: state → city → store) ----
