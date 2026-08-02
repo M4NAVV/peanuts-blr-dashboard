@@ -594,9 +594,10 @@ def render_portfolio():
         if rep.empty:
             st.info("No stores match the current filters.")
             return
-        html = styled_report_html(rep, money_cols=_money, pct_cols=_pct,
-                                  sign_cols=_sign, row_types=rtypes, compact=True)
-        render_fit_to_screen(html, panel_h=600)
+        st.markdown(
+            styled_report_html(rep, money_cols=_money, pct_cols=_pct,
+                               sign_cols=_sign, row_types=rtypes),
+            unsafe_allow_html=True)
 
     # ===================== Degrowth ===================== #
     elif nav == "📉 Degrowth":
