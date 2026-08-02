@@ -226,10 +226,17 @@ def _enrich(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def _apply_takeover_filter(df: pd.DataFrame) -> pd.DataFrame:
-    """Drop rows before each store's takeover date — pre-ownership sales from the
-    previous operator don't count. Stores without a mapped date keep all rows."""
+    """Keep each store's sales from ONE YEAR BEFORE its takeover date onward.
+
+    The current-year windows are anchored to the takeover date (see report_frames),
+    so pre-ownership sales never count as *ours*. But we retain the prior year of
+    history so year-on-year analytics can compare a newly taken-over store — e.g.
+    South (taken over 19 Apr 2026) — against the same location's prior-year sales
+    from the previous operator. The takeover date itself stays accurate; this only
+    controls how far back the comparison baseline reaches. Stores without a mapped
+    takeover date keep all rows."""
     tk = takeover_map()
-    start = df[COL_STORE_LABEL].map(tk)
+    start = df[COL_STORE_LABEL].map(tk) - pd.DateOffset(years=1)
     keep = start.isna() | (df["date"] >= start)
     return df[keep].reset_index(drop=True)
 
