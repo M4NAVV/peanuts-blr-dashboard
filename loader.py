@@ -1278,3 +1278,53 @@ def store_productivity(df: pd.DataFrame, asof=None, anchor_takeover: bool = True
     return out[["Region", "Store Code", "Location", "City", "SBA", "CA",
                 "YTD LY", "YTD TY", "GD YTD %", "Op Days", "Avg Day Sale",
                 "Avg Month Sale", "PSFPD"]]
+
+
+DAY_REPORT_COLS = ["Region", "STORE CODE", "LOCATION", "Same Day LY", "Same Date LY"]
+
+
+def day_sales_ly_report(df: pd.DataFrame, day):
+    """Per-store day-sales on the two last-year reference days of `day`:
+      - Same Day LY  = same weekday a year ago  (day − 364 days = 52 weeks)
+      - Same Date LY = same calendar date a year ago (day − 1 year)
+    They differ because a year isn't a whole number of weeks. Region-grouped
+    with subtotals + grand total. South's references come from its retained
+    pre-takeover history (see _apply_takeover_filter)."""
+    day = pd.Timestamp(day)
+    same_day = day - pd.Timedelta(days=364)
+    same_date = day - pd.DateOffset(years=1)
+    g = lambda d: df[df["date"] == d].groupby(COL_STORE_LABEL)[COL_AMOUNT].sum()
+    sd, dt = g(same_day), g(same_date)
+    master = load_store_master()
+    present = set(df[COL_STORE_LABEL].dropna().unique())
+    master = master[master["tableau_name"].isin(present)].copy()
+    if master.empty:
+        return pd.DataFrame(columns=DAY_REPORT_COLS), []
+    master["_rord"] = master["region"].map(
+        {k: i for i, k in enumerate(_REGION_ORDER)}).fillna(99)
+    master["_code"] = pd.to_numeric(master["code"], errors="coerce")
+    master = master.sort_values(["_rord", "_code"])
+
+    rows, types = [], []
+
+    def _store_row(r):
+        n = r["tableau_name"]
+        return {"Region": r["region"], "STORE CODE": r["code"],
+                "LOCATION": r["location"], "Same Day LY": float(sd.get(n, 0.0)),
+                "Same Date LY": float(dt.get(n, 0.0))}
+
+    def _total_row(label, sub):
+        return {"Region": label, "STORE CODE": "", "LOCATION": "",
+                "Same Day LY": sub["Same Day LY"].sum(),
+                "Same Date LY": sub["Same Date LY"].sum()}
+
+    all_rows = []
+    for region, grp in master.groupby("region", sort=False):
+        rrows = [_store_row(r) for _, r in grp.iterrows()]
+        for sr in rrows:
+            rows.append(sr); types.append("store")
+        rdf = pd.DataFrame(rrows); all_rows.append(rdf)
+        rows.append(_total_row(f"{region} Total", rdf)); types.append("subtotal")
+    grand = pd.concat(all_rows, ignore_index=True)
+    rows.append(_total_row("Grand Total", grand)); types.append("grand")
+    return pd.DataFrame(rows, columns=DAY_REPORT_COLS), types

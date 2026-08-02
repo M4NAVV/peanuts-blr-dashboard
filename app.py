@@ -419,7 +419,7 @@ def _cr(x) -> str:
     return f"₹{(x or 0) / 1e7:,.2f} Cr"
 
 
-_PF_TABS = ["📊 Executive", "📋 MTD / YTD Report", "📉 Degrowth",
+_PF_TABS = ["📊 Executive", "📋 MTD / YTD Report", "📉 Degrowth", "🎯 Day Targets",
             "🥧 Contribution", "🏙️ City-wise G/D", "🏬 Stores", "📅 Monthly"]
 
 
@@ -700,6 +700,28 @@ def render_portfolio():
             money_cols=["Last Year", "This Year"], pct_cols=["Growth %"],
             sign_cols=["Growth %"])
         st.markdown(html, unsafe_allow_html=True)
+
+    # ===================== Day Targets (historical day sales) ===================== #
+    elif nav == "🎯 Day Targets":
+        _dmin, _dmax = pf["date"].min().date(), pf["date"].max().date()
+        day = pd.Timestamp(st.date_input(
+            "Day", value=_dmax, min_value=_dmin, max_value=_dmax, key="pf_dayt_day"))
+        sd_d = day - pd.Timedelta(days=364)
+        dt_d = day - pd.DateOffset(years=1)
+        st.caption(
+            f"**{day:%A %d %b %Y}** · **Same Day LY** = {sd_d:%A %d %b %Y} "
+            f"(same weekday, −52 weeks) · **Same Date LY** = {dt_d:%A %d %b %Y} "
+            "(same calendar date). Per-store last-year day sales, for setting day "
+            "targets. New stores (e.g. South) have no last year in the portfolio "
+            "sheet — use the VFL view for their history.")
+        rep, rtypes = PL.day_sales_ly_report(pf, day)
+        if rep.empty:
+            st.info("No stores match the current filters.")
+            return
+        st.markdown(
+            styled_report_html(rep, money_cols=["Same Day LY", "Same Date LY"],
+                               row_types=rtypes),
+            unsafe_allow_html=True)
 
 
 # ---- Top-level data mode: whole-Portfolio breadth vs VFL depth ----
@@ -1334,7 +1356,7 @@ def render_productivity(pr, key):
 _TAB_LABELS = [
     "📋 MTD / YTD Report", "📉 Degrowth",
     "🧑‍🤝‍🧑 Gender G/D", "🏷️ Brand G/D", "🏬 Store × Brand G/D", "⚖️ Gender Mix",
-    "📊 Executive", "🏙️ City-wise G/D", "📅 Monthly Contribution",
+    "📊 Executive", "🎯 Day Targets", "🏙️ City-wise G/D", "📅 Monthly Contribution",
     "📐 Store Productivity", "Overview", "🏬 Stores",
     "🔧 Build your view", "Trends", "Category mix", "Salespeople",
     "Customers", "Colors & sizes",
@@ -1686,6 +1708,29 @@ if nav == "📊 Executive":
             "Growth %": st.column_config.NumberColumn(format="%.1f%%"),
         },
     )
+
+# =========================================================================== #
+# DAY TARGETS — per-store last-year day sales (same day / same date)
+# =========================================================================== #
+if nav == "🎯 Day Targets":
+    st.subheader("Day Sales — Last Year reference (for day targets)")
+    _day = pd.Timestamp(st.date_input(
+        "Day", value=max_d, min_value=min_d, max_value=max_d, key="vfl_dayt_day"))
+    _sd = _day - pd.Timedelta(days=364)
+    _dt = _day - pd.DateOffset(years=1)
+    st.caption(
+        f"**{_day:%A %d %b %Y}** · **Same Day LY** = {_sd:%A %d %b %Y} "
+        f"(same weekday, −52 weeks) · **Same Date LY** = {_dt:%A %d %b %Y} "
+        "(same calendar date). Per-store last-year day sales, for setting day "
+        "targets. South uses its retained pre-takeover history.")
+    _rep, _rtypes = L.day_sales_ly_report(df_exec, _day)
+    if _rep.empty:
+        st.info("No stores match the current filters.")
+        st.stop()
+    st.markdown(
+        styled_report_html(_rep, money_cols=["Same Day LY", "Same Date LY"],
+                           row_types=_rtypes),
+        unsafe_allow_html=True)
 
 # =========================================================================== #
 # CITY-WISE G/D — stores grouped by city (LOC_WISE_GD)
