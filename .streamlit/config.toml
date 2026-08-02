@@ -7,3 +7,7 @@ font = "sans serif"
 
 [server]
 headless = true
+# No hot-reload needed in production (files never change at runtime). Disabling
+# the source-file watcher also avoids Streamlit's `KeyError: '<module>'` from its
+# module watcher resolving sys.modules by name after a redeploy.
+fileWatcherType = "none"
