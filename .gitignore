@@ -6,3 +6,9 @@ __pycache__/
 
 # Local data copy — production reads the Google Sheet, not this file.
 data/*.xlsx
+
+# Raw portfolio drop — the committed portfolio_snapshot.csv is the fallback.
+25v26 data set all str.xlsx
+
+# Source-of-truth review report snapshots (reference only, not app data).
+26_27_GROWTH DEGROWTH _SHEET*.md

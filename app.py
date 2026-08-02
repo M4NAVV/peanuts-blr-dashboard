@@ -20,6 +20,7 @@ import streamlit as st
 import streamlit.components.v1 as components
 
 import loader as L
+import portfolio_loader as PL
 from imaging import table_to_png
 
 st.set_page_config(
@@ -402,6 +403,313 @@ def _arrow_safe(df):
 def _safe_dataframe(data, **kwargs):
     _st_dataframe(_arrow_safe(data), **kwargs)
 
+
+# =========================================================================== #
+# PORTFOLIO MODE — breadth layer (all 63 stores, sales-only)
+# A self-contained render path so the VFL (depth) code below stays untouched.
+# =========================================================================== #
+@st.cache_data(ttl=21600, show_spinner="Loading portfolio sales…")
+def _load_portfolio_cached():
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    return PL.load_portfolio(), datetime.now(ZoneInfo("Asia/Kolkata"))
+
+
+def _cr(x) -> str:
+    return f"₹{(x or 0) / 1e7:,.2f} Cr"
+
+
+_PF_TABS = ["📊 Executive", "📋 MTD / YTD Report", "📉 Degrowth",
+            "🥧 Contribution", "🏙️ City-wise G/D", "🏬 Stores", "📅 Monthly"]
+
+
+def render_portfolio():
+    pf_all, pf_at = _load_portfolio_cached()
+
+    # ---- Sidebar: portfolio brand + cascading sales-only filters ----
+    st.sidebar.markdown(
+        f'<div style="display:flex;align-items:center;gap:10px;margin:0 0 2px;">'
+        f'<div style="width:38px;height:38px;border-radius:9px;background:{GOLD};'
+        f'color:{MAROON};font-weight:800;font-size:20px;font-family:Georgia,serif;'
+        f'display:flex;align-items:center;justify-content:center;flex:0 0 auto;">◎</div>'
+        f'<div style="font-size:18px;font-weight:800;color:{MAROON};line-height:1.12;">'
+        f'Whole Portfolio</div></div>', unsafe_allow_html=True)
+    st.sidebar.caption(
+        f"{pf_all['code'].nunique()} stores · {pf_all['brand'].nunique()} brands · "
+        f"sales-only breadth view")
+
+    min_d, max_d = pf_all["date"].min().date(), pf_all["date"].max().date()
+    st.sidebar.markdown("#### 📅 Date")
+    dr = st.sidebar.date_input("Range", value=(min_d, max_d), min_value=min_d,
+                               max_value=max_d, key="pf_range",
+                               label_visibility="collapsed")
+    if isinstance(dr, tuple) and len(dr) == 2:
+        start_d, end_d = dr
+    elif isinstance(dr, tuple) and len(dr) == 1:
+        start_d = end_d = dr[0]
+    else:
+        start_d = end_d = dr
+
+    # Scope: quickly focus on VFL vs the rest (the user's core ask).
+    scope = st.sidebar.radio("Scope", ["All brands", "VFL only", "Non-VFL only"],
+                             key="pf_scope", horizontal=False)
+    _pool = pf_all
+    if scope == "VFL only":
+        _pool = _pool[_pool["is_vfl"]]
+    elif scope == "Non-VFL only":
+        _pool = _pool[~_pool["is_vfl"]]
+
+    with st.sidebar.expander("🧭 Region", expanded=False):
+        sel_region = st.multiselect(
+            "Region", sorted(_pool["region"].dropna().unique()), default=[],
+            key="pf_f_region")
+    if sel_region:
+        _pool = _pool[_pool["region"].isin(sel_region)]
+
+    with st.sidebar.expander("🏬 Store", expanded=False):
+        sel_city = st.multiselect(
+            "City", sorted(_pool["city"].dropna().unique()), default=[],
+            key="pf_f_city")
+        _cpool = _pool[_pool["city"].isin(sel_city)] if sel_city else _pool
+        sel_store = st.multiselect(
+            "Store (location)", sorted(_cpool["location"].dropna().unique()),
+            default=[], key="pf_f_store")
+
+    with st.sidebar.expander("🏷️ Brand", expanded=False):
+        sel_brand = st.multiselect(
+            "Brand", sorted(_pool["brand"].dropna().unique()), default=[],
+            key="pf_f_brand")
+
+    with st.sidebar.expander("🌱 Growth / Degrowth", expanded=False):
+        sel_gd = st.multiselect("Growth / Degrowth", ["Growing", "De-Growing"],
+                                 default=[], key="pf_f_gd")
+        st.caption("Stores whose YTD sales are up / down vs last year "
+                   "(takeover-anchored, as of the date picker end).")
+
+    if st.sidebar.button("↺ Reset portfolio filters"):
+        for _k in ["pf_scope", "pf_f_region", "pf_f_city", "pf_f_store",
+                   "pf_f_brand", "pf_f_gd"]:
+            st.session_state.pop(_k, None)
+        st.rerun()
+
+    st.sidebar.markdown("---")
+    st.sidebar.caption(f"Portfolio data loaded {pf_at:%d %b %Y, %I:%M %p} IST")
+    if st.sidebar.button("🔄 Refresh portfolio data"):
+        _load_portfolio_cached.clear()
+        st.rerun()
+
+    # ---- Apply category filters ----
+    pf = _pool
+    if sel_city:
+        pf = pf[pf["city"].isin(sel_city)]
+    if sel_store:
+        pf = pf[pf["location"].isin(sel_store)]
+    if sel_brand:
+        pf = pf[pf["brand"].isin(sel_brand)]
+    if sel_gd:
+        _yoy = PL.store_yoy(pf, kind="YTD", asof=pd.Timestamp(end_d))
+        keep = set()
+        if "Growing" in sel_gd:
+            keep |= set(_yoy.loc[_yoy["growth"] > 0, "code"])
+        if "De-Growing" in sel_gd:
+            keep |= set(_yoy.loc[_yoy["growth"] < 0, "code"])
+        pf = pf[pf["code"].isin(keep)]
+
+    asof = pd.Timestamp(end_d)
+
+    # ---- Header + nav ----
+    st.markdown(
+        f"### 🌐 Whole-Portfolio View "
+        f"<span style='font-size:.7em;color:#8a8a8a;'>· sales across all brands</span>",
+        unsafe_allow_html=True)
+    if "pf_active_nav" not in st.session_state:
+        st.session_state["pf_active_nav"] = _PF_TABS[0]
+    nav = st.segmented_control(
+        "Section", _PF_TABS, key="pf_active_nav", label_visibility="collapsed")
+    nav = nav or st.session_state["pf_active_nav"] or _PF_TABS[0]
+
+    if pf.empty:
+        st.info("No stores match the current filters.")
+        return
+
+    _money = ["Day Sales", "MTD LY", "MTD TY", "GD MTD Value",
+              "YTD LY", "YTD TY", "GD YTD Value"]
+    _pct = ["GD MTD %", "GD YTD %"]
+    _sign = ["GD MTD Value", "GD MTD %", "GD YTD Value", "GD YTD %"]
+
+    # ===================== Executive ===================== #
+    if nav == "📊 Executive":
+        st.caption(
+            f"**As of {end_d:%d %b %Y}** · MTD / YTD (fiscal Apr–Mar) vs same "
+            "period last year. Matches the Growth-Degrowth sheet: only stores "
+            "active this year, closed stores' last year capped to their span, "
+            "new stores (South) have no last-year compare.")
+        ex = PL.exec_yoy(pf, asof=asof)
+        cols = st.columns(2)
+        for col, key in zip(cols, ["MTD", "YTD"]):
+            v = ex[key]
+            col.markdown(
+                kpi_card(f"{key} Sales", _cr(v["ty"]), delta_pct=v["growth"]),
+                unsafe_allow_html=True)
+        st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
+
+        # VFL vs non-VFL split (YTD)
+        c1, c2 = st.columns(2)
+        for col, (frame, title) in zip(
+                (c1, c2), [(pf[pf["is_vfl"]], "VFL (Manyavar / Mohey)"),
+                           (pf[~pf["is_vfl"]], "Non-VFL brands")]):
+            if frame.empty:
+                col.markdown(stat_card(title, [("YTD", "—", "#6b6b6b")]),
+                             unsafe_allow_html=True)
+                continue
+            e = PL.exec_yoy(frame, asof=asof)["YTD"]
+            g = e["growth"]
+            gcol = GRN_TXT if (g is None or g >= 0) else RED_TXT
+            gtxt = "new" if g is None else f"{g:+.1f}%"
+            col.markdown(stat_card(title, [
+                ("YTD This Year", _cr(e["ty"]), MAROON),
+                ("YTD Last Year", _cr(e["ly"]), "#6b6b6b"),
+                ("Growth YoY", gtxt, gcol),
+            ]), unsafe_allow_html=True)
+
+        st.markdown("#### Region YoY (YTD)")
+        rg = PL.region_yoy(pf, "YTD", asof=asof)
+        rg_disp = rg.rename(columns={"region": "Region", "ty": "This Year",
+                                     "ly": "Last Year"})
+        rg_disp["GD Value"] = rg_disp["This Year"] - rg_disp["Last Year"]
+        rg_disp["GD %"] = rg["growth"]
+        html = styled_report_html(
+            rg_disp[["Region", "Last Year", "This Year", "GD Value", "GD %"]],
+            money_cols=["Last Year", "This Year", "GD Value"], pct_cols=["GD %"],
+            sign_cols=["GD Value", "GD %"])
+        st.markdown(html, unsafe_allow_html=True)
+
+    # ===================== MTD / YTD Report ===================== #
+    elif nav == "📋 MTD / YTD Report":
+        st.caption(
+            f"**As of {end_d:%d %b %Y}** · region × store, year-on-year. "
+            "MTD = month to date · YTD = fiscal (Apr–Mar) to date · "
+            "TY/LY = this/last year · Red = degrowth.")
+        rep, rtypes = PL.region_store_report(pf, asof=asof)
+        if rep.empty:
+            st.info("No stores match the current filters.")
+            return
+        html = styled_report_html(rep, money_cols=_money, pct_cols=_pct,
+                                  sign_cols=_sign, row_types=rtypes, compact=True)
+        render_fit_to_screen(html, panel_h=600)
+
+    # ===================== Degrowth ===================== #
+    elif nav == "📉 Degrowth":
+        kind = st.radio("Period", ["YTD", "MTD"], horizontal=True, key="pf_dg_kind")
+        st.caption(f"Stores in {kind} degrowth (this year < last year), "
+                   f"biggest ₹ shortfall first. As of {end_d:%d %b %Y}.")
+        dg = PL.degrowth_report(pf, asof=asof, kind=kind)
+        if dg.empty:
+            st.success("No stores in degrowth for the current scope. 🎉")
+            return
+        disp = dg.rename(columns={
+            "region": "Region", "code": "Code", "city": "City",
+            "location": "Location", "brand": "Brand", "prior": "LY",
+            "cur": "TY", "shortfall": "Shortfall", "growth": "Degrowth %"})
+        disp["Code"] = disp["Code"].astype(int)
+        html = styled_report_html(
+            disp, money_cols=["LY", "TY", "Shortfall"], pct_cols=["Degrowth %"],
+            sign_cols=["Shortfall", "Degrowth %"])
+        _south = (dg["region"] == "South").sum()
+        st.markdown(f"**{len(dg)} stores** in {kind} degrowth · total shortfall "
+                    f"**{_cr(dg['shortfall'].sum())}**"
+                    + (f" · incl. **{_south} South**" if _south else ""))
+        st.markdown(html, unsafe_allow_html=True)
+
+    # ===================== Contribution ===================== #
+    elif nav == "🥧 Contribution":
+        dim = st.radio("Break down by", ["Brand", "City", "Region", "Store"],
+                       horizontal=True, key="pf_contrib_dim")
+        st.caption(f"Sales contribution over **{start_d:%d %b %Y} – "
+                   f"{end_d:%d %b %Y}**, largest first.")
+        c = PL.contribution(pf, dim.lower(), window=(pd.Timestamp(start_d), asof))
+        keycol = {"Brand": "brand", "City": "city", "Region": "region",
+                  "Store": "location"}[dim]
+        c = c.rename(columns={keycol: dim, "sales": "Sales", "share": "Share %"})
+        fig = px.bar(c.head(20), x="Sales", y=dim, orientation="h",
+                     text=c.head(20)["Share %"].map(lambda v: f"{v:.1f}%"))
+        fig.update_layout(yaxis=dict(autorange="reversed"), height=460,
+                          margin=dict(l=8, r=8, t=8, b=8),
+                          plot_bgcolor="#fff", paper_bgcolor="#fff")
+        fig.update_traces(marker_color=MAROON, textposition="outside")
+        st.plotly_chart(fig, use_container_width=True)
+        disp = c.copy()
+        html = styled_report_html(disp, money_cols=["Sales"], pct_cols=["Share %"])
+        st.markdown(html, unsafe_allow_html=True)
+
+    # ===================== City-wise G/D ===================== #
+    elif nav == "🏙️ City-wise G/D":
+        kind = st.radio("Period", ["YTD", "MTD"], horizontal=True, key="pf_city_kind")
+        st.caption(f"City-wise growth/degrowth, {kind} year-on-year. "
+                   f"As of {end_d:%d %b %Y}.")
+        cg = PL.city_gd(pf, kind=kind, asof=asof)
+        disp = cg.rename(columns={"region": "Region", "city": "City",
+                                  "prior": "LY", "cur": "TY", "gd": "GD Value",
+                                  "growth": "GD %"})[
+            ["Region", "City", "LY", "TY", "GD Value", "GD %"]]
+        html = styled_report_html(
+            disp, money_cols=["LY", "TY", "GD Value"], pct_cols=["GD %"],
+            sign_cols=["GD Value", "GD %"])
+        st.markdown(html, unsafe_allow_html=True)
+
+    # ===================== Stores ===================== #
+    elif nav == "🏬 Stores":
+        st.caption("Every store in scope with total sales and active span.")
+        sl = PL.store_list(pf)
+        disp = sl.rename(columns={
+            "code": "Code", "region": "Region", "city": "City",
+            "location": "Location", "brand": "Brand", "is_vfl": "VFL",
+            "first_sale": "First sale", "last_sale": "Last sale",
+            "sales": "Total sales"})
+        disp["Code"] = disp["Code"].astype(int)
+        disp["VFL"] = disp["VFL"].map({True: "✓", False: ""})
+        disp["First sale"] = pd.to_datetime(disp["First sale"]).dt.strftime("%d %b %y")
+        disp["Last sale"] = pd.to_datetime(disp["Last sale"]).dt.strftime("%d %b %y")
+        html = styled_report_html(
+            disp[["Region", "Code", "City", "Location", "Brand", "VFL",
+                  "First sale", "Last sale", "Total sales"]],
+            money_cols=["Total sales"])
+        st.markdown(f"**{len(sl)} stores** · total **{_cr(sl['sales'].sum())}**")
+        st.markdown(html, unsafe_allow_html=True)
+
+    # ===================== Monthly ===================== #
+    elif nav == "📅 Monthly":
+        st.caption("Sales by fiscal month with same-month-last-year comparison "
+                   "(reflects the current scope/filters).")
+        mo = PL.monthly(pf)
+        fig = go.Figure()
+        fig.add_bar(x=mo["label"], y=mo["ly_sales"] / 1e7, name="Last Year",
+                    marker_color="#D9C7A6")
+        fig.add_bar(x=mo["label"], y=mo["sales"] / 1e7, name="This Year",
+                    marker_color=MAROON)
+        fig.update_layout(barmode="group", height=420, bargap=0.25,
+                          margin=dict(l=8, r=8, t=8, b=8), plot_bgcolor="#fff",
+                          paper_bgcolor="#fff", yaxis_title="₹ Cr",
+                          legend=dict(orientation="h", y=1.08))
+        st.plotly_chart(fig, use_container_width=True)
+        disp = mo.rename(columns={"label": "Month", "sales": "This Year",
+                                  "ly_sales": "Last Year", "growth": "Growth %"})
+        html = styled_report_html(
+            disp[["Month", "Last Year", "This Year", "Growth %"]],
+            money_cols=["Last Year", "This Year"], pct_cols=["Growth %"],
+            sign_cols=["Growth %"])
+        st.markdown(html, unsafe_allow_html=True)
+
+
+# ---- Top-level data mode: whole-Portfolio breadth vs VFL depth ----
+_MODE_VFL, _MODE_PORTFOLIO = "🔷 VFL", "🌐 Portfolio"
+_mode = st.sidebar.radio(
+    "Data view", [_MODE_VFL, _MODE_PORTFOLIO], key="data_mode", horizontal=True,
+    label_visibility="collapsed",
+    help="VFL = deep Manyavar/Mohey analytics. Portfolio = all stores, sales-only.")
+if _mode == _MODE_PORTFOLIO:
+    render_portfolio()
+    st.stop()
 
 try:
     df_all = get_data()
