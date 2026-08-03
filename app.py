@@ -419,8 +419,9 @@ def _cr(x) -> str:
     return f"₹{(x or 0) / 1e7:,.2f} Cr"
 
 
-_PF_TABS = ["📊 Executive", "📋 MTD / YTD Report", "📉 Degrowth", "🎯 Day Targets",
-            "🥧 Contribution", "🏙️ City-wise G/D", "🏬 Stores", "📅 Monthly"]
+_PF_TABS = ["📊 Executive", "📋 MTD / YTD Report", "🧾 GD Sheet", "🏷️ Brand-wise GD",
+            "🗺️ Loc-wise GD", "📐 Average", "📉 Degrowth", "🎯 Day Targets",
+            "🥧 Contribution", "🏙️ City-wise G/D", "🏬 Stores", "📅 Monthly", "📈 MW Data"]
 
 
 def render_portfolio():
@@ -722,6 +723,158 @@ def render_portfolio():
             styled_report_html(rep, money_cols=["Same Day LY", "Same Date LY"],
                                row_types=rtypes),
             unsafe_allow_html=True)
+
+    # ===================== GD Sheet (exact workbook layout) ===================== #
+    elif nav == "🧾 GD Sheet":
+        _dmin, _dmax = pf["date"].min().date(), pf["date"].max().date()
+        asof_d = pd.Timestamp(st.date_input(
+            "As of", value=_dmax, min_value=_dmin, max_value=_dmax, key="pf_gd_asof"))
+        ly_d = asof_d - pd.DateOffset(years=1)
+        st.markdown(
+            f"**CURRENT YEAR DATE:** {asof_d:%d-%m-%Y} ({asof_d:%A})  ·  "
+            f"**LAST YEAR DATE:** {ly_d:%d-%m-%Y} ({ly_d:%A})")
+        rep, rtypes = PL.gd_sheet_report(pf, asof=asof_d)
+        if rep.empty:
+            st.info("No stores match the current filters.")
+            return
+
+        # Block 2 — region summary
+        _tot = rep.loc[[t in ("block", "grand") for t in rtypes]].copy()
+        _tot["Region"] = _tot["Region"].str.replace(" Total", "", regex=False)
+        _sum_cols = ["Sum of MTD_TY", "Sum of PROJECTED MTD", "Sum of MONTH SALE LY",
+                     "Sum of YTD_TY", "Sum of PROJECTED YTD", "Sum of LY FULL SALES"]
+        st.markdown("##### Region summary")
+        st.markdown(styled_report_html(_tot[["Region"] + _sum_cols],
+                                       money_cols=_sum_cols), unsafe_allow_html=True)
+
+        # Block 3 — GROWTH DEGROWTH SHEET (the full 18-column table)
+        st.markdown("##### GROWTH DEGROWTH SHEET")
+        disp = rep.copy()
+        for c in ["Sum of GD_YTD_%", "Sum of GD_MTD_%"]:
+            disp[c] = pd.to_numeric(disp[c], errors="coerce") * 100
+        _money = ["Sum of YTD_LY", "Sum of YTD_TY", "Sum of MTD_LY", "Sum of MTD_TY",
+                  "Sum of DAY SALE FIGURE", "Sum of MONTH SALE LY",
+                  "Sum of PROJECTED MTD", "Sum of LY FULL SALES", "Sum of PROJECTED YTD"]
+        _pct = ["Sum of GD_YTD_%", "Sum of GD_MTD_%"]
+        st.markdown(
+            styled_report_html(disp, money_cols=_money, pct_cols=_pct,
+                               sign_cols=_pct, row_types=rtypes, compact=True),
+            unsafe_allow_html=True)
+
+    # ===================== Brand-wise GD (grouped by parent company) ===================== #
+    elif nav == "🏷️ Brand-wise GD":
+        _dmin, _dmax = pf["date"].min().date(), pf["date"].max().date()
+        asof_d = pd.Timestamp(st.date_input(
+            "As of", value=_dmax, min_value=_dmin, max_value=_dmax, key="pf_brand_asof"))
+        ly_d = asof_d - pd.DateOffset(years=1)
+        st.markdown(
+            f"**CURRENT YEAR DATE:** {asof_d:%d-%m-%Y} ({asof_d:%A})  ·  "
+            f"**LAST YEAR DATE:** {ly_d:%d-%m-%Y} ({ly_d:%A})")
+
+        # Region summary (same block as GD Sheet)
+        _gdrep, _gdtypes = PL.gd_sheet_report(pf, asof=asof_d)
+        _tot = _gdrep.loc[[t in ("block", "grand") for t in _gdtypes]].copy()
+        _tot["Region"] = _tot["Region"].str.replace(" Total", "", regex=False)
+        _sum_cols = ["Sum of MTD_TY", "Sum of PROJECTED MTD", "Sum of MONTH SALE LY",
+                     "Sum of YTD_TY", "Sum of PROJECTED YTD", "Sum of LY FULL SALES"]
+        st.markdown("##### Region summary")
+        st.markdown(styled_report_html(_tot[["Region"] + _sum_cols],
+                                       money_cols=_sum_cols), unsafe_allow_html=True)
+
+        # Main table grouped by PARENT
+        st.markdown("##### BRAND WISE GROWTH DEGROWTH")
+        rep, rtypes = PL.brand_wise_gd_report(pf, asof=asof_d)
+        disp = rep.copy()
+        for c in ["Sum of GD_YTD_%", "Sum of GD_MTD_%"]:
+            disp[c] = pd.to_numeric(disp[c], errors="coerce") * 100
+        _money = ["Sum of YTD_LY", "Sum of YTD_TY", "Sum of MTD_LY", "Sum of MTD_TY",
+                  "Sum of DAY SALE FIGURE", "Sum of MONTH SALE LY",
+                  "Sum of PROJECTED MTD", "Sum of LY FULL SALES", "Sum of PROJECTED YTD"]
+        _pct = ["Sum of GD_YTD_%", "Sum of GD_MTD_%"]
+        st.markdown(
+            styled_report_html(disp, money_cols=_money, pct_cols=_pct,
+                               sign_cols=_pct, row_types=rtypes, compact=True),
+            unsafe_allow_html=True)
+
+    # ===================== Loc-wise GD (grouped by Location TL) ===================== #
+    elif nav == "🗺️ Loc-wise GD":
+        _dmin, _dmax = pf["date"].min().date(), pf["date"].max().date()
+        asof_d = pd.Timestamp(st.date_input(
+            "As of", value=_dmax, min_value=_dmin, max_value=_dmax, key="pf_loc_asof"))
+        ly_d = asof_d - pd.DateOffset(years=1)
+        st.markdown(
+            f"**CURRENT YEAR DATE:** {asof_d:%d-%m-%Y} ({asof_d:%A})  ·  "
+            f"**LAST YEAR DATE:** {ly_d:%d-%m-%Y} ({ly_d:%A})")
+
+        _gdrep, _gdtypes = PL.gd_sheet_report(pf, asof=asof_d)
+        _tot = _gdrep.loc[[t in ("block", "grand") for t in _gdtypes]].copy()
+        _tot["Region"] = _tot["Region"].str.replace(" Total", "", regex=False)
+        _sum_cols = ["Sum of MTD_TY", "Sum of PROJECTED MTD", "Sum of MONTH SALE LY",
+                     "Sum of YTD_TY", "Sum of PROJECTED YTD", "Sum of LY FULL SALES"]
+        st.markdown("##### Region summary")
+        st.markdown(styled_report_html(_tot[["Region"] + _sum_cols],
+                                       money_cols=_sum_cols), unsafe_allow_html=True)
+
+        st.markdown("##### LOCATION WISE GROWTH DEGROWTH")
+        rep, rtypes = PL.loc_wise_gd_report(pf, asof=asof_d)
+        disp = rep.copy()
+        for c in ["Sum of GD_YTD_%", "Sum of GD_MTD_%"]:
+            disp[c] = pd.to_numeric(disp[c], errors="coerce") * 100
+        _money = ["Sum of YTD_LY", "Sum of YTD_TY", "Sum of MTD_LY", "Sum of MTD_TY",
+                  "Sum of MONTH SALE LY", "Sum of PROJECTED MTD", "Sum of LY FULL SALES",
+                  "Sum of PROJECTED YTD", "Sum of DAY SALE FIGURE"]
+        _pct = ["Sum of GD_YTD_%", "Sum of GD_MTD_%"]
+        st.markdown(
+            styled_report_html(disp, money_cols=_money, pct_cols=_pct,
+                               sign_cols=_pct, row_types=rtypes, compact=True),
+            unsafe_allow_html=True)
+
+    # ===================== Average (store productivity) ===================== #
+    elif nav == "📐 Average":
+        _dmin, _dmax = pf["date"].min().date(), pf["date"].max().date()
+        asof_d = pd.Timestamp(st.date_input(
+            "As of", value=_dmax, min_value=_dmin, max_value=_dmax, key="pf_avg_asof"))
+        ly_d = asof_d - pd.DateOffset(years=1)
+        st.markdown(
+            f"**CURRENT YEAR DATE:** {asof_d:%d-%m-%Y} ({asof_d:%A})  ·  "
+            f"**LAST YEAR DATE:** {ly_d:%d-%m-%Y} ({ly_d:%A})")
+        st.caption(
+            "Store productivity by parent company, one row per store. Operation "
+            "days = days traded this FY; **AVG DAY SALE = YTD_TY ÷ operation days** "
+            "(a clean run-rate — the workbook's own formula is unreliable); AVG "
+            "MONTH = ×30; PSFPD = AVG DAY SALE ÷ CA.")
+
+        _gdrep, _gdtypes = PL.gd_sheet_report(pf, asof=asof_d)
+        _tot = _gdrep.loc[[t in ("block", "grand") for t in _gdtypes]].copy()
+        _tot["Region"] = _tot["Region"].str.replace(" Total", "", regex=False)
+        _sum_cols = ["Sum of MTD_TY", "Sum of PROJECTED MTD", "Sum of MONTH SALE LY",
+                     "Sum of YTD_TY", "Sum of PROJECTED YTD", "Sum of LY FULL SALES"]
+        st.markdown("##### Region summary")
+        st.markdown(styled_report_html(_tot[["Region"] + _sum_cols],
+                                       money_cols=_sum_cols), unsafe_allow_html=True)
+
+        st.markdown("##### AVG BRAND WISE SHEET")
+        rep, rtypes = PL.average_report(pf, asof=asof_d)
+        disp = rep.copy()
+        disp["Sum of GD_YTD_%"] = pd.to_numeric(disp["Sum of GD_YTD_%"], errors="coerce") * 100
+        _money = ["SBA", "CA", "Sum of YTD_LY", "Sum of YTD_TY", "Average of OPERATION",
+                  "Sum of AVG DAY SALE", "Sum of AVG MONTH SALE", "Sum of PSFPD"]
+        _pct = ["Sum of GD_YTD_%"]
+        for _c in _money:  # blanks in total rows -> NaN so money formatting shows "—"
+            disp[_c] = pd.to_numeric(disp[_c], errors="coerce")
+        st.markdown(
+            styled_report_html(disp, money_cols=_money, pct_cols=_pct,
+                               sign_cols=_pct, row_types=rtypes),
+            unsafe_allow_html=True)
+
+    # ===================== MW Data (monthly contribution grid) ===================== #
+    elif nav == "📈 MW Data":
+        st.caption(
+            "Monthly contribution by fiscal year (whole portfolio, all brands — "
+            "ignores the sidebar filters). **FY25-26 & FY26-27 live** from the "
+            "sales data (current FY updates daily); **FY24-25 and earlier** from "
+            "the workbook. The current FY shows the East & NE / South split.")
+        st.markdown(PL.mw_data_html(PL.mw_data(pf_all)), unsafe_allow_html=True)
 
 
 # ---- Top-level data mode: whole-Portfolio breadth vs VFL depth ----

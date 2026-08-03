@@ -22,6 +22,7 @@ DATE is Indian day-first (e.g. 1/4/2025 = 1 April 2025).
 
 from __future__ import annotations
 
+import calendar
 import io
 import os
 
@@ -489,3 +490,570 @@ def day_sales_ly_report(df: pd.DataFrame, day):
     grand = pd.concat(all_rows, ignore_index=True)
     rows.append(_total_row("Grand Total", grand)); types.append("grand")
     return pd.DataFrame(rows, columns=DAY_REPORT_COLS), types
+
+
+# --------------------------------------------------------------------------- #
+# GROWTH-DEGROWTH SHEET — exact layout of the workbook's "to develop" sheet.
+# Store identity (name/location/NEW-OLD/CLOSED/DOO) comes from gd_store_attrs.csv
+# (extracted from that sheet); the figures are computed live from the data.
+# --------------------------------------------------------------------------- #
+GD_SHEET_COLS = [
+    "Region", "NEW/OLD", "STORE CODE", "STORE NAME MAIN", "LOCATION", "CLOSED",
+    "DOO", "Sum of YTD_LY", "Sum of YTD_TY", "Sum of GD_YTD_%", "Sum of MTD_LY",
+    "Sum of MTD_TY", "Sum of GD_MTD_%", "Sum of DAY SALE FIGURE",
+    "Sum of MONTH SALE LY", "Sum of PROJECTED MTD", "Sum of LY FULL SALES",
+    "Sum of PROJECTED YTD",
+]
+_NEWOLD_ORDER = ["2526FY", "2526PY", "2526NA"]
+_GD_VALUE_COLS = ["Sum of YTD_LY", "Sum of YTD_TY", "Sum of MTD_LY", "Sum of MTD_TY",
+                  "Sum of DAY SALE FIGURE", "Sum of MONTH SALE LY",
+                  "Sum of PROJECTED MTD", "Sum of LY FULL SALES", "Sum of PROJECTED YTD"]
+
+
+def gd_store_attrs() -> pd.DataFrame:
+    a = pd.read_csv(os.path.join(_DIR, "gd_store_attrs.csv"))
+    a["code"] = a["code"].astype(int)
+    for c in ["closed", "doo", "store_name_main", "location_main", "region", "new_old"]:
+        a[c] = a[c].fillna("").astype(str)
+    return a
+
+
+def _newold_from_doo(doo, asof):
+    """NEW/OLD label derived live from DOO + the current fiscal year, so it
+    re-labels itself every year (2526FY/PY/NA → 2627FY/PY/NA next FY)."""
+    fy = asof.year if asof.month >= 4 else asof.year - 1
+    prior = fy - 1
+    tag = f"{prior % 100:02d}{fy % 100:02d}"
+    if not doo or pd.isna(doo):
+        return f"{tag}FY"
+    d = pd.to_datetime(doo)
+    if d >= pd.Timestamp(fy, 4, 1):
+        return f"{tag}NA"
+    if d >= pd.Timestamp(prior, 4, 1):
+        return f"{tag}PY"
+    return f"{tag}FY"
+
+
+def gd_store_attrs_dyn(df: pd.DataFrame, asof=None) -> pd.DataFrame:
+    """Store attributes for the GD-family tabs, driven by the LIVE data so new
+    stores wire in automatically. The store list is every store active this FY;
+    curated attributes (DOO/CLOSED/PARENT/Location TL/SBA/CA/order) come from
+    gd_store_attrs.csv when known, else are derived from the data — DOO = first
+    sale date, name/location/region from the sheet, PARENT from the brand map,
+    Location TL defaults to the store's location. NEW/OLD is always derived live
+    from DOO."""
+    asof = as_of(df) if asof is None else pd.Timestamp(asof)
+    static = gd_store_attrs()
+    known = static.set_index("code")
+    active = active_codes(df, asof)
+    first_sale = df[df["sales"] > 0].groupby("code")["date"].min()
+    ident = df.drop_duplicates("code").copy()
+    ident["code"] = ident["code"].astype(int)
+    ident = ident.set_index("code")
+    brand_parent = dict(zip(static["store_name_main"], static["parent"]))
+
+    rows = []
+    for c in sorted(int(x) for x in active):
+        if c in known.index:
+            r = known.loc[c].to_dict()
+            r["code"] = c
+        else:  # new / previously-unseen store — derive what we can from the data
+            b = str(ident.loc[c, "brand"]) if c in ident.index else ""
+            loc = str(ident.loc[c, "location"]) if c in ident.index else ""
+            reg = ident.loc[c, "region"] if c in ident.index else "East & NE"
+            fs = first_sale.get(c)
+            r = {"code": c, "region": reg, "store_name_main": b, "location_main": loc,
+                 "closed": "", "doo": fs.strftime("%Y-%m-%d") if pd.notna(fs) else "",
+                 "parent": brand_parent.get(b, b or "—"), "location_tl": loc,
+                 "brand_order": 9000 + c, "loc_order": 9000 + c,
+                 "sba": float("nan"), "ca": float("nan")}
+        rows.append(r)
+
+    out = pd.DataFrame(rows)
+    out["new_old"] = [_newold_from_doo(d, asof) for d in out["doo"]]
+    for col in ["closed", "doo", "store_name_main", "location_main", "region",
+                "parent", "location_tl", "new_old"]:
+        out[col] = out[col].fillna("").astype(str)
+    return out
+
+
+def _gd_frac(ty, ly):
+    return ((ty - ly) / ly) if ly else None
+
+
+def gd_sheet_report(df: pd.DataFrame, asof=None):
+    """The GROWTH DEGROWTH SHEET, matching the workbook 1:1. Returns
+    (display_df, row_types). Figures are live; identity from gd_store_attrs."""
+    asof = as_of(df) if asof is None else pd.Timestamp(asof)
+    attrs = gd_store_attrs_dyn(df, asof)
+
+    # Current-FY windows (active-only, close-capped) reused from the report engine.
+    mtd_cur, mtd_pri = _window_frames(df, "MTD", asof)
+    ytd_cur, ytd_pri = _window_frames(df, "YTD", asof)
+    g = lambda f: f.groupby("code")["sales"].sum()
+    mtd_ty, mtd_ly = g(mtd_cur), g(mtd_pri)
+    ytd_ty, ytd_ly = g(ytd_cur), g(ytd_pri)
+    day = g(df[df["date"] == asof])
+
+    # Raw (uncapped) last-year same-month + last-full-fiscal-year totals.
+    ly_month_start = asof.replace(day=1) - pd.DateOffset(years=1)
+    ly_asof = asof - pd.DateOffset(years=1)
+    month_ly = g(df[(df["date"] >= ly_month_start) & (df["date"] <= ly_asof)])
+    fy_year = asof.year if asof.month >= 4 else asof.year - 1
+    ly_full = g(df[(df["date"] >= pd.Timestamp(fy_year - 1, 4, 1)) &
+                   (df["date"] <= pd.Timestamp(fy_year, 3, 31))])
+
+    # Projection day-counts.
+    days_in_month = calendar.monthrange(asof.year, asof.month)[1]
+    fy_start = pd.Timestamp(fy_year, 4, 1)
+
+    def _doo_ts(s):
+        return pd.to_datetime(s) if s else fy_start
+
+    def _store_row(a):
+        c = int(a["code"])
+        mty, mly = float(mtd_ty.get(c, 0.0)), float(mtd_ly.get(c, 0.0))
+        yty, yly = float(ytd_ty.get(c, 0.0)), float(ytd_ly.get(c, 0.0))
+        proj_mtd = mty * days_in_month / asof.day
+        doo = _doo_ts(a["doo"])
+        ytd_start = max(fy_start, doo)
+        days_elapsed = max((asof - ytd_start).days + 1, 1)
+        proj_ytd = yty * 365.0 / days_elapsed
+        return {
+            "Region": a["region"], "NEW/OLD": a["new_old"], "STORE CODE": c,
+            "STORE NAME MAIN": a["store_name_main"], "LOCATION": a["location_main"],
+            "CLOSED": a["closed"] if a["closed"] else "(blank)", "DOO": a["doo"],
+            "Sum of YTD_LY": yly, "Sum of YTD_TY": yty,
+            "Sum of GD_YTD_%": _gd_frac(yty, yly),
+            "Sum of MTD_LY": mly, "Sum of MTD_TY": mty,
+            "Sum of GD_MTD_%": _gd_frac(mty, mly),
+            "Sum of DAY SALE FIGURE": float(day.get(c, 0.0)),
+            "Sum of MONTH SALE LY": float(month_ly.get(c, 0.0)),
+            "Sum of PROJECTED MTD": proj_mtd,
+            "Sum of LY FULL SALES": float(ly_full.get(c, 0.0)),
+            "Sum of PROJECTED YTD": proj_ytd,
+        }
+
+    def _total_row(label_region, label_newold, sub):
+        d = {c: "" for c in GD_SHEET_COLS}
+        d["Region"] = label_region
+        d["NEW/OLD"] = label_newold
+        for c in _GD_VALUE_COLS:
+            d[c] = sub[c].sum()
+        d["Sum of GD_YTD_%"] = _gd_frac(d["Sum of YTD_TY"], d["Sum of YTD_LY"])
+        d["Sum of GD_MTD_%"] = _gd_frac(d["Sum of MTD_TY"], d["Sum of MTD_LY"])
+        return d
+
+    attrs["_r"] = attrs["region"].map({k: i for i, k in enumerate(REGION_ORDER)}).fillna(9)
+    attrs["_n"] = attrs["new_old"].map({k: i for i, k in enumerate(_NEWOLD_ORDER)}).fillna(9)
+    attrs = attrs.sort_values(["_r", "_n", "code"])
+
+    rows, types = [], []
+    grand_rows = []
+    for region, rgrp in attrs.groupby("region", sort=False):
+        region_rows = []
+        for newold, ngrp in rgrp.groupby("new_old", sort=False):
+            srows = [_store_row(a) for _, a in ngrp.iterrows()]
+            for sr in srows:
+                rows.append(sr); types.append("store")
+            sdf = pd.DataFrame(srows)
+            region_rows.append(sdf)
+            rows.append(_total_row(region, f"{newold} Total", sdf))
+            types.append("subtotal")
+        rdf = pd.concat(region_rows, ignore_index=True)
+        grand_rows.append(rdf)
+        rows.append(_total_row(f"{region} Total", "", rdf))
+        types.append("block")
+    gdf = pd.concat(grand_rows, ignore_index=True)
+    rows.append(_total_row("Grand Total", "", gdf))
+    types.append("grand")
+    return pd.DataFrame(rows, columns=GD_SHEET_COLS), types
+
+
+# --------------------------------------------------------------------------- #
+# MW_DATA — monthly contribution grid (workbook's MW_DATA sheet). FY25-26 and
+# FY26-27 are computed live; FY24-25 and older come from mw_data_historical.csv.
+# --------------------------------------------------------------------------- #
+_MW_BLOCKS = [["2024-25", "2025-26", "2026-27"],
+              ["2023-24", "2022-23", "2021-22"],
+              ["2020-21", "2019-20", "2018-19", "2017-18"]]
+
+
+def _fy_periods(start_year):
+    return ([pd.Period(f"{start_year}-{m:02d}", "M") for m in range(4, 13)] +
+            [pd.Period(f"{start_year + 1}-{m:02d}", "M") for m in range(1, 4)])
+
+
+def mw_data(df: pd.DataFrame, asof=None) -> dict:
+    """Per-FY monthly totals for the MW_DATA grid. Returns {fy: {type, months,
+    grand}}. type 'region' (FY26-27: East&NE/South split) or 'std' (TOTAL/PRPL/
+    MRIPL). FY25-26 & FY26-27 live from the data; older FYs from the snapshot."""
+    asof = as_of(df) if asof is None else pd.Timestamp(asof)
+    hist = pd.read_csv(os.path.join(_DIR, "mw_data_historical.csv"))
+    hist["fy"] = hist["fy"].astype(str)
+    d = df.copy()
+    d["m"] = d["date"].dt.to_period("M")
+    monthly = d.groupby(["m", "region"])["sales"].sum().unstack(fill_value=0)
+    for r in REGION_ORDER:
+        if r not in monthly.columns:
+            monthly[r] = 0.0
+
+    def _pct(x, tot):
+        return (x / tot * 100) if tot else 0.0
+
+    out = {}
+    for block in _MW_BLOCKS:
+        for fy in block:
+            start_year = 2000 + int(fy[:2]) if len(fy) == 5 else int(fy[:4])
+            start_year = int("20" + fy[:2]) if len(fy) == 5 else start_year
+            start_year = int(fy.split("-")[0])
+            pers = _fy_periods(start_year)
+            labels = [p.strftime("%b-%y") for p in pers]
+
+            if fy == "2026-27":  # region split, live
+                ene = [float(monthly.loc[p, "East & NE"]) if p in monthly.index else 0.0 for p in pers]
+                sth = [float(monthly.loc[p, "South"]) if p in monthly.index else 0.0 for p in pers]
+                tot = [e + s for e, s in zip(ene, sth)]
+                g_tot, g_ene, g_sth = sum(tot), sum(ene), sum(sth)
+                months = [{
+                    "month": labels[i], "total": tot[i], "ene": ene[i], "south": sth[i],
+                    "cont": _pct(tot[i], g_tot),
+                    "ene_contrib": _pct(ene[i], g_ene), "south_contrib": _pct(sth[i], g_sth),
+                    "ene_pct": _pct(ene[i], tot[i]), "south_pct": _pct(sth[i], tot[i]),
+                } for i in range(12)]
+                out[fy] = {"type": "region", "months": months,
+                           "grand": {"total": g_tot, "ene": g_ene, "south": g_sth,
+                                     "ene_contrib": _pct(g_ene, g_tot),
+                                     "south_contrib": _pct(g_sth, g_tot)}}
+            elif fy == "2025-26":  # std split (all PRPL), live
+                tot = [float(monthly.loc[p].sum()) if p in monthly.index else 0.0 for p in pers]
+                g = sum(tot)
+                months = [{"month": labels[i], "total": tot[i], "prpl": tot[i],
+                           "mripl": 0.0, "cont": _pct(tot[i], g)} for i in range(12)]
+                out[fy] = {"type": "std", "months": months,
+                           "grand": {"total": g, "prpl": g, "mripl": 0.0}}
+            else:  # static from snapshot
+                h = hist[hist["fy"] == fy].set_index("month_idx")
+                tot = [float(h.loc[i, "total"]) if i in h.index else 0.0 for i in range(1, 13)]
+                prpl = [float(h.loc[i, "prpl"]) if i in h.index else 0.0 for i in range(1, 13)]
+                mripl = [float(h.loc[i, "mripl"]) if i in h.index else 0.0 for i in range(1, 13)]
+                g = sum(tot)
+                months = [{"month": labels[i], "total": tot[i], "prpl": prpl[i],
+                           "mripl": mripl[i], "cont": _pct(tot[i], g)} for i in range(12)]
+                out[fy] = {"type": "std", "months": months,
+                           "grand": {"total": g, "prpl": sum(prpl), "mripl": sum(mripl)}}
+    return out
+
+
+# MW_DATA grid → HTML (matches the workbook layout: 3 stacked blocks, FY groups
+# side-by-side, region split + contribution % for the current FY).
+_MW_STD = (["MONTH", "TOTAL SALE", "PRPL", "MRIPL", "MONTHLY CONT  (%)"],
+           [("month", "t"), ("total", "m"), ("prpl", "m"), ("mripl", "m"), ("cont", "p")])
+_MW_REG = (["MONTH", "TOTAL SALE", "East and NE", "South", "MONTHLY CONT  (%)",
+            "Month Contribution\nEast and NE", "Month Contribution\nSouth",
+            "Percent of Sales\nRegion East and NE", "Percent of Sales\nRegion South"],
+           [("month", "t"), ("total", "m"), ("ene", "m"), ("south", "m"), ("cont", "p"),
+            ("ene_contrib", "p"), ("south_contrib", "p"), ("ene_pct", "p"), ("south_pct", "p")])
+
+
+def mw_data_html(mw: dict) -> str:
+    MAROON, GOLD = "#7A1F2B", "#B99653"
+    def _m(v): return f"{v:,.0f}"
+    def _p(v): return f"{v:,.2f}%"
+
+    def _cols(fy):
+        return _MW_REG if mw[fy]["type"] == "region" else _MW_STD
+
+    def _cell(txt, align, bg, bold=False, color="#1f2937"):
+        w = "800" if bold else "500"
+        return (f'<td style="padding:3px 7px;text-align:{align};color:{color};'
+                f'font-weight:{w};background:{bg};border:1px solid #E7E1D6;'
+                f'white-space:nowrap;font-variant-numeric:tabular-nums;">{txt}</td>')
+
+    def _fmt(v, typ):
+        if v is None or v == "":
+            return ""
+        if typ == "t":
+            return str(v)
+        return _m(v) if typ == "m" else _p(v)
+
+    # A wide transparent spacer column that separates one FY group from the next.
+    _GAP = 'style="border:none;background:transparent;min-width:26px;width:26px;padding:0;"'
+
+    def block(fys):
+        title, sub = "", ""
+        for gi, fy in enumerate(fys):
+            hdr, _ = _cols(fy)
+            if gi:
+                title += f"<th {_GAP}></th>"
+                sub += f"<th {_GAP}></th>"
+            title += (f'<th colspan="{len(hdr)}" style="background:{MAROON};color:#fff;'
+                      f'font-weight:800;padding:6px 8px;border:1px solid #E7E1D6;'
+                      f'text-align:center;">MONTHLY CONT SHEET FY {fy}</th>')
+            for h in hdr:
+                sub += (f'<th style="background:{GOLD};color:#3a2a12;font-weight:700;'
+                        f'font-size:10px;padding:4px 6px;border:1px solid #E7E1D6;'
+                        f'text-align:center;white-space:pre-line;vertical-align:bottom;">{h}</th>')
+        body = ""
+        for i in range(12):
+            tds, bg = "", ("#FFFFFF" if i % 2 == 0 else "#FAF6EF")
+            for gi, fy in enumerate(fys):
+                if gi:
+                    tds += f"<td {_GAP}></td>"
+                _, keys = _cols(fy)
+                mrow = mw[fy]["months"][i]
+                for k, typ in keys:
+                    align = "left" if typ == "t" else "right"
+                    tds += _cell(_fmt(mrow.get(k, ""), typ), align, bg)
+            body += f"<tr>{tds}</tr>"
+        # GRAND TOTAL
+        gtds = ""
+        for gi, fy in enumerate(fys):
+            if gi:
+                gtds += f"<td {_GAP}></td>"
+            g = mw[fy]["grand"]
+            if mw[fy]["type"] == "region":
+                vals = [("GRAND TOTAL", "t"), (g["total"], "m"), (g["ene"], "m"),
+                        (g["south"], "m"), ("", "p"), ("", "p"), ("", "p"),
+                        (g["ene_contrib"], "p"), (g["south_contrib"], "p")]
+            else:
+                vals = [("GRAND TOTAL", "t"), (g["total"], "m"), (g["prpl"], "m"),
+                        (g["mripl"], "m"), ("", "p")]
+            for v, typ in vals:
+                align = "left" if typ == "t" else "right"
+                gtds += _cell(_fmt(v, typ), align, "#CDE8CF", bold=True)
+        body += f"<tr>{gtds}</tr>"
+        return (f'<table style="border-collapse:collapse;font-family:Inter,Segoe UI,'
+                f'sans-serif;font-size:11px;margin:0 0 26px;">'
+                f'<thead><tr>{title}</tr><tr>{sub}</tr></thead><tbody>{body}</tbody></table>')
+
+    inner = "".join(block(b) for b in _MW_BLOCKS)
+    return f'<div style="overflow-x:auto;max-width:100%;">{inner}</div>'
+
+
+# --------------------------------------------------------------------------- #
+# BRAND_WISE_GD — same GD figures as gd_sheet_report, grouped by PARENT company.
+# --------------------------------------------------------------------------- #
+BRAND_GD_COLS = [
+    "PARENT", "STORE NAME MAIN", "LOCATION", "NEW/OLD", "CLOSED",
+    "Sum of YTD_LY", "Sum of YTD_TY", "Sum of GD_YTD_%", "Sum of MTD_LY",
+    "Sum of MTD_TY", "Sum of GD_MTD_%", "Sum of DAY SALE FIGURE",
+    "Sum of MONTH SALE LY", "Sum of PROJECTED MTD", "Sum of LY FULL SALES",
+    "Sum of PROJECTED YTD",
+]
+_BRAND_VALUE_COLS = ["Sum of YTD_LY", "Sum of YTD_TY", "Sum of MTD_LY", "Sum of MTD_TY",
+                     "Sum of DAY SALE FIGURE", "Sum of MONTH SALE LY",
+                     "Sum of PROJECTED MTD", "Sum of LY FULL SALES", "Sum of PROJECTED YTD"]
+
+
+def _gd_store_metrics(df: pd.DataFrame, asof: pd.Timestamp) -> dict:
+    """Per-store GD figures (identical to gd_sheet_report), keyed by store code."""
+    attrs = gd_store_attrs_dyn(df, asof).set_index("code")
+    mtd_cur, mtd_pri = _window_frames(df, "MTD", asof)
+    ytd_cur, ytd_pri = _window_frames(df, "YTD", asof)
+    g = lambda f: f.groupby("code")["sales"].sum()
+    mtd_ty, mtd_ly = g(mtd_cur), g(mtd_pri)
+    ytd_ty, ytd_ly = g(ytd_cur), g(ytd_pri)
+    day = g(df[df["date"] == asof])
+    ly_month_start = asof.replace(day=1) - pd.DateOffset(years=1)
+    ly_asof = asof - pd.DateOffset(years=1)
+    month_ly = g(df[(df["date"] >= ly_month_start) & (df["date"] <= ly_asof)])
+    fy_year = asof.year if asof.month >= 4 else asof.year - 1
+    ly_full = g(df[(df["date"] >= pd.Timestamp(fy_year - 1, 4, 1)) &
+                   (df["date"] <= pd.Timestamp(fy_year, 3, 31))])
+    days_in_month = calendar.monthrange(asof.year, asof.month)[1]
+    fy_start = pd.Timestamp(fy_year, 4, 1)
+    out = {}
+    for c in attrs.index:
+        c = int(c)
+        mty, mly = float(mtd_ty.get(c, 0.0)), float(mtd_ly.get(c, 0.0))
+        yty, yly = float(ytd_ty.get(c, 0.0)), float(ytd_ly.get(c, 0.0))
+        doo_s = attrs.loc[c, "doo"]
+        doo = pd.to_datetime(doo_s) if doo_s else fy_start
+        days_elapsed = max((asof - max(fy_start, doo)).days + 1, 1)
+        out[c] = {
+            "ytd_ly": yly, "ytd_ty": yty, "gd_ytd": _gd_frac(yty, yly),
+            "mtd_ly": mly, "mtd_ty": mty, "gd_mtd": _gd_frac(mty, mly),
+            "day": float(day.get(c, 0.0)), "month_ly": float(month_ly.get(c, 0.0)),
+            "proj_mtd": mty * days_in_month / asof.day,
+            "ly_full": float(ly_full.get(c, 0.0)), "proj_ytd": yty * 365.0 / days_elapsed,
+        }
+    return out
+
+
+def brand_wise_gd_report(df: pd.DataFrame, asof=None):
+    """BRAND_WISE_GD — GD figures grouped by PARENT company (alphabetical),
+    store rows → 'PARENT Total' → 'Grand Total'. Returns (display_df, row_types)."""
+    asof = as_of(df) if asof is None else pd.Timestamp(asof)
+    metrics = _gd_store_metrics(df, asof)
+    attrs = gd_store_attrs_dyn(df, asof)
+
+    def _store_row(a):
+        m = metrics[int(a["code"])]
+        return {
+            "PARENT": a["parent"], "STORE NAME MAIN": a["store_name_main"],
+            "LOCATION": a["location_main"], "NEW/OLD": a["new_old"],
+            "CLOSED": a["closed"] if a["closed"] else "(blank)",
+            "Sum of YTD_LY": m["ytd_ly"], "Sum of YTD_TY": m["ytd_ty"],
+            "Sum of GD_YTD_%": m["gd_ytd"], "Sum of MTD_LY": m["mtd_ly"],
+            "Sum of MTD_TY": m["mtd_ty"], "Sum of GD_MTD_%": m["gd_mtd"],
+            "Sum of DAY SALE FIGURE": m["day"], "Sum of MONTH SALE LY": m["month_ly"],
+            "Sum of PROJECTED MTD": m["proj_mtd"], "Sum of LY FULL SALES": m["ly_full"],
+            "Sum of PROJECTED YTD": m["proj_ytd"],
+        }
+
+    def _total_row(label, sub):
+        d = {c: "" for c in BRAND_GD_COLS}
+        d["PARENT"] = label
+        for c in _BRAND_VALUE_COLS:
+            d[c] = sub[c].sum()
+        d["Sum of GD_YTD_%"] = _gd_frac(d["Sum of YTD_TY"], d["Sum of YTD_LY"])
+        d["Sum of GD_MTD_%"] = _gd_frac(d["Sum of MTD_TY"], d["Sum of MTD_LY"])
+        return d
+
+    attrs = attrs.sort_values("brand_order")  # exact BRAND_WISE_GD sheet order
+    rows, types, all_rows = [], [], []
+    for parent, grp in attrs.groupby("parent", sort=False):
+        srows = [_store_row(a) for _, a in grp.iterrows()]
+        for sr in srows:
+            rows.append(sr); types.append("store")
+        sdf = pd.DataFrame(srows)
+        all_rows.append(sdf)
+        rows.append(_total_row(f"{parent} Total", sdf)); types.append("subtotal")
+    gdf = pd.concat(all_rows, ignore_index=True)
+    rows.append(_total_row("Grand Total", gdf)); types.append("grand")
+    return pd.DataFrame(rows, columns=BRAND_GD_COLS), types
+
+
+# --------------------------------------------------------------------------- #
+# LOC_WISE_GD — same GD figures grouped by Location TL (geographic cluster).
+# Column order differs from GD Sheet: DAY SALE FIGURE is last; carries STORE CODE.
+# --------------------------------------------------------------------------- #
+LOC_GD_COLS = [
+    "Location TL", "STORE CODE", "NEW/OLD", "STORE NAME MAIN", "LOCATION",
+    "Sum of YTD_LY", "Sum of YTD_TY", "Sum of GD_YTD_%", "Sum of MTD_LY",
+    "Sum of MTD_TY", "Sum of GD_MTD_%", "Sum of MONTH SALE LY",
+    "Sum of PROJECTED MTD", "Sum of LY FULL SALES", "Sum of PROJECTED YTD",
+    "Sum of DAY SALE FIGURE",
+]
+_LOC_VALUE_COLS = ["Sum of YTD_LY", "Sum of YTD_TY", "Sum of MTD_LY", "Sum of MTD_TY",
+                   "Sum of MONTH SALE LY", "Sum of PROJECTED MTD", "Sum of LY FULL SALES",
+                   "Sum of PROJECTED YTD", "Sum of DAY SALE FIGURE"]
+
+
+def loc_wise_gd_report(df: pd.DataFrame, asof=None):
+    """LOC_WISE_GD — GD figures grouped by Location TL (exact sheet order),
+    store rows → 'Location TL Total' → 'Grand Total'."""
+    asof = as_of(df) if asof is None else pd.Timestamp(asof)
+    metrics = _gd_store_metrics(df, asof)
+    attrs = gd_store_attrs_dyn(df, asof)
+
+    def _store_row(a):
+        c = int(a["code"])
+        m = metrics[c]
+        return {
+            "Location TL": a["location_tl"], "STORE CODE": c, "NEW/OLD": a["new_old"],
+            "STORE NAME MAIN": a["store_name_main"], "LOCATION": a["location_main"],
+            "Sum of YTD_LY": m["ytd_ly"], "Sum of YTD_TY": m["ytd_ty"],
+            "Sum of GD_YTD_%": m["gd_ytd"], "Sum of MTD_LY": m["mtd_ly"],
+            "Sum of MTD_TY": m["mtd_ty"], "Sum of GD_MTD_%": m["gd_mtd"],
+            "Sum of MONTH SALE LY": m["month_ly"], "Sum of PROJECTED MTD": m["proj_mtd"],
+            "Sum of LY FULL SALES": m["ly_full"], "Sum of PROJECTED YTD": m["proj_ytd"],
+            "Sum of DAY SALE FIGURE": m["day"],
+        }
+
+    def _total_row(label, sub):
+        d = {c: "" for c in LOC_GD_COLS}
+        d["Location TL"] = label
+        for c in _LOC_VALUE_COLS:
+            d[c] = sub[c].sum()
+        d["Sum of GD_YTD_%"] = _gd_frac(d["Sum of YTD_TY"], d["Sum of YTD_LY"])
+        d["Sum of GD_MTD_%"] = _gd_frac(d["Sum of MTD_TY"], d["Sum of MTD_LY"])
+        return d
+
+    attrs = attrs.sort_values("loc_order")  # exact LOC_WISE_GD sheet order
+    rows, types, all_rows = [], [], []
+    for tl, grp in attrs.groupby("location_tl", sort=False):
+        srows = [_store_row(a) for _, a in grp.iterrows()]
+        for sr in srows:
+            rows.append(sr); types.append("store")
+        sdf = pd.DataFrame(srows)
+        all_rows.append(sdf)
+        rows.append(_total_row(f"{tl} Total", sdf)); types.append("subtotal")
+    gdf = pd.concat(all_rows, ignore_index=True)
+    rows.append(_total_row("Grand Total", gdf)); types.append("grand")
+    return pd.DataFrame(rows, columns=LOC_GD_COLS), types
+
+
+# --------------------------------------------------------------------------- #
+# AVERAGE — store productivity (SBA/CA/operation days/AVG DAY SALE/PSFPD),
+# grouped by PARENT. One row per store (no Manyavar/Mohey split), and a clean
+# AVG DAY SALE = YTD_TY / operation days (the sheet's own formula is unreliable).
+# --------------------------------------------------------------------------- #
+AVG_COLS = [
+    "PARENT", "STORE CODE", "STORE NAME MAIN", "LOCATION", "NEW/OLD", "SBA", "CA",
+    "DOO", "CLOSED", "Sum of YTD_LY", "Sum of YTD_TY", "Sum of GD_YTD_%",
+    "Average of OPERATION", "Sum of AVG DAY SALE", "Sum of AVG MONTH SALE",
+    "Sum of PSFPD",
+]
+
+
+def average_report(df: pd.DataFrame, asof=None):
+    """AVERAGE — per-store productivity grouped by PARENT. Operation days = days
+    traded this FY; AVG DAY SALE = YTD_TY / operation days; AVG MONTH = ×30;
+    PSFPD = AVG DAY SALE / CA. Returns (display_df, row_types)."""
+    asof = as_of(df) if asof is None else pd.Timestamp(asof)
+    metrics = _gd_store_metrics(df, asof)
+    attrs = gd_store_attrs_dyn(df, asof)
+    fy_year = asof.year if asof.month >= 4 else asof.year - 1
+    fy_start = pd.Timestamp(fy_year, 4, 1)
+
+    def _op_days(a):
+        doo = pd.to_datetime(a["doo"]) if a["doo"] else fy_start
+        close = pd.to_datetime(a["closed"]) if a["closed"] else asof
+        return max((min(asof, close) - max(fy_start, doo)).days + 1, 1)
+
+    def _store_row(a):
+        c = int(a["code"])
+        m = metrics[c]
+        op = _op_days(a)
+        yty = m["ytd_ty"]
+        ca = float(a["ca"]) if a["ca"] else 0.0
+        ads = yty / op
+        return {
+            "PARENT": a["parent"], "STORE CODE": c, "STORE NAME MAIN": a["store_name_main"],
+            "LOCATION": a["location_main"], "NEW/OLD": a["new_old"],
+            "SBA": float(a["sba"]) if a["sba"] else 0.0, "CA": ca, "DOO": a["doo"],
+            "CLOSED": a["closed"] if a["closed"] else "(blank)",
+            "Sum of YTD_LY": m["ytd_ly"], "Sum of YTD_TY": yty,
+            "Sum of GD_YTD_%": m["gd_ytd"], "Average of OPERATION": op,
+            "Sum of AVG DAY SALE": ads, "Sum of AVG MONTH SALE": ads * 30,
+            "Sum of PSFPD": (ads / ca) if ca else 0.0, "_op": op, "_ca": ca,
+        }
+
+    def _total_row(label, sdf):
+        d = {c: "" for c in AVG_COLS}
+        d["PARENT"] = label
+        d["Sum of YTD_LY"] = sdf["Sum of YTD_LY"].sum()
+        d["Sum of YTD_TY"] = sdf["Sum of YTD_TY"].sum()
+        d["Sum of GD_YTD_%"] = _gd_frac(d["Sum of YTD_TY"], d["Sum of YTD_LY"])
+        op_sum, ca_sum = sdf["_op"].sum(), sdf["_ca"].sum()
+        d["Average of OPERATION"] = sdf["_op"].mean()
+        ads = d["Sum of YTD_TY"] / op_sum if op_sum else 0.0
+        d["Sum of AVG DAY SALE"] = ads
+        d["Sum of AVG MONTH SALE"] = ads * 30
+        d["Sum of PSFPD"] = (ads / ca_sum) if ca_sum else 0.0
+        return d
+
+    attrs = attrs.sort_values(["parent", "code"])
+    rows, types, all_rows = [], [], []
+    for parent, grp in attrs.groupby("parent", sort=True):
+        srows = [_store_row(a) for _, a in grp.iterrows()]
+        for sr in srows:
+            rows.append(sr); types.append("store")
+        sdf = pd.DataFrame(srows)
+        all_rows.append(sdf)
+        rows.append(_total_row(f"{parent} Total", sdf)); types.append("subtotal")
+    gdf = pd.concat(all_rows, ignore_index=True)
+    rows.append(_total_row("Grand Total", gdf)); types.append("grand")
+    return pd.DataFrame(rows, columns=AVG_COLS), types
