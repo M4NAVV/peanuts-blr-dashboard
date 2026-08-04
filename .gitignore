@@ -13,3 +13,4 @@ data/*.xlsx
 # Source-of-truth review report snapshots (reference only, not app data).
 26_27_GROWTH DEGROWTH _SHEET*.md
 to develop.xlsx
+*.py.bak

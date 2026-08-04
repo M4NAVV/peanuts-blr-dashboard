@@ -422,7 +422,7 @@ def _cr(x) -> str:
 _PF_TABS = ["📈 MW Data", "🧾 GD Sheet", "🏷️ Brand-wise GD", "🗺️ Loc-wise GD",
             "📐 Average", "📊 Executive", "📋 MTD / YTD Report", "📉 Degrowth",
             "🎯 Day Targets", "🥧 Contribution", "🏙️ City-wise G/D", "🏬 Stores",
-            "📅 Monthly"]
+            "📅 Monthly", "📄 Report PDF"]
 
 
 def render_portfolio():
@@ -876,6 +876,36 @@ def render_portfolio():
             "sales data (current FY updates daily); **FY24-25 and earlier** from "
             "the workbook. The current FY shows the East & NE / South split.")
         st.markdown(PL.mw_data_html(PL.mw_data(pf_all)), unsafe_allow_html=True)
+
+    # ===================== Report PDF (the five sheets, one shareable file) ==== #
+    elif nav == "📄 Report PDF":
+        import portfolio_pdf as PPDF
+        st.subheader("📄 Portfolio report (PDF)")
+        st.caption(
+            "Compiles the five workbook sheets — **MW Data, GD Sheet, Brand-wise, "
+            "Loc-wise, Average** — into one shareable, print-clean PDF. The four "
+            "G/D sheets honour the current sidebar filters and the date below; "
+            "MW Data always covers the whole portfolio (like its tab).")
+        _dmin, _dmax = pf["date"].min().date(), pf["date"].max().date()
+        pdf_asof = pd.Timestamp(st.date_input(
+            "As of", value=_dmax, min_value=_dmin, max_value=_dmax, key="pf_pdf_asof"))
+        basis = f"Live to {pdf_asof:%d %b %Y}"
+        if st.button("🧾 Generate PDF", key="pf_pdf_gen", type="primary",
+                     use_container_width=True):
+            with st.spinner("Building the report pack…"):
+                try:
+                    st.session_state["pf_pdf"] = PPDF.build(pf, pf_all, pdf_asof, basis)
+                    st.session_state["pf_pdf_name"] = (
+                        f"peanuts_portfolio_{pdf_asof:%Y%m%d}.pdf")
+                except Exception as e:                    # surface, don't crash tab
+                    st.session_state["pf_pdf"] = None
+                    st.error(f"Could not build the PDF: {e}")
+        if st.session_state.get("pf_pdf"):
+            st.success("PDF ready.")
+            st.download_button(
+                "⬇ Download PDF", st.session_state["pf_pdf"],
+                file_name=st.session_state.get("pf_pdf_name", "portfolio.pdf"),
+                mime="application/pdf", use_container_width=True)
 
 
 # ---- Top-level data mode: whole-Portfolio breadth vs VFL depth ----
