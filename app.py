@@ -419,9 +419,10 @@ def _cr(x) -> str:
     return f"₹{(x or 0) / 1e7:,.2f} Cr"
 
 
-_PF_TABS = ["📊 Executive", "📋 MTD / YTD Report", "🧾 GD Sheet", "🏷️ Brand-wise GD",
-            "🗺️ Loc-wise GD", "📐 Average", "📉 Degrowth", "🎯 Day Targets",
-            "🥧 Contribution", "🏙️ City-wise G/D", "🏬 Stores", "📅 Monthly", "📈 MW Data"]
+_PF_TABS = ["📈 MW Data", "🧾 GD Sheet", "🏷️ Brand-wise GD", "🗺️ Loc-wise GD",
+            "📐 Average", "📊 Executive", "📋 MTD / YTD Report", "📉 Degrowth",
+            "🎯 Day Targets", "🥧 Contribution", "🏙️ City-wise G/D", "🏬 Stores",
+            "📅 Monthly"]
 
 
 def render_portfolio():

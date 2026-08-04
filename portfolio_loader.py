@@ -597,8 +597,8 @@ def gd_sheet_report(df: pd.DataFrame, asof=None):
 
     # Raw (uncapped) last-year same-month + last-full-fiscal-year totals.
     ly_month_start = asof.replace(day=1) - pd.DateOffset(years=1)
-    ly_asof = asof - pd.DateOffset(years=1)
-    month_ly = g(df[(df["date"] >= ly_month_start) & (df["date"] <= ly_asof)])
+    ly_month_end = ly_month_start + pd.offsets.MonthEnd(0)
+    month_ly = g(df[(df["date"] >= ly_month_start) & (df["date"] <= ly_month_end)])
     fy_year = asof.year if asof.month >= 4 else asof.year - 1
     ly_full = g(df[(df["date"] >= pd.Timestamp(fy_year - 1, 4, 1)) &
                    (df["date"] <= pd.Timestamp(fy_year, 3, 31))])
@@ -856,8 +856,8 @@ def _gd_store_metrics(df: pd.DataFrame, asof: pd.Timestamp) -> dict:
     ytd_ty, ytd_ly = g(ytd_cur), g(ytd_pri)
     day = g(df[df["date"] == asof])
     ly_month_start = asof.replace(day=1) - pd.DateOffset(years=1)
-    ly_asof = asof - pd.DateOffset(years=1)
-    month_ly = g(df[(df["date"] >= ly_month_start) & (df["date"] <= ly_asof)])
+    ly_month_end = ly_month_start + pd.offsets.MonthEnd(0)
+    month_ly = g(df[(df["date"] >= ly_month_start) & (df["date"] <= ly_month_end)])
     fy_year = asof.year if asof.month >= 4 else asof.year - 1
     ly_full = g(df[(df["date"] >= pd.Timestamp(fy_year - 1, 4, 1)) &
                    (df["date"] <= pd.Timestamp(fy_year, 3, 31))])
