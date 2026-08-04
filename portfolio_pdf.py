@@ -21,6 +21,7 @@ from __future__ import annotations
 import io
 import re
 
+import pandas as pd
 from PIL import Image, ImageDraw
 
 from imaging import _fonts, _LOCK
@@ -72,13 +73,8 @@ COL_CAP = _px(320)   # max data width before a column stops growing
 
 def _fmt_in(x, dec=2) -> str:
     """Indian digit grouping (1,69,709.00), matching app.fmt_in."""
-    if x is None:
+    if x is None or (not isinstance(x, str) and pd.isna(x)):
         return "—"
-    try:
-        if x != x:                    # NaN
-            return "—"
-    except TypeError:
-        return str(x)
     neg = float(x) < 0
     x = abs(float(x))
     s = f"{x:.{dec}f}"
@@ -131,13 +127,10 @@ def _measure_table(df, *, money=(), pct=(), sign=(), money_dp=0,
         if c in money:
             return _fmt_in(v, money_dp)
         if c in pct:
-            try:
-                return "—" if v != v else f"{float(v):,.2f}%"
-            except (TypeError, ValueError):
-                return "—" if v in (None, "") else str(v)
-        if v is None or (isinstance(v, float) and v != v):
-            return ""
-        return str(v)
+            return "—" if pd.isna(v) else f"{float(v):,.2f}%"
+        if isinstance(v, str):
+            return v
+        return "" if pd.isna(v) else str(v)
 
     txt = [[cell_text(c, df.iloc[i][c]) for c in cols] for i in range(len(df))]
     is_num = [c in money or c in pct for c in cols]
@@ -356,7 +349,8 @@ def _mw_image(mw, *, font_px=19, header_px=17, gap=None, block_gap=None):
 # --------------------------------------------------------------------------- #
 # Page composition — constant frame, uniform width
 # --------------------------------------------------------------------------- #
-def _compose(content, section, asof_label, page_no, total, page_w):
+def _compose(content, section, asof_label, page_no, total, page_w,
+             footer_right="Peanuts Retail · Portfolio"):
     """Place `content` onto a page of width `page_w`: constant maroon frame at a
     fixed inset, a section-header band, the content centred, and a footer."""
     reg, bold = _ft(21)
@@ -396,13 +390,15 @@ def _compose(content, section, asof_label, page_no, total, page_w):
     fy = y1 - FRAME - FOOTER_H
     d.line([ix, fy + _px(8), x1 - FRAME - PAD, fy + _px(8)], fill=LINE, width=1)
     d.text((ix, fy + _px(18)), f"Page {page_no} of {total}", font=sml, fill=MUTED)
-    right = "Peanuts Retail · Portfolio"
+    right = footer_right
     rw = scratch.textlength(right, font=smlb)
     d.text((x1 - FRAME - PAD - rw, fy + _px(18)), right, font=smlb, fill=MAROON)
     return img
 
 
-def _cover(page_w, asof, basis_label, scope_rows):
+def _cover(page_w, asof, basis_label, scope_rows,
+           title="Peanuts Retail — Portfolio Report",
+           subtitle="Whole portfolio · Growth / Degrowth pack"):
     reg, bold = _ft(26)
     big, _ = _ft(58)
     mid, _ = _ft(30)
@@ -421,8 +417,8 @@ def _cover(page_w, asof, basis_label, scope_rows):
     block_h = _px(78) + _px(52) + _px(26) + len(scope_rows) * line_h
     ix = x0 + FRAME + PAD + _px(30)
     y = y0 + FRAME + max(_px(70), (page_h - 2 * (MARGIN + FRAME) - block_h) // 2)
-    d.text((ix, y), "Peanuts Retail — Portfolio Report", font=big, fill=MAROON); y += _px(84)
-    d.text((ix, y), "Whole portfolio · Growth / Degrowth pack", font=mid, fill=DARK); y += _px(54)
+    d.text((ix, y), title, font=big, fill=MAROON); y += _px(84)
+    d.text((ix, y), subtitle, font=mid, fill=DARK); y += _px(54)
     d.line([ix, y, x1 - FRAME - PAD - _px(30), y], fill=LINE, width=1); y += _px(28)
     lw = max((scratch.textlength(l, font=bold) for l, _ in scope_rows), default=0)
     for label, value in scope_rows:

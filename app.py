@@ -1252,14 +1252,15 @@ def render_gd_table(disp, label_cols, key, region_grouped=False):
     return table
 
 
-def gd_basis_control(key, picker_date):
+def gd_basis_control(key, picker_date, index=0):
     """Renders the 'Live to-date / Month-end review' toggle shared by the G/D
     tabs and returns the resolved as-of date. Month-end review snaps to the last
     day of the month *before* the picker's month, reproducing a monthly review
-    sheet (takeover-anchoring is unchanged either way)."""
+    sheet (takeover-anchoring is unchanged either way). `index` sets the default
+    (0 = Live, 1 = Month-end)."""
     basis = st.radio(
         "As-of basis", ["Live to-date", "Month-end review"], horizontal=True,
-        key=key, label_visibility="collapsed",
+        key=key, index=index, label_visibility="collapsed",
         help="Live = up to the date picker. Month-end = the last completed "
              "month, matching the monthly G/D sheet.")
     d = pd.Timestamp(picker_date)
@@ -1538,6 +1539,7 @@ def render_productivity(pr, key):
 # rerun). The 7 main reports show as pills; the rest live in a "More" overflow
 # menu. Selection lives in session_state (active_nav), so it PERSISTS on rerun.
 _TAB_LABELS = [
+    "🧾 VFL G/D", "🧾 VFL Gender", "📄 Report PDF",
     "📋 MTD / YTD Report", "📉 Degrowth",
     "🧑‍🤝‍🧑 Gender G/D", "🏷️ Brand G/D", "🏬 Store × Brand G/D", "⚖️ Gender Mix",
     "📊 Executive", "🎯 Day Targets", "🏙️ City-wise G/D", "📅 Monthly Contribution",
@@ -1786,6 +1788,80 @@ if nav == "🏬 Store × Brand G/D":
         st.info("No data for the current filters.")
     else:
         render_store_brand_gd(sb, f"store_brand_gd_{sb_asof:%Y%m%d}")
+
+# =========================================================================== #
+# VFL G/D — the workbook "VFL" sheet, 1:1.
+# =========================================================================== #
+if nav == "🧾 VFL G/D":
+    st.subheader("VFL — Growth / Degrowth")
+    st.caption("The workbook **VFL** sheet, 1:1. Region → Master Location → Store "
+               "→ Gender (MEN/WOMEN) → brand-line — Manyavar (incl. Manthan) / "
+               "Twamev Men / Mohey (incl. Mebaz) / Twamev-Women — with MEN/WOMEN, "
+               "store, location, region and grand totals. Takeover-anchored; "
+               "red = degrowth.")
+    v_asof = gd_basis_control("vfl_gd_basis", end_d, index=1)   # month-end matches the sheet
+    disp, rtypes = L.vfl_gd_report(df_exec, asof=v_asof, gen_date=pd.Timestamp(end_d))
+    if disp.empty:
+        st.info("No data for the current filters.")
+    else:
+        st.markdown(
+            styled_report_html(disp, money_cols=L.VFL_GD_MONEY, pct_cols=L.VFL_GD_PCT,
+                               sign_cols=L.VFL_GD_PCT, row_types=rtypes, compact=True),
+            unsafe_allow_html=True)
+
+# =========================================================================== #
+# VFL GENDER — the workbook "VFL_GENDER" sheet, 1:1 (gender contribution %).
+# =========================================================================== #
+if nav == "🧾 VFL Gender":
+    st.subheader("VFL — Gender Contribution %")
+    st.caption("The workbook **VFL_GENDER** sheet, 1:1. Region → Master Location "
+               "→ Location → Store → gender, each gender's share within its store; "
+               "the store-total row = the store's share of its **location**; region "
+               "totals = the region's share of the grand. Below: the Region × "
+               "Gender summary.")
+    vg_asof = gd_basis_control("vfl_gender_basis", end_d, index=1)   # month-end matches the sheet
+    main, mrt, summ, srt = L.vfl_gender_report(df_exec, asof=vg_asof)
+    if main.empty:
+        st.info("No data for the current filters.")
+    else:
+        st.markdown(
+            styled_report_html(main, money_cols=L.VFL_GENDER_MONEY,
+                               pct_cols=L.VFL_GENDER_PCT, row_types=mrt, compact=True),
+            unsafe_allow_html=True)
+        st.markdown("##### Region × Gender summary")
+        st.markdown(
+            styled_report_html(summ, money_cols=L.VFL_GENDER_MONEY,
+                               pct_cols=L.VFL_GENDER_PCT, row_types=srt),
+            unsafe_allow_html=True)
+
+# =========================================================================== #
+# REPORT PDF — the two VFL sheets compiled into one shareable file.
+# =========================================================================== #
+if nav == "📄 Report PDF":
+    import vfl_pdf
+    st.subheader("📄 VFL report (PDF)")
+    st.caption("Compiles the **VFL G/D** and **VFL Gender** sheets into one "
+               "shareable, print-clean PDF (honours the current sidebar filters). "
+               "Month-end basis matches the monthly review sheet.")
+    p_asof = gd_basis_control("vfl_pdf_basis", end_d, index=1)
+    p_basis = (f"Month-end review — {p_asof:%B %Y}" if p_asof != pd.Timestamp(end_d)
+               else f"Live to {p_asof:%d %b %Y}")
+    if st.button("🧾 Generate PDF", key="vfl_pdf_gen", type="primary",
+                 use_container_width=True):
+        with st.spinner("Building the VFL report…"):
+            try:
+                st.session_state["vfl_pdf"] = vfl_pdf.build(
+                    df_exec, asof=p_asof, gen_date=pd.Timestamp(end_d), basis_label=p_basis)
+                st.session_state["vfl_pdf_name"] = f"peanuts_vfl_{p_asof:%Y%m%d}.pdf"
+            except Exception as e:                        # surface, don't crash tab
+                st.session_state["vfl_pdf"] = None
+                st.error(f"Could not build the PDF: {e}")
+    if st.session_state.get("vfl_pdf"):
+        st.success("PDF ready.")
+        st.download_button(
+            "⬇ Download PDF", st.session_state["vfl_pdf"],
+            file_name=st.session_state.get("vfl_pdf_name", "vfl_report.pdf"),
+            mime="application/pdf", use_container_width=True)
 
 # =========================================================================== #
 # GENDER MIX — contribution %  (Region × Gender + store detail)

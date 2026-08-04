@@ -236,7 +236,14 @@ def _apply_takeover_filter(df: pd.DataFrame) -> pd.DataFrame:
     controls how far back the comparison baseline reaches. Stores without a mapped
     takeover date keep all rows."""
     tk = takeover_map()
-    start = df[COL_STORE_LABEL].map(tk) - pd.DateOffset(years=1)
+    base = df[COL_STORE_LABEL].map(tk) - pd.DateOffset(years=1)   # takeover − 1yr
+    # Reach back to the START of the fiscal year (Apr–Mar) containing that date, so
+    # a store taken over mid-year (e.g. South, 19 Apr) keeps its FULL prior fiscal
+    # year as the YoY baseline — otherwise 'LY Full Sales' loses 1–18 Apr. The
+    # takeover-anchored current-year windows (report_frames) are unchanged.
+    fy_y = base.dt.year.where(base.dt.month >= 4, base.dt.year - 1)
+    start = pd.to_datetime(
+        dict(year=fy_y.fillna(1900).astype(int), month=4, day=1)).where(base.notna())
     keep = start.isna() | (df["date"] >= start)
     return df[keep].reset_index(drop=True)
 
@@ -970,6 +977,26 @@ def brand_line(df: pd.DataFrame) -> pd.Series:
     out[d.eq("MEBAZ")] = "MEBAZ"
     return out
 
+
+# The workbook's VFL sheet shows only FOUR brand-lines: the minor men's line
+# (Manthan) folds into Manyavar and the minor women's line (Mebaz) into Mohey.
+BRANDLINE_VFL_ORDER = ["MANYAVAR", "TWAMEV MEN", "MOHEY", "TWAMEV-WOMEN"]
+BRANDLINE_VFL_GENDER = {"MANYAVAR": "MEN", "TWAMEV MEN": "MEN",
+                        "MOHEY": "WOMEN", "TWAMEV-WOMEN": "WOMEN"}
+
+
+def brand_line_vfl(df: pd.DataFrame) -> pd.Series:
+    """Coarse brand-line matching the workbook VFL sheet (4 lines): MANYAVAR /
+    TWAMEV MEN / MOHEY / TWAMEV-WOMEN. Manthan folds into Manyavar, Mebaz into
+    Mohey, anything else into Manyavar."""
+    d = df[COL_DIVISION].astype(str).str.upper()
+    out = pd.Series("MANYAVAR", index=df.index)
+    out[d.str.contains("TWAMEV-MEN", regex=False)] = "TWAMEV MEN"
+    out[d.str.startswith("MOHEY")] = "MOHEY"
+    out[d.eq("MEBAZ")] = "MOHEY"
+    out[d.str.contains("TWAMEV-WOMEN", regex=False)] = "TWAMEV-WOMEN"
+    return out
+
 # Column layout mirroring the source pivot (BRAND_WISE_GD / VFL tabs).
 GD_VALUE_COLS = ["YTD LY", "YTD TY", "MTD LY", "MTD TY", "Day Sales",
                  "Month Sale LY", "Projected MTD", "LY Full Sales",
@@ -1167,6 +1194,243 @@ def store_brand_gd(df: pd.DataFrame, asof=None, anchor_takeover: bool = True) ->
 _GD_OUT_COLS = ["YTD LY", "YTD TY", "GD YTD %", "MTD LY", "MTD TY", "GD MTD %",
                 "Day Sales", "Month Sale LY", "Projected MTD", "LY Full Sales",
                 "Projected YTD"]
+
+
+# --------------------------------------------------------------------------- #
+# VFL sheet (exact workbook format) — Region → Master Location → Store → Gender
+# → brand-line, with the full tier of subtotals. Matches the "VFL" sheet 1:1.
+# --------------------------------------------------------------------------- #
+VFL_GD_COLS = [
+    "Region", "Master Location", "STORE CODE", "MEN/WOMEN/KIDS", "STORE NAME",
+    "LOCATION", "DOO", "Sum of YTD_LY", "Sum of YTD_TY", "Sum of GD_YTD_%",
+    "Sum of MTD_LY", "Sum of MTD_TY", "Sum of GD_MTD_%", "Sum of DAY SALE FIGURE",
+    "Sum of PROJECTED MTD", "Sum of MONTH SALE LY", "Sum of PROJECTED YTD",
+    "Sum of LY FULL SALES",
+]
+VFL_GD_MONEY = ["Sum of YTD_LY", "Sum of YTD_TY", "Sum of MTD_LY", "Sum of MTD_TY",
+                "Sum of DAY SALE FIGURE", "Sum of PROJECTED MTD",
+                "Sum of MONTH SALE LY", "Sum of PROJECTED YTD", "Sum of LY FULL SALES"]
+VFL_GD_PCT = ["Sum of GD_YTD_%", "Sum of GD_MTD_%"]
+# brand-line detail column (loader name) -> workbook "Sum of ..." money column
+_VFL_SUM_SRC = {"YTD LY": "Sum of YTD_LY", "YTD TY": "Sum of YTD_TY",
+                "MTD LY": "Sum of MTD_LY", "MTD TY": "Sum of MTD_TY",
+                "Day Sales": "Sum of DAY SALE FIGURE",
+                "Projected MTD": "Sum of PROJECTED MTD",
+                "Month Sale LY": "Sum of MONTH SALE LY",
+                "Projected YTD": "Sum of PROJECTED YTD",
+                "LY Full Sales": "Sum of LY FULL SALES"}
+_VFL_SUM_COLS = list(_VFL_SUM_SRC)
+
+
+def _vfl_gd_frac(ty, ly):
+    """Growth %, percent units; blank (NaN) when there's no last-year base."""
+    return (ty - ly) / ly * 100 if ly else float("nan")
+
+
+def vfl_gd_report(df: pd.DataFrame, asof=None, gen_date=None):
+    """The VFL sheet, matching the workbook 1:1. Region → Master Location → Store
+    → Gender (MEN/WOMEN) → brand-line detail, with MEN/WOMEN, store, location,
+    region and grand totals. Returns (display_df, row_types).  Group labels show
+    once per group (blank on repeats), exactly like the Excel outline."""
+    asof = as_of(df) if asof is None else pd.Timestamp(asof)
+    # `gen_date` = the day the review is run (the live current date). The workbook
+    # sums through `asof` (month-end) but PROJECTS on the gen-date elapsed days.
+    gen_date = as_of(df) if gen_date is None else pd.Timestamp(gen_date)
+
+    # 4-line brand detail per store (Manthan→Manyavar, Mebaz→Mohey), takeover-anchored.
+    d = df.copy()
+    d["_blv"] = brand_line_vfl(d)
+    sb = _gd_by(d, [COL_STORE_LABEL, "_blv"], asof=asof)
+    master = load_store_master()[["tableau_name", "code", "location", "city",
+                                  "region", "takeover_date"]]
+    sb = sb.merge(master, left_on=COL_STORE_LABEL, right_on="tableau_name", how="left")
+    sb["Store Code"] = pd.to_numeric(sb["code"], errors="coerce").astype("Int64")
+    sb["Gender"] = sb["_blv"].map(BRANDLINE_VFL_GENDER).fillna("MEN")
+    sb["Brand"] = sb["_blv"]
+    sb["Region"] = sb["region"]
+    sb["Master Location"] = sb["city"].astype(str).str.title().replace(
+        {"Kolkata": "Kolkatta"})
+    sb["Location"] = sb["location"]
+    sb["DOO"] = pd.to_datetime(sb["takeover_date"], errors="coerce").dt.strftime("%d-%m-%Y")
+
+    # Projections on the GEN-DATE elapsed days (matches the workbook): MTD over the
+    # (1st-of-review-month → gen date) window projected to the full month; YTD
+    # annualised per store on days since max(FY-start, DOO).
+    import calendar
+    rm_start = asof.replace(day=1)
+    dim = calendar.monthrange(asof.year, asof.month)[1]
+    elapsed_mtd = max((gen_date - rm_start).days + 1, 1)
+    fy_year = asof.year if asof.month >= 4 else asof.year - 1
+    fy_start = pd.Timestamp(fy_year, 4, 1)
+    _doo = pd.to_datetime(sb["takeover_date"], errors="coerce")
+    store_start = _doo.where(_doo > fy_start, fy_start)
+    elapsed_ytd = ((gen_date - store_start).dt.days + 1).clip(lower=1)
+    sb["Projected MTD"] = sb["MTD TY"] * dim / elapsed_mtd
+    sb["Projected YTD"] = sb["YTD TY"] * 365.0 / elapsed_ytd
+
+    # Drop pure-return / all-zero brand-lines (no positive activity), like the sheet.
+    keep = ((sb["YTD LY"] > 0) | (sb["YTD TY"] > 0)
+            | (sb["MTD LY"] > 0) | (sb["MTD TY"] > 0))
+    sb = sb[keep].reset_index(drop=True)
+
+    rows, types = [], []
+
+    def emit(region, mloc, code, gender, sname, loc, doo, s, rtype):
+        d = dict.fromkeys(VFL_GD_COLS, "")
+        d["Region"], d["Master Location"], d["STORE CODE"] = region, mloc, code
+        d["MEN/WOMEN/KIDS"], d["STORE NAME"], d["LOCATION"], d["DOO"] = gender, sname, loc, doo
+        for src, dst in _VFL_SUM_SRC.items():
+            d[dst] = s[src]
+        d["Sum of GD_YTD_%"] = _vfl_gd_frac(s["YTD TY"], s["YTD LY"])
+        d["Sum of GD_MTD_%"] = _vfl_gd_frac(s["MTD TY"], s["MTD LY"])
+        rows.append(d)
+        types.append(rtype)
+
+    def sums(frame):
+        return {c: float(frame[c].sum()) for c in _VFL_SUM_COLS}
+
+    def rowsum(r):
+        return {c: float(r[c]) for c in _VFL_SUM_COLS}
+
+    for region in [r for r in _REGION_ORDER if r in sb["Region"].unique()]:
+        rdf = sb[sb["Region"] == region]
+        r_pend = region
+        for mloc in sorted(rdf["Master Location"].dropna().unique()):
+            mdf = rdf[rdf["Master Location"] == mloc]
+            m_pend = mloc
+            for code in sorted(c for c in mdf["Store Code"].dropna().unique()):
+                cdf = mdf[mdf["Store Code"] == code]
+                c_pend = str(int(code))
+                for gender in ["MEN", "WOMEN"]:
+                    gdf = cdf[cdf["Gender"] == gender].sort_values(
+                        by="Brand", key=lambda s: s.map(
+                            {b: i for i, b in enumerate(BRANDLINE_VFL_ORDER)}).fillna(99))
+                    if gdf.empty:
+                        continue
+                    g_pend = gender
+                    for _, br in gdf.iterrows():
+                        emit(r_pend, m_pend, c_pend, g_pend, br["Brand"],
+                             br["Location"], br["DOO"], rowsum(br), "store")
+                        r_pend = m_pend = c_pend = g_pend = ""
+                    emit("", "", "", f"{gender} Total", "", "", "", sums(gdf), "storetotal")
+                emit("", "", f"{int(code)} Total", "", "", "", "", sums(cdf), "subtotal")
+            emit("", f"{mloc} Total", "", "", "", "", "", sums(mdf), "subtotal")
+        emit(f"{region} Total", "", "", "", "", "", "", sums(rdf), "block")
+    emit("Grand Total", "", "", "", "", "", "", sums(sb), "grand")
+
+    return pd.DataFrame(rows, columns=VFL_GD_COLS), types
+
+
+# --------------------------------------------------------------------------- #
+# VFL_GENDER sheet (exact) — gender contribution %. Region → Master Location →
+# Location → Store → gender rows, {code} Total = store share of its location,
+# region totals = region share of grand; plus a Region × Gender summary block.
+# --------------------------------------------------------------------------- #
+VFL_GENDER_COLS = ["Region", "Master Location", "LOCATION", "STORE CODE",
+                   "MEN/WOMEN/KIDS", "Sum of MTD_TY", "GENDER CONTRIBUTION MTD",
+                   "Sum of YTD_TY", "GENDER CONTRIBUTION YTD"]
+VFL_GENDER_MONEY = ["Sum of MTD_TY", "Sum of YTD_TY"]
+VFL_GENDER_PCT = ["GENDER CONTRIBUTION MTD", "GENDER CONTRIBUTION YTD"]
+VFL_GSUM_COLS = ["Region", "MEN/WOMEN/KIDS", "Sum of MTD_TY", "GENDER CONTRIBUTION MTD",
+                 "Sum of YTD_TY", "GENDER CONTRIBUTION YTD"]
+
+
+def vfl_gender_report(df: pd.DataFrame, asof=None):
+    """The VFL_GENDER sheet, 1:1. Returns (main_df, main_rtypes, summary_df,
+    summary_rtypes). Contribution %: gender share within store; the {code} Total
+    row = that store's share of its LOCATION (so multi-store locations split);
+    region totals = region share of the grand. Summary = Region × Gender."""
+    asof = as_of(df) if asof is None else pd.Timestamp(asof)
+    d = df.copy()
+    d["_g"] = brand_gender(d)
+    mcur, _ = report_frames(d, "MTD", asof=asof)
+    ycur, _ = report_frames(d, "YTD", asof=asof)
+    master = load_store_master()[["tableau_name", "code", "location", "city", "region"]]
+
+    def agg(f):
+        return f.groupby([COL_STORE_LABEL, "_g"])[COL_AMOUNT].sum()
+
+    t = pd.DataFrame({"mtd": agg(mcur), "ytd": agg(ycur)}).fillna(0.0).reset_index()
+    t = t.merge(master, left_on=COL_STORE_LABEL, right_on="tableau_name", how="left")
+    t = t[t["code"].notna()].copy()
+    t["code"] = pd.to_numeric(t["code"], errors="coerce").astype(int)
+    t["Region"] = t["region"]
+    t["Master Location"] = t["city"].astype(str).str.title().replace({"Kolkata": "Kolkatta"})
+    t["Location"] = t["location"]
+    t["__g"] = t["_g"].map({g: i for i, g in enumerate(GENDER_ORDER)}).fillna(9)
+
+    grand_mtd, grand_ytd = t["mtd"].sum(), t["ytd"].sum()
+    st_mtd = t.groupby("code")["mtd"].transform("sum")
+    st_ytd = t.groupby("code")["ytd"].transform("sum")
+    loc_key = ["Region", "Master Location", "Location"]
+    loc_mtd = t.groupby(loc_key)["mtd"].transform("sum")
+    loc_ytd = t.groupby(loc_key)["ytd"].transform("sum")
+    t["g_mtd"] = t["mtd"] / st_mtd.replace(0, pd.NA) * 100          # gender within store
+    t["g_ytd"] = t["ytd"] / st_ytd.replace(0, pd.NA) * 100
+    t["sl_mtd"] = st_mtd / loc_mtd.replace(0, pd.NA) * 100          # store within location
+    t["sl_ytd"] = st_ytd / loc_ytd.replace(0, pd.NA) * 100
+
+    rows, types = [], []
+
+    def emit(reg, mloc, loc, code, gender, mtd, gmtd, ytd, gytd, rtype):
+        rows.append({"Region": reg, "Master Location": mloc, "LOCATION": loc,
+                     "STORE CODE": code, "MEN/WOMEN/KIDS": gender,
+                     "Sum of MTD_TY": mtd, "GENDER CONTRIBUTION MTD": gmtd,
+                     "Sum of YTD_TY": ytd, "GENDER CONTRIBUTION YTD": gytd})
+        types.append(rtype)
+
+    for region in [r for r in _REGION_ORDER if r in t["Region"].unique()]:
+        rdf = t[t["Region"] == region]
+        r_pend = region
+        for mloc in sorted(rdf["Master Location"].dropna().unique()):
+            mdf = rdf[rdf["Master Location"] == mloc]
+            m_pend = mloc
+            # Locations ordered by their lowest store code (keeps same-location
+            # stores adjacent, matching the workbook's pivot order).
+            loc_order = mdf.groupby("Location")["code"].min().sort_values().index
+            for loc in loc_order:
+                ldf = mdf[mdf["Location"] == loc]
+                l_pend = loc
+                for code in sorted(ldf["code"].unique()):
+                    cdf = ldf[ldf["code"] == code].sort_values("__g")
+                    c_pend = str(code)
+                    for _, rr in cdf.iterrows():
+                        emit(r_pend, m_pend, l_pend, c_pend, rr["_g"], rr["mtd"],
+                             rr["g_mtd"], rr["ytd"], rr["g_ytd"], "store")
+                        r_pend = m_pend = l_pend = c_pend = ""
+                    emit("", "", "", f"{code} Total", "", cdf["mtd"].sum(),
+                         cdf["sl_mtd"].iloc[0], cdf["ytd"].sum(), cdf["sl_ytd"].iloc[0],
+                         "subtotal")
+        emit(f"{region} Total", "", "", "", "", rdf["mtd"].sum(),
+             rdf["mtd"].sum() / grand_mtd * 100 if grand_mtd else 0,
+             rdf["ytd"].sum(), rdf["ytd"].sum() / grand_ytd * 100 if grand_ytd else 0,
+             "block")
+    main = pd.DataFrame(rows, columns=VFL_GENDER_COLS)
+
+    # ---- Region × Gender summary ----
+    srows, stypes = [], []
+
+    def semit(reg, gender, mtd, gmtd, ytd, gytd, rtype):
+        srows.append({"Region": reg, "MEN/WOMEN/KIDS": gender, "Sum of MTD_TY": mtd,
+                      "GENDER CONTRIBUTION MTD": gmtd, "Sum of YTD_TY": ytd,
+                      "GENDER CONTRIBUTION YTD": gytd})
+        stypes.append(rtype)
+
+    for region in [r for r in _REGION_ORDER if r in t["Region"].unique()]:
+        rdf = t[t["Region"] == region]
+        rmtd, rytd = rdf["mtd"].sum(), rdf["ytd"].sum()
+        for g in GENDER_ORDER:
+            gdf = rdf[rdf["_g"] == g]
+            if gdf.empty:
+                continue
+            semit(region, g, gdf["mtd"].sum(),
+                  gdf["mtd"].sum() / rmtd * 100 if rmtd else 0, gdf["ytd"].sum(),
+                  gdf["ytd"].sum() / rytd * 100 if rytd else 0, "store")
+        semit(f"{region} Total", "", rmtd, rmtd / grand_mtd * 100 if grand_mtd else 0,
+              rytd, rytd / grand_ytd * 100 if grand_ytd else 0, "block")
+    semit("Grand Total", "", grand_mtd, 100.0, grand_ytd, 100.0, "grand")
+    summary = pd.DataFrame(srows, columns=VFL_GSUM_COLS)
+    return main, types, summary, stypes
 
 
 def loc_store_gd(df: pd.DataFrame, asof=None, anchor_takeover: bool = True) -> pd.DataFrame:
