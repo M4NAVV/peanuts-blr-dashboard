@@ -1,3 +1,19 @@
+---
+title: Peanuts VFL Retail Dashboard
+emoji: 📊
+colorFrom: red
+colorTo: gray
+sdk: streamlit
+sdk_version: 1.59.0
+app_file: app.py
+pinned: false
+python_version: "3.11"
+---
+
+<!-- The YAML block above configures Hugging Face Spaces (free CPU · 16 GB RAM).
+     Set SHEET_CSV_URL and PORTFOLIO_CSV_URL as Space Secrets (Settings → Secrets);
+     the loaders read them from the environment. -->
+
 # Peanuts (Manyavar) — Retail Sales Dashboard
 
 A self-serve KPI dashboard over the daily Tableau sales export for the full
