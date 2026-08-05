@@ -1,4 +1,8 @@
 streamlit==1.59.0
+# Pin Streamlit's ASGI server deps — a newer Starlette changed GZipResponder's
+# signature and 500s every request under streamlit 1.59 (HF Docker build hit this).
+starlette==1.3.1
+uvicorn==0.50.2
 pandas==2.2.3
 numpy==1.26.4
 plotly==5.24.1
