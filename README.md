@@ -3,11 +3,9 @@ title: Peanuts VFL Retail Dashboard
 emoji: 📊
 colorFrom: red
 colorTo: gray
-sdk: streamlit
-sdk_version: 1.59.0
-app_file: app.py
+sdk: docker
+app_port: 8501
 pinned: false
-python_version: "3.11"
 ---
 
 <!-- The YAML block above configures Hugging Face Spaces (free CPU · 16 GB RAM).
