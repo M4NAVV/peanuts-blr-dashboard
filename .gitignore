@@ -17,3 +17,6 @@ to develop.xlsx
 
 # Client reference reports — never commit.
 reference_*.pdf
+
+# Locally rendered report PDFs — build output, not source (~20 MB per run).
+_pdf_*/
