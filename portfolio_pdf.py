@@ -65,7 +65,8 @@ _ROW_BG = {
 VFL_ROW_BG = {
     "storetotal": ((253, 233, 217), True),   # #FDE9D9 peach — MEN/WOMEN totals
     "subtotal":   ((149, 179, 215), True),   # #95B3D7 blue  — {code} totals
-    "block":      ((146, 208, 80), True),    # #92D050 green — location totals
+    "loctotal":   ((146, 208, 80), True),    # #92D050 green — location totals
+    "block":      ((146, 208, 80), True),    # region totals
     "grand":      (TOTAL_BG, True),          # #FFFF00 yellow — grand
 }
 
@@ -103,10 +104,12 @@ PORTFOLIO_CELL_RULES = (
     (DAY_SALE_COL, lambda v: v < DAY_SALE_FLOOR, NEG_BG, {"store"}),
 )
 
-# VFL G/D: a higher bar, applied across the whole day-sale column.
+# VFL G/D: a higher bar, on the store-total row.
 VFL_DAY_SALE_FLOOR = 50000
+# Fires on the {code} Total row only — the store's whole day, not each
+# brand-line and not the location/region rollups above it.
 VFL_CELL_RULES = (
-    (DAY_SALE_COL, lambda v: v < VFL_DAY_SALE_FLOOR, NEG_BG, None),
+    (DAY_SALE_COL, lambda v: v < VFL_DAY_SALE_FLOOR, NEG_BG, {"subtotal"}),
 )
 
 # --- render scale ---------------------------------------------------------- #

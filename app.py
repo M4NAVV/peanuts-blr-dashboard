@@ -281,7 +281,7 @@ def styled_report_html(disp, money_cols=(), pct_cols=(), sign_cols=(),
     trs = []
     for i in range(len(disp)):
         t = row_types[i] if row_types is not None else "store"
-        if t == "subtotal":
+        if t in ("subtotal", "loctotal"):
             rbg, fw = "#F6D9D5", "700"
         elif t == "grand":
             rbg, fw = "#CDE8CF", "800"

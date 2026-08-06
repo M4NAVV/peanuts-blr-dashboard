@@ -1380,7 +1380,11 @@ def vfl_gd_report(df: pd.DataFrame, asof=None, gen_date=None):
                         r_pend = m_pend = c_pend = g_pend = ""
                     emit("", "", "", f"{gender} Total", "", "", "", sums(gdf), "storetotal")
                 emit("", "", f"{int(code)} Total", "", "", "", "", sums(cdf), "subtotal")
-            emit("", f"{mloc} Total", "", "", "", "", "", sums(mdf), "subtotal")
+            # Location totals get their own type so consumers can tell them
+            # apart from the {code} Total rows above (both used to be
+            # "subtotal"): the workbook colours them differently, and the PDF's
+            # under-50k day-sale rule must fire on the STORE total only.
+            emit("", f"{mloc} Total", "", "", "", "", "", sums(mdf), "loctotal")
         emit(f"{region} Total", "", "", "", "", "", "", sums(rdf), "block")
     emit("Grand Total", "", "", "", "", "", "", sums(sb), "grand")
 
