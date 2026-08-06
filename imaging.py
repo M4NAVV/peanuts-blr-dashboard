@@ -36,11 +36,32 @@ _GREEN = (19, 122, 58)
 _WHITE = (255, 255, 255)
 
 
-@lru_cache(maxsize=4)
+# Noto Sans (SIL OFL, licence alongside the file). Chosen on x-height, which is
+# what actually governs how large type *looks* — nominal point size does not.
+# Noto matches DejaVu's x-height exactly while being ~11% narrower, so it is a
+# straight gain rather than a trade. (Source Sans 3 was tried and rejected: 22%
+# narrower, but a 10% smaller x-height, so the letterforms read as shrunken.)
+# It also has tabular figures — numeric columns stay aligned, which Inter fails
+# by default — and, being variable, a real SemiBold. Emphasis at 600 reads as
+# emphasis; DejaVu's only option was a 700 bold heavy enough to make a dense
+# grid read as bands of black. Its semibold is also near-identical in advance
+# width to the regular, so emphasis never reflows a column.
+_FONT_FILE = os.path.join(_FONT_DIR, "NotoSans.ttf")
+_WEIGHT_REG, _WEIGHT_EMPH = "Regular", "SemiBold"
+
+
+@lru_cache(maxsize=16)
 def _fonts(size: int = 22):
-    reg = ImageFont.truetype(os.path.join(_FONT_DIR, "DejaVuSans.ttf"), size)
-    bold = ImageFont.truetype(os.path.join(_FONT_DIR, "DejaVuSans-Bold.ttf"), size)
-    return reg, bold
+    """(regular, emphasis) at `size`. Two independent font objects — a variation
+    is set on the instance, so they must not be shared."""
+    def at(weight):
+        f = ImageFont.truetype(_FONT_FILE, size)
+        try:
+            f.set_variation_by_name(weight)
+        except Exception:                     # static build / no varfont support
+            pass
+        return f
+    return at(_WEIGHT_REG), at(_WEIGHT_EMPH)
 
 
 def _hex(c: str):

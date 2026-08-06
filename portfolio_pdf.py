@@ -10,11 +10,13 @@ cache and render lock from ``imaging`` — no matplotlib (which crashed the depl
 Design goals (in priority order): readability, then a CONSTANT thin frame with
 identical margins on every page. Every page is rendered to the SAME width (the
 widest sheet drives it); narrower sheets are centred inside the frame, so the
-border is visually constant as you flip through. Page height follows content.
+border is visually constant as you flip through. Pages share one height too, so
+the document doesn't change size as you scroll.
 
-Everything is rendered at ``_S``× the logical pixel size (supersampling) and the
-PDF is saved at a matching resolution, so the physical layout is unchanged but
-the text is high-definition / crisp.
+Text is rasterised exactly once, at final size, and the page is never resampled
+(see ``_S``) — resampling is what makes cells look soft. Margins are therefore
+kept tight and the point size large, since on-page sharpness is a function of
+how many pixels each glyph gets.
 """
 from __future__ import annotations
 
@@ -39,17 +41,62 @@ MUTED = (110, 96, 82)
 RED = (192, 20, 60)
 GREEN = (19, 122, 58)
 WHITE = (255, 255, 255)
-LINE = (231, 225, 214)               # hairline / gridlines
-_ROW_BG = {                          # row-type → (background, bold?)
-    "subtotal":   ((246, 217, 213), True),
-    "grand":      ((205, 232, 207), True),
-    "storetotal": ((251, 238, 230), True),
-    "block":      ((214, 228, 245), True),
-}
-_ZEBRA = ((255, 255, 255), (250, 246, 239))
+LINE = (231, 225, 214)               # hairline (frame furniture, not the table)
 
-# --- supersampling: render at _S× pixels for crisp, high-definition text ---- #
-_S = 2
+# --- table palette, lifted from the client's GROWTH DEGROWTH workbook print -- #
+# Sampled directly off the reference PDF, so these are their exact Excel fills.
+HDR_BG = (218, 238, 243)             # #DAEEF3 pale blue — column headers
+TOTAL_BG = (255, 255, 0)             # #FFFF00 yellow  — total / subtotal rows
+NEG_BG = (255, 0, 0)                 # #FF0000 red     — negative % cells
+GRID = (99, 99, 99)                  # full gridline, every cell
+INK = (0, 0, 0)                      # body text
+
+# Row-type → (background, bold?). The workbook highlights every total tier the
+# same yellow on the GD/Brand/Loc/Average sheets.
+_ROW_BG = {
+    "subtotal":   (TOTAL_BG, True),
+    "grand":      (TOTAL_BG, True),
+    "storetotal": (TOTAL_BG, True),
+    "block":      (TOTAL_BG, True),
+}
+
+# The VFL sheets in the same workbook use a graded tier palette instead of flat
+# yellow. Pass this as `row_bg=` to render those the way their VFL pages look.
+VFL_ROW_BG = {
+    "storetotal": ((253, 233, 217), True),   # #FDE9D9 peach — MEN/WOMEN totals
+    "subtotal":   ((149, 179, 215), True),   # #95B3D7 blue  — {code} totals
+    "block":      ((146, 208, 80), True),    # #92D050 green — location totals
+    "grand":      (TOTAL_BG, True),          # #FFFF00 yellow — grand
+}
+
+_BODY_BG = (255, 255, 255)           # plain white body — no zebra banding
+
+# --- output sizing --------------------------------------------------------- #
+# The page is declared A4-landscape-wide whatever its pixel width: the save
+# resolution is derived from the two, so more pixels means higher DPI rather
+# than a bigger sheet of paper. Pages are NOT resampled (see _S) — that was the
+# source of the blur — so the pixel width is whatever the widest sheet needs.
+PAGE_PT_W = 842.0                    # A4 landscape width, points
+MAX_PX_W = 6500                      # hard safety cap only. Deliberately far
+                                     # above any real page: tripping it means
+                                     # resampling, and resampling means blur.
+                                     # If a sheet ever approaches it, cut
+                                     # `font_px` — do NOT let it resample.
+# Columns rendered bold in the body (the workbook bolds the store identity).
+BOLD_COLS = {"STORE NAME MAIN", "STORE NAME", "STORE CODE", "PARENT",
+             "MEN/WOMEN/KIDS", "Region", "Master Location"}
+# Growth cells already carry a solid red fill when negative; bolding them too
+# makes a dense page read as bands of black. Off by default.
+BOLD_SIGN_CELLS = False
+
+# --- render scale ---------------------------------------------------------- #
+# _S used to be 2 (supersample), with the finished page resampled DOWN to fit a
+# pixel cap — a net scale of ~1.09 reached via two resampling passes. That second
+# pass is what made cells look soft: downscaling throws away FreeType's hinting,
+# so stems land between pixels and 1px gridlines smear to grey. We now render
+# ONCE, at final size, and never resample. Sharpness comes from glyph pixel size,
+# which we buy with tight margins and a larger point size instead.
+_S = 1
 
 
 def _px(n) -> int:
@@ -57,17 +104,21 @@ def _px(n) -> int:
 
 
 def _ft(size):
-    """Fonts at the supersampled size (reg, bold)."""
+    """(regular, emphasis) fonts at `size`, scaled by the render scale."""
     return _fonts(int(round(size * _S)))
 
 
 # --- page geometry (logical px, scaled by _S at use) ----------------------- #
-MARGIN = _px(42)     # white gap from page edge to the frame
+MARGIN = _px(14)     # white gap from page edge to the frame (tight: the table
+                     # earns the width, and width is what buys legible type)
 FRAME = _px(2)       # frame thickness (constant, narrow)
-PAD = _px(24)        # frame → content padding
+PAD = _px(10)        # frame → content padding
 HEADER_H = _px(76)   # section-header band height
 FOOTER_H = _px(48)   # footer band height
-PAD_X, PAD_Y = _px(16), _px(10)   # table cell padding
+# Cell padding. PAD_X is bought at the expense of legibility: with ~18 columns,
+# every pixel of side padding costs 36px of page width, and page width is what
+# apparent text size is measured against. Kept tight for that reason.
+PAD_X, PAD_Y = _px(9), _px(10)
 COL_CAP = _px(320)   # max data width before a column stops growing
 
 
@@ -107,13 +158,15 @@ def _wrap(draw, text, font, max_w):
 # --------------------------------------------------------------------------- #
 # Generic report table → image
 # --------------------------------------------------------------------------- #
-# Rows of body per page. The maroon column header is repeated at the top of
-# every page (see _render_chunk), so you never lose the column labels mid-report.
-ROWS_PER_PAGE = 34
+# Rows of body per page. The pale-blue column header repeats at the top of every
+# page (see _render_chunk), so you never lose the column labels mid-report. The
+# count is tuned so a full page lands near A4-landscape proportions with the
+# current typeface — a narrower face needs fewer rows to stay that shape.
+ROWS_PER_PAGE = 35
 
 
 def _measure_table(df, *, money=(), pct=(), sign=(), money_dp=0,
-                   font_px=21, header_px=19):
+                   font_px=32, header_px=28):
     """Measure a report table ONCE — formatted cells, column widths, wrapped
     header layout — so every paginated chunk shares identical columns. Returns a
     dict consumed by `_render_chunk`."""
@@ -136,9 +189,11 @@ def _measure_table(df, *, money=(), pct=(), sign=(), money_dp=0,
     is_num = [c in money or c in pct for c in cols]
 
     # Column widths: data drives width (capped); header wraps to that width.
+    # Measure in BOLD — total rows, identity columns and growth cells all render
+    # bold, and bold is wider, so measuring in regular would clip them.
     col_w, hdr_lines = [], []
     for j, c in enumerate(cols):
-        data_w = max((scratch.textlength(txt[i][j], font=reg)
+        data_w = max((scratch.textlength(txt[i][j], font=bold)
                       for i in range(len(df))), default=0)
         target = min(max(data_w, _px(30)), COL_CAP)
         lines = _wrap(scratch, c, hbold, target)
@@ -157,51 +212,69 @@ def _measure_table(df, *, money=(), pct=(), sign=(), money_dp=0,
                 reg=reg, bold=bold, hbold=hbold, sign=sign)
 
 
-def _render_chunk(m, row_types, rows):
-    """Render the maroon column header + the given body `rows` (indices into the
-    measured table) as one page-content image, so the header repeats per page."""
+def _render_chunk(m, row_types, rows, row_bg=None):
+    """Render the pale-blue column header + the given body `rows` (indices into
+    the measured table) as one page-content image, so the header repeats per
+    page. Styled to the client workbook: white ground, a full grid on every
+    cell, yellow total rows, red-filled negatives. `row_bg` overrides the
+    row-type palette (see VFL_ROW_BG)."""
     W, head_h, row_h, hline_h = m["W"], m["head_h"], m["row_h"], m["hline_h"]
     cols, col_w, txt, is_num = m["cols"], m["col_w"], m["txt"], m["is_num"]
     reg, bold, hbold, sign = m["reg"], m["bold"], m["hbold"], m["sign"]
+    row_bg = _ROW_BG if row_bg is None else row_bg
     scratch = ImageDraw.Draw(Image.new("RGB", (1, 1)))
 
     H = head_h + len(rows) * row_h
     img = Image.new("RGB", (W, H), WHITE)
     d = ImageDraw.Draw(img)
 
-    # header (repeated on every page)
-    d.rectangle([0, 0, W, head_h], fill=MAROON)
+    # header (repeated on every page) — pale blue, dark bold text
+    d.rectangle([0, 0, W, head_h], fill=HDR_BG)
     x = 0
     for j in range(len(cols)):
         lines = m["hdr_lines"][j]
         ty = head_h - PAD_Y - len(lines) * hline_h + _px(2)
         for ln in lines:
             lw = scratch.textlength(ln, font=hbold)
-            d.text((x + (col_w[j] - lw) / 2, ty), ln, font=hbold, fill=WHITE)
+            d.text((x + (col_w[j] - lw) / 2, ty), ln, font=hbold, fill=INK)
             ty += hline_h
         x += col_w[j]
 
     # body
     y = head_h
-    for k, i in enumerate(rows):
+    for i in rows:
         t = row_types[i] if row_types else "store"
-        bg, is_bold = _ROW_BG.get(t, (_ZEBRA[k % 2], False))
+        bg, is_bold = row_bg.get(t, (_BODY_BG, False))
         d.rectangle([0, y, W, y + row_h], fill=bg)
         x = 0
         for j, c in enumerate(cols):
             s = txt[i][j]
-            f = bold if is_bold else reg
-            color = DARK
+            f = bold if (is_bold or c in BOLD_COLS) else reg
+            color = INK
+            # Negative growth is filled red (workbook convention), not just
+            # coloured — it has to read at a glance on a phone.
             if c in sign and s not in ("", "—"):
-                color = RED if s.lstrip().startswith("-") else GREEN
-                f = bold
+                if s.lstrip().startswith("-"):
+                    d.rectangle([x + 1, y + 1, x + col_w[j] - 1, y + row_h - 1],
+                                fill=NEG_BG)
+                if BOLD_SIGN_CELLS:
+                    f = bold
             tw = scratch.textlength(s, font=f)
             cx = x + col_w[j] - PAD_X - tw if is_num[j] else x + PAD_X
             d.text((cx, y + PAD_Y), s, font=f, fill=color)
             x += col_w[j]
-        d.line([0, y + row_h, W, y + row_h], fill=LINE)
         y += row_h
-    d.rectangle([0, 0, W - 1, H - 1], outline=LINE)
+
+    # full grid — every column boundary and row boundary, like the workbook
+    gx = 0
+    for j in range(len(cols)):
+        gx += col_w[j]
+        d.line([gx, 0, gx, H], fill=GRID, width=1)
+    d.line([0, head_h, W, head_h], fill=GRID, width=1)
+    for k in range(len(rows) + 1):
+        gy = head_h + k * row_h
+        d.line([0, gy, W, gy], fill=GRID, width=1)
+    d.rectangle([0, 0, W - 1, H - 1], outline=GRID, width=1)
     return img
 
 
@@ -220,7 +293,8 @@ def _paginate(row_types, budget=ROWS_PER_PAGE):
     return [p for p in pages if p]
 
 
-def _add_sheet(contents, section, disp, rt, *, money, pct, sign, money_dp):
+def _add_sheet(contents, section, disp, rt, *, money, pct, sign, money_dp,
+               row_bg=None):
     """Measure, paginate, and append one (possibly multi-page) sheet. The column
     header repeats on every page; continued pages are labelled 'k/total'."""
     m = _measure_table(disp, money=money, pct=pct, sign=sign, money_dp=money_dp)
@@ -228,13 +302,18 @@ def _add_sheet(contents, section, disp, rt, *, money, pct, sign, money_dp):
     n = len(row_pages)
     for k, rows in enumerate(row_pages):
         label = section if n == 1 else f"{section} — {k + 1}/{n}"
-        contents.append((label, _render_chunk(m, rt, rows)))
+        contents.append((label, _render_chunk(m, rt, rows, row_bg=row_bg)))
 
 
 # --------------------------------------------------------------------------- #
 # MW Data grid → image (3 stacked blocks, FY groups side by side)
 # --------------------------------------------------------------------------- #
-def _mw_image(mw, *, font_px=19, header_px=17, gap=None, block_gap=None):
+def _mw_image(mw, *, blocks=None, font_px=28, header_px=25, gap=None,
+              block_gap=None):
+    """Render MW Data as one image. `blocks` selects which rows of `_MW_BLOCKS`
+    to draw (default: all), so the grid can be split across pages — the recent
+    years get a page to themselves rather than being squeezed in with a decade
+    of history."""
     gap = _px(30) if gap is None else gap
     block_gap = _px(34) if block_gap is None else block_gap
     reg, bold = _ft(font_px)
@@ -295,20 +374,20 @@ def _mw_image(mw, *, font_px=19, header_px=17, gap=None, block_gap=None):
         x0 = 0
         for s in specs:
             gw = sum(s["cw"])
-            # title band
-            d.rectangle([x0, 0, x0 + gw, title_h], fill=MAROON)
+            # title band (pale blue, dark bold — matches the workbook)
+            d.rectangle([x0, 0, x0 + gw, title_h], fill=HDR_BG)
             title = f"MONTHLY CONT SHEET FY {s['fy']}"
             tw = scratch.textlength(title, font=hbold)
             d.text((x0 + (gw - tw) / 2, (title_h - hline_h) / 2 + _px(1)), title,
-                   font=hbold, fill=WHITE)
-            # subheader (gold)
-            d.rectangle([x0, title_h, x0 + gw, title_h + sub_h], fill=GOLD)
+                   font=hbold, fill=INK)
+            # subheader
+            d.rectangle([x0, title_h, x0 + gw, title_h + sub_h], fill=HDR_BG)
             x = x0
             for jc, lines in enumerate(s["hlines"]):
                 ty = title_h + sub_h - PAD_Y - len(lines) * hline_h + _px(2)
                 for ln in lines:
                     lw = scratch.textlength(ln, font=hbold)
-                    d.text((x + (s["cw"][jc] - lw) / 2, ty), ln, font=hbold, fill=GOLD_TXT)
+                    d.text((x + (s["cw"][jc] - lw) / 2, ty), ln, font=hbold, fill=INK)
                     ty += hline_h
                 x += s["cw"][jc]
             # body rows + grand
@@ -316,31 +395,40 @@ def _mw_image(mw, *, font_px=19, header_px=17, gap=None, block_gap=None):
             for ri in range(13):
                 is_grand = ri == 12
                 cells = s["grow"] if is_grand else s["body"][ri]
-                bg = (205, 232, 207) if is_grand else _ZEBRA[ri % 2]
+                bg = TOTAL_BG if is_grand else _BODY_BG
                 d.rectangle([x0, y, x0 + gw, y + row_h], fill=bg)
                 x = x0
                 for jc, (k, typ) in enumerate(s["keys"]):
                     val = cells[jc]
                     f = bold if is_grand else reg
                     if typ == "t":
-                        d.text((x + PAD_X, y + PAD_Y), val, font=f, fill=DARK)
+                        d.text((x + PAD_X, y + PAD_Y), val, font=f, fill=INK)
                     else:
                         tw = scratch.textlength(val, font=f)
                         d.text((x + s["cw"][jc] - PAD_X - tw, y + PAD_Y), val,
-                               font=f, fill=DARK)
+                               font=f, fill=INK)
                     x += s["cw"][jc]
-                d.line([x0, y + row_h, x0 + gw, y + row_h], fill=LINE)
                 y += row_h
-            d.rectangle([x0, 0, x0 + gw - 1, block_h - 1], outline=LINE)
+            # full grid on the block
+            gy0 = title_h
+            for ri in range(14):
+                gy = gy0 + sub_h + (ri - 1) * row_h if ri else gy0
+                d.line([x0, gy, x0 + gw, gy], fill=GRID, width=1)
+            gx = x0
+            for jc in range(len(s["cw"])):
+                gx += s["cw"][jc]
+                d.line([gx, 0, gx, block_h], fill=GRID, width=1)
+            d.rectangle([x0, 0, x0 + gw - 1, block_h - 1], outline=GRID, width=1)
             x0 += gw + gap
         return img
 
-    blocks = [render_block(b) for b in _MW_BLOCKS]
-    W = max(b.width for b in blocks)
-    H = sum(b.height for b in blocks) + block_gap * (len(blocks) - 1)
+    rows = _MW_BLOCKS if blocks is None else blocks
+    imgs = [render_block(b) for b in rows]
+    W = max(b.width for b in imgs)
+    H = sum(b.height for b in imgs) + block_gap * (len(imgs) - 1)
     img = Image.new("RGB", (W, H), WHITE)
     y = 0
-    for b in blocks:
+    for b in imgs:
         img.paste(b, (0, y))
         y += b.height + block_gap
     return img
@@ -350,15 +438,20 @@ def _mw_image(mw, *, font_px=19, header_px=17, gap=None, block_gap=None):
 # Page composition — constant frame, uniform width
 # --------------------------------------------------------------------------- #
 def _compose(content, section, asof_label, page_no, total, page_w,
-             footer_right="Peanuts Retail · Portfolio"):
+             footer_right="Peanuts Retail · Portfolio", page_h=None):
     """Place `content` onto a page of width `page_w`: constant maroon frame at a
-    fixed inset, a section-header band, the content centred, and a footer."""
+    fixed inset, a section-header band, the content centred, and a footer.
+
+    `page_h` forces a uniform page height across the document (short sheets are
+    padded, so the PDF doesn't jump between page sizes as you scroll)."""
     reg, bold = _ft(21)
     tbig, _ = _ft(30)
     sml, smlb = _ft(18)
     scratch = ImageDraw.Draw(Image.new("RGB", (1, 1)))
 
-    page_h = MARGIN + FRAME + HEADER_H + content.height + PAD + FOOTER_H + FRAME + MARGIN
+    natural_h = (MARGIN + FRAME + HEADER_H + content.height + PAD
+                 + FOOTER_H + FRAME + MARGIN)
+    page_h = natural_h if page_h is None else max(page_h, natural_h)
     img = Image.new("RGB", (page_w, page_h), WHITE)
     d = ImageDraw.Draw(img)
 
@@ -396,16 +489,37 @@ def _compose(content, section, asof_label, page_no, total, page_w,
     return img
 
 
+def save_pages(pages) -> bytes:
+    """Save composed pages as one PDF at an A4-landscape page width.
+
+    Pages are written at their native pixel size — no resampling — so glyphs
+    keep the hinting FreeType gave them and hairline gridlines stay one crisp
+    pixel. The declared page width is fixed, so extra pixels raise the DPI
+    rather than growing the paper. Shared by both report builders, so the
+    Portfolio and VFL packs come out at identical physical dimensions.
+    """
+    if pages[0].width > MAX_PX_W:        # safety net; normal pages never hit it
+        k = MAX_PX_W / pages[0].width
+        pages = [p.resize((max(1, round(p.width * k)), max(1, round(p.height * k))),
+                          Image.LANCZOS) for p in pages]
+    resolution = pages[0].width * 72.0 / PAGE_PT_W
+    buf = io.BytesIO()
+    pages[0].save(buf, "PDF", save_all=True, append_images=pages[1:],
+                  resolution=resolution)
+    return buf.getvalue()
+
+
 def _cover(page_w, asof, basis_label, scope_rows,
            title="Peanuts Retail — Portfolio Report",
-           subtitle="Whole portfolio · Growth / Degrowth pack"):
+           subtitle="Whole portfolio · Growth / Degrowth pack",
+           page_h=None):
     reg, bold = _ft(26)
     big, _ = _ft(58)
     mid, _ = _ft(30)
     scratch = ImageDraw.Draw(Image.new("RGB", (1, 1)))
     line_h = reg.getmetrics()[0] + reg.getmetrics()[1] + _px(22)
     # A proper page, not a wide banner: give it real height and centre the block.
-    page_h = max(_px(880), MARGIN * 2 + _px(620))
+    page_h = page_h or max(_px(880), MARGIN * 2 + _px(620))
     img = Image.new("RGB", (page_w, page_h), WHITE)
     d = ImageDraw.Draw(img)
     x0, y0 = MARGIN, MARGIN
@@ -465,8 +579,18 @@ def build(pf, pf_all, asof, basis_label=""):
     with _LOCK:
         contents = []   # (section, content_image)
 
-        # 1) MW Data (whole portfolio, unfiltered)
-        contents.append(("MW Data — Monthly Contribution", _mw_image(mw_data(pf_all))))
+        # 1) MW Data (whole portfolio, unfiltered), split across two pages:
+        # the three current FYs get a page to themselves — that is what anyone
+        # actually reads — and the older years follow on a history page.
+        _mw = mw_data(pf_all)
+        _recent, _older = _MW_BLOCKS[:1], _MW_BLOCKS[1:]
+        _fy_span = f"{_recent[0][0]} – {_recent[0][-1]}"
+        contents.append((f"MW Data — Monthly Contribution · {_fy_span}",
+                         _mw_image(_mw, blocks=_recent)))
+        if _older:
+            _hist = f"{_older[-1][-1]} – {_older[0][0]}"
+            contents.append((f"MW Data — Monthly Contribution · earlier years "
+                             f"({_hist})", _mw_image(_mw, blocks=_older)))
 
         # 2) GD Sheet
         rep, rt = gd_sheet_report(pf, asof=asof)
@@ -508,14 +632,27 @@ def build(pf, pf_all, asof, basis_label=""):
             ("Generated", f"{pd.Timestamp.now(tz='Asia/Kolkata'):%d %b %Y, %H:%M} IST"),
         ]
 
-        # uniform page width = widest content + frame + margins
+        # Paginated tables all come out a similar height (ROWS_PER_PAGE); the MW
+        # Data grid does not paginate and is much taller. Letting it set the
+        # uniform page height would pad every other page with dead space, so any
+        # over-tall content is scaled down to the tallest *table* page instead.
+        tbl_h = max((c.height for lbl, c in contents if not lbl.startswith("MW Data")),
+                    default=0)
+        if tbl_h:
+            contents = [
+                (lbl, c if c.height <= tbl_h else c.resize(
+                    (max(1, round(c.width * tbl_h / c.height)), tbl_h), Image.LANCZOS))
+                for lbl, c in contents]
+
+        # uniform page width = widest content + frame + margins; uniform height
+        # = tallest page, so the document doesn't change size as you scroll.
         page_w = max(c.width for _, c in contents) + 2 * (MARGIN + FRAME + PAD)
-        pages = [_cover(page_w, asof, basis_label, cover_rows)]
+        page_h = max(c.height for _, c in contents) + (
+            MARGIN + FRAME + HEADER_H + PAD + FOOTER_H + FRAME + MARGIN)
+        pages = [_cover(page_w, asof, basis_label, cover_rows, page_h=page_h)]
         total = len(contents) + 1
         for i, (section, content) in enumerate(contents, start=2):
-            pages.append(_compose(content, section, asof_label, i, total, page_w))
+            pages.append(_compose(content, section, asof_label, i, total, page_w,
+                                  page_h=page_h))
 
-        buf = io.BytesIO()
-        pages[0].save(buf, "PDF", save_all=True, append_images=pages[1:],
-                      resolution=150.0 * _S)
-        return buf.getvalue()
+        return save_pages(pages)

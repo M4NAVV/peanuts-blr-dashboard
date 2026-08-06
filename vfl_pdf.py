@@ -33,16 +33,16 @@ def build(df, asof, gen_date=None, basis_label=""):
         gd, gd_rt = L.vfl_gd_report(df, asof=asof, gen_date=gen_date)
         PP._add_sheet(contents, "VFL — Growth / Degrowth", gd, gd_rt,
                       money=L.VFL_GD_MONEY, pct=L.VFL_GD_PCT, sign=L.VFL_GD_PCT,
-                      money_dp=0)
+                      money_dp=0, row_bg=PP.VFL_ROW_BG)
 
         # 2) VFL — Gender Contribution % (main table + Region × Gender summary)
         gmain, gm_rt, gsum, gs_rt = L.vfl_gender_report(df, asof=asof)
         PP._add_sheet(contents, "VFL — Gender Contribution %", gmain, gm_rt,
                       money=L.VFL_GENDER_MONEY, pct=L.VFL_GENDER_PCT, sign=[],
-                      money_dp=0)
+                      money_dp=0, row_bg=PP.VFL_ROW_BG)
         PP._add_sheet(contents, "VFL — Region × Gender Summary", gsum, gs_rt,
                       money=L.VFL_GENDER_MONEY, pct=L.VFL_GENDER_PCT, sign=[],
-                      money_dp=0)
+                      money_dp=0, row_bg=PP.VFL_ROW_BG)
 
         cover_rows = [
             ("As of", f"{asof:%d %b %Y}"),
@@ -52,15 +52,16 @@ def build(df, asof, gen_date=None, basis_label=""):
         ]
 
         page_w = max(c.width for _, c in contents) + 2 * (PP.MARGIN + PP.FRAME + PP.PAD)
+        page_h = max(c.height for _, c in contents) + (
+            PP.MARGIN + PP.FRAME + PP.HEADER_H + PP.PAD + PP.FOOTER_H
+            + PP.FRAME + PP.MARGIN)
         pages = [PP._cover(page_w, asof, basis_label, cover_rows,
                            title="Peanuts Retail — VFL Report",
-                           subtitle="Manyavar · Mohey — Growth / Degrowth")]
+                           subtitle="Manyavar · Mohey — Growth / Degrowth",
+                           page_h=page_h)]
         total = len(contents) + 1
         for i, (section, content) in enumerate(contents, start=2):
             pages.append(PP._compose(content, section, asof_label, i, total, page_w,
-                                     footer_right=_FOOTER))
+                                     footer_right=_FOOTER, page_h=page_h))
 
-        buf = io.BytesIO()
-        pages[0].save(buf, "PDF", save_all=True, append_images=pages[1:],
-                      resolution=150.0 * PP._S)
-        return buf.getvalue()
+        return PP.save_pages(pages)
