@@ -526,6 +526,22 @@ def _compose(content, section, asof_label, page_no, total, page_w,
     return img
 
 
+def _fit_mw(mw, blocks, max_w, max_h,
+            sizes=(44, 42, 40, 38, 36, 34, 32, 30, 28, 26, 24, 22, 20, 19)):
+    """Render an MW grid at the largest size that still fits the page box.
+
+    MW is far less dense than the report tables, so a fixed size wasted most of
+    the page. Fitting it to the box means the grid is always as legible as the
+    space allows, and it can't silently overflow if a year is added.
+    """
+    img = None
+    for f in sizes:
+        img = _mw_image(mw, blocks=blocks, font_px=f, header_px=int(round(f * 0.9)))
+        if img.width <= max_w and img.height <= max_h:
+            return img
+    return img
+
+
 def save_pages(pages) -> bytes:
     """Save composed pages as one PDF at an A4-landscape page width.
 
@@ -615,19 +631,8 @@ def build(pf, pf_all, asof, basis_label=""):
 
     with _LOCK:
         contents = []   # (section, content_image)
-
-        # 1) MW Data (whole portfolio, unfiltered), split across two pages:
-        # the three current FYs get a page to themselves — that is what anyone
-        # actually reads — and the older years follow on a history page.
-        _mw = mw_data(pf_all)
-        _recent, _older = _MW_BLOCKS[:1], _MW_BLOCKS[1:]
-        _fy_span = f"{_recent[0][0]} – {_recent[0][-1]}"
-        contents.append((f"MW Data — Monthly Contribution · {_fy_span}",
-                         _mw_image(_mw, blocks=_recent)))
-        if _older:
-            _hist = f"{_older[-1][-1]} – {_older[0][0]}"
-            contents.append((f"MW Data — Monthly Contribution · earlier years "
-                             f"({_hist})", _mw_image(_mw, blocks=_older)))
+        # MW Data is built last (it is sized to the page box the report tables
+        # establish) and inserted at the front, keeping the dashboard order.
 
         # 2) GD Sheet
         rep, rt = gd_sheet_report(pf, asof=asof)
@@ -672,17 +677,22 @@ def build(pf, pf_all, asof, basis_label=""):
             ("Generated", f"{pd.Timestamp.now(tz='Asia/Kolkata'):%d %b %Y, %H:%M} IST"),
         ]
 
-        # Paginated tables all come out a similar height (ROWS_PER_PAGE); the MW
-        # Data grid does not paginate and is much taller. Letting it set the
-        # uniform page height would pad every other page with dead space, so any
-        # over-tall content is scaled down to the tallest *table* page instead.
-        tbl_h = max((c.height for lbl, c in contents if not lbl.startswith("MW Data")),
-                    default=0)
-        if tbl_h:
-            contents = [
-                (lbl, c if c.height <= tbl_h else c.resize(
-                    (max(1, round(c.width * tbl_h / c.height)), tbl_h), Image.LANCZOS))
-                for lbl, c in contents]
+        # MW Data (whole portfolio, unfiltered), across two pages. Page one puts
+        # the CURRENT year on its own row with the two prior years beneath it —
+        # the current year is what gets read, and giving it a full row lets the
+        # whole grid render far larger. Older years follow on a history page.
+        tbl_w = max(c.width for _, c in contents)
+        tbl_h = max(c.height for _, c in contents)
+        _mw = mw_data(pf_all)
+        _recent, _older = _MW_BLOCKS[0], _MW_BLOCKS[1:]
+        _cur, _prior = [_recent[-1]], _recent[:-1]
+        mw_pages = [(f"MW Data — Monthly Contribution · {_recent[0]} – {_recent[-1]}",
+                     _fit_mw(_mw, [_cur, _prior] if _prior else [_cur], tbl_w, tbl_h))]
+        if _older:
+            _hist = f"{_older[-1][-1]} – {_older[0][0]}"
+            mw_pages.append((f"MW Data — Monthly Contribution · earlier years "
+                             f"({_hist})", _fit_mw(_mw, _older, tbl_w, tbl_h)))
+        contents = mw_pages + contents
 
         # uniform page width = widest content + frame + margins; uniform height
         # = tallest page, so the document doesn't change size as you scroll.
