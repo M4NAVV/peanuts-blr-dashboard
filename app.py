@@ -442,15 +442,13 @@ def render_portfolio():
 
     min_d, max_d = pf_all["date"].min().date(), pf_all["date"].max().date()
     st.sidebar.markdown("#### 📅 Date")
-    dr = st.sidebar.date_input("Range", value=(min_d, max_d), min_value=min_d,
-                               max_value=max_d, key="pf_range",
-                               label_visibility="collapsed")
-    if isinstance(dr, tuple) and len(dr) == 2:
-        start_d, end_d = dr
-    elif isinstance(dr, tuple) and len(dr) == 1:
-        start_d = end_d = dr[0]
-    else:
-        start_d = end_d = dr
+    start_d = st.sidebar.date_input("From", value=min_d, min_value=min_d,
+                                    max_value=max_d, key="pf_from")
+    end_d = st.sidebar.date_input("To", value=max_d, min_value=min_d,
+                                  max_value=max_d, key="pf_to")
+    if start_d > end_d:                 # tolerate an inverted pick, don't blank out
+        st.sidebar.warning("From is after To — showing the range flipped.")
+        start_d, end_d = end_d, start_d
 
     # Scope: quickly focus on VFL vs the rest (the user's core ask).
     scope = st.sidebar.radio("Scope", ["All brands", "VFL only", "Non-VFL only"],
@@ -949,17 +947,15 @@ st.sidebar.caption(f"Store Count {n_stores_all} · {_regions_txt}")
 
 min_d, max_d = fresh["min_date"].date(), fresh["max_date"].date()
 
-# ---- Date: custom range ----
+# ---- Date: separate From / To pickers (one calendar each) ----
 st.sidebar.markdown("#### 📅 Date")
-dr = st.sidebar.date_input("Range", value=(min_d, max_d), min_value=min_d,
-                           max_value=max_d, key="f_range",
-                           label_visibility="collapsed")
-if isinstance(dr, tuple) and len(dr) == 2:
-    start_d, end_d = dr
-elif isinstance(dr, tuple) and len(dr) == 1:
-    start_d = end_d = dr[0]
-else:
-    start_d = end_d = dr
+start_d = st.sidebar.date_input("From", value=min_d, min_value=min_d,
+                                max_value=max_d, key="f_from")
+end_d = st.sidebar.date_input("To", value=max_d, min_value=min_d,
+                              max_value=max_d, key="f_to")
+if start_d > end_d:                     # tolerate an inverted pick, don't blank out
+    st.sidebar.warning("From is after To — showing the range flipped.")
+    start_d, end_d = end_d, start_d
 
 
 def _msel(container, label, options, key):
@@ -1025,11 +1021,18 @@ if sel_gd:
     if "De-Growing" in sel_gd:
         gd_stores |= set(_yoy.loc[_yoy["growth"] < 0, L.COL_STORE_LABEL])
 
-st.sidebar.markdown("#### View settings")
-granularity = st.sidebar.radio(
-    "Time granularity", ["Day", "Week", "Month", "Quarter", "Year"],
-    index=2, horizontal=True,
-    help="Drives the trend tables and the default in Build-your-view.")
+_GRAN_OPTS = ["Day", "Week", "Month", "Quarter", "Year"]
+
+
+def gran_control(key, label="Time granularity"):
+    """Per-tab time-granularity picker (was a global sidebar setting).
+
+    Lives with the charts it drives so the sidebar stays filters-only. Each
+    caller keeps its own selection; Month is the default everywhere.
+    """
+    return st.radio(key=key, label=label, options=_GRAN_OPTS, index=2,
+                    horizontal=True)
+
 
 _FILTER_KEYS = ["f_region", "f_state", "f_city", "f_store", "f_brand",
                 "f_div", "f_sec", "f_dep", "f_mwc", "f_size", "f_color", "f_style",
@@ -2059,6 +2062,7 @@ if nav == "Overview":
             cols[i % 4].metric(label, fmt_metric(value, is_money))
 
     st.markdown("---")
+    granularity = gran_control("ov_gran")
     st.subheader(f"Sales trend — by {granularity}")
     draw_view({"metric": "Sales (₹)", "group_dim": granularity, "chart": "Bar",
                "_key": "ov_trend"}, height=380)
@@ -2081,6 +2085,7 @@ if nav == "🏬 Stores":
         "Break stores down by", list(L.METRICS.keys()), index=0,
         key="store_rank_metric",
     )
+    granularity = gran_control("st_gran")
     st.markdown(f"**Store × {granularity} — {rank_metric}**")
     draw_view({"metric": rank_metric, "group_dim": granularity,
                "split_dim": "Store", "_key": "st_pivot"})
@@ -2191,6 +2196,7 @@ if nav == "🔧 Build your view":
 # TRENDS — respect chosen granularity
 # =========================================================================== #
 if nav == "Trends":
+    granularity = gran_control("tr_gran")
     st.subheader(f"Sales — by {granularity}")
     draw_view({"metric": "Sales (₹)", "group_dim": granularity, "chart": "Area",
                "_key": "tr_sales"}, height=340)
