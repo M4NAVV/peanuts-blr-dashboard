@@ -703,6 +703,58 @@ def takeover_map() -> dict:
     return dict(zip(m["tableau_name"], m["takeover_date"]))
 
 
+_DOO_PATH = os.path.join(os.path.dirname(__file__), "gd_store_attrs.csv")
+
+
+def doo_map() -> dict:
+    """store code -> date of opening (Timestamp).
+
+    `store_master.csv` carries only `takeover_date` — when we took the store
+    over, which for all of East & NE is a blanket 2025-04-01 and is NOT an
+    opening date. The real per-store DOO lives in `gd_store_attrs.csv` (the
+    curated workbook attributes the Portfolio sheets already read), so the VFL
+    reports source it from there and fall back to the takeover date only for a
+    code that file doesn't know about.
+    """
+    try:
+        a = pd.read_csv(_DOO_PATH)
+    except Exception:
+        return {}
+    if not {"code", "doo"} <= set(a.columns):
+        return {}
+    code = pd.to_numeric(a["code"], errors="coerce")
+    doo = pd.to_datetime(a["doo"], errors="coerce")
+    ok = code.notna() & doo.notna()
+    return dict(zip(code[ok].astype(int), doo[ok]))
+
+
+def closed_map() -> dict:
+    """store code -> closure date (Timestamp), for stores that have shut.
+
+    A closed store stops accruing elapsed days, so its year-to-date figures must
+    be projected over the period it actually traded rather than to today.
+    """
+    try:
+        a = pd.read_csv(_DOO_PATH)
+    except Exception:
+        return {}
+    if not {"code", "closed"} <= set(a.columns):
+        return {}
+    code = pd.to_numeric(a["code"], errors="coerce")
+    cl = pd.to_datetime(a["closed"], errors="coerce")
+    ok = code.notna() & cl.notna()
+    return dict(zip(code[ok].astype(int), cl[ok]))
+
+
+def _doo_series(codes, fallback):
+    """DOO per store code as dd-mm-YYYY, falling back to `fallback` (a datetime
+    Series, normally the takeover date) where the code has no curated DOO."""
+    m = doo_map()
+    mapped = pd.to_numeric(codes, errors="coerce").map(m)
+    return pd.to_datetime(mapped).fillna(
+        pd.to_datetime(fallback, errors="coerce")).dt.strftime("%d-%m-%Y")
+
+
 def _anchor_md(df: pd.DataFrame, anchor_takeover: bool = True):
     """Per-row (month, day) of each store's window start. With `anchor_takeover`
     (default) that's the store's takeover date; otherwise it's a plain fiscal-year
@@ -1180,7 +1232,7 @@ def store_brand_gd(df: pd.DataFrame, asof=None, anchor_takeover: bool = True) ->
     out["__g"] = out["_gender"].map({"MEN": 0, "WOMEN": 1}).fillna(9)
     out["__b"] = out["_bl"].map({b: i for i, b in enumerate(BRANDLINE_ORDER)}).fillna(99)
     out = out.sort_values(["__r", "code", "__g", "__b"]).reset_index(drop=True)
-    out["DOO"] = pd.to_datetime(out["takeover_date"], errors="coerce").dt.strftime("%d-%m-%Y")
+    out["DOO"] = _doo_series(out["code"], out["takeover_date"])
     out = out.rename(columns={"region": "Region", "city": "Master Location",
                               "location": "Location", "code": "Store Code",
                               "_bl": "Brand", "_gender": "Gender"})
@@ -1251,22 +1303,36 @@ def vfl_gd_report(df: pd.DataFrame, asof=None, gen_date=None):
     sb["Master Location"] = sb["city"].astype(str).str.title().replace(
         {"Kolkata": "Kolkatta"})
     sb["Location"] = sb["location"]
-    sb["DOO"] = pd.to_datetime(sb["takeover_date"], errors="coerce").dt.strftime("%d-%m-%Y")
+    sb["DOO"] = _doo_series(sb["Store Code"], sb["takeover_date"])
 
     # Projections on the GEN-DATE elapsed days (matches the workbook): MTD over the
     # (1st-of-review-month → gen date) window projected to the full month; YTD
-    # annualised per store on days since max(FY-start, DOO).
+    # scaled from the days a store has actually traded to the days it CAN trade
+    # this fiscal year.
+    #
+    # That second denominator is per-store, not a flat 365 (verified against the
+    # 05-08-2026 workbook, which it reproduces to 0.00% on 20 of 21 stores):
+    #   window  = (FY-end   - max(FY-start, DOO)) + 1   # days available this FY
+    #   elapsed = (min(gen, closed) - max(FY-start, DOO)) + 1
+    # A store opened mid-year has a shorter year to fill — South opened 19-Apr,
+    # so its window is 347 days, and annualising it over 365 overstated its
+    # projection by 5.2%. A closed store stops accruing elapsed days at closure.
     import calendar
     rm_start = asof.replace(day=1)
     dim = calendar.monthrange(asof.year, asof.month)[1]
     elapsed_mtd = max((gen_date - rm_start).days + 1, 1)
     fy_year = asof.year if asof.month >= 4 else asof.year - 1
     fy_start = pd.Timestamp(fy_year, 4, 1)
-    _doo = pd.to_datetime(sb["takeover_date"], errors="coerce")
+    fy_end = pd.Timestamp(fy_year + 1, 3, 31)
+    _doo = pd.to_datetime(sb["Store Code"].map(doo_map()), errors="coerce")
+    _doo = _doo.fillna(pd.to_datetime(sb["takeover_date"], errors="coerce"))
     store_start = _doo.where(_doo > fy_start, fy_start)
-    elapsed_ytd = ((gen_date - store_start).dt.days + 1).clip(lower=1)
+    _closed = pd.to_datetime(sb["Store Code"].map(closed_map()), errors="coerce")
+    store_end = _closed.where(_closed.notna() & (_closed < gen_date), gen_date)
+    window_ytd = ((fy_end - store_start).dt.days + 1).clip(lower=1)
+    elapsed_ytd = ((store_end - store_start).dt.days + 1).clip(lower=1)
     sb["Projected MTD"] = sb["MTD TY"] * dim / elapsed_mtd
-    sb["Projected YTD"] = sb["YTD TY"] * 365.0 / elapsed_ytd
+    sb["Projected YTD"] = sb["YTD TY"] * window_ytd / elapsed_ytd
 
     # Drop pure-return / all-zero brand-lines (no positive activity), like the sheet.
     keep = ((sb["YTD LY"] > 0) | (sb["YTD TY"] > 0)

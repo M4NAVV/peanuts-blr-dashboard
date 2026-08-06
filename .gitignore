@@ -14,3 +14,6 @@ data/*.xlsx
 26_27_GROWTH DEGROWTH _SHEET*.md
 to develop.xlsx
 *.py.bak
+
+# Client reference reports — never commit.
+reference_*.pdf
