@@ -89,6 +89,17 @@ BOLD_COLS = {"STORE NAME MAIN", "STORE NAME", "STORE CODE", "PARENT",
 # makes a dense page read as bands of black. Off by default.
 BOLD_SIGN_CELLS = False
 
+# --- conditional formatting ------------------------------------------------ #
+# Value-driven cell fills, as (column, predicate, fill) triples handed to
+# _add_sheet. Applied to data rows only: total rows are already colour-coded,
+# and an aggregate under the threshold means something different from a store
+# under it. PORTFOLIO ONLY — the VFL pack does not pass these.
+DAY_SALE_FLOOR = 5000                # a store taking less than this today
+DAY_SALE_COL = "Sum of DAY SALE FIGURE"
+PORTFOLIO_CELL_RULES = (
+    (DAY_SALE_COL, lambda v: v < DAY_SALE_FLOOR, NEG_BG),
+)
+
 # --- render scale ---------------------------------------------------------- #
 # _S used to be 2 (supersample), with the finished page resampled DOWN to fit a
 # pixel cap — a net scale of ~1.09 reached via two resampling passes. That second
@@ -207,12 +218,15 @@ def _measure_table(df, *, money=(), pct=(), sign=(), money_dp=0,
     hline_h = hasc + hdesc + _px(2)
     head_h = max(len(l) for l in hdr_lines) * hline_h + 2 * PAD_Y
 
-    return dict(cols=cols, txt=txt, is_num=is_num, col_w=col_w, hdr_lines=hdr_lines,
-                head_h=head_h, row_h=row_h, hline_h=hline_h, W=sum(col_w),
-                reg=reg, bold=bold, hbold=hbold, sign=sign)
+    raw = [[pd.to_numeric(df.iloc[i][c], errors="coerce") for c in cols]
+           for i in range(len(df))]
+
+    return dict(cols=cols, txt=txt, raw=raw, is_num=is_num, col_w=col_w,
+                hdr_lines=hdr_lines, head_h=head_h, row_h=row_h, hline_h=hline_h,
+                W=sum(col_w), reg=reg, bold=bold, hbold=hbold, sign=sign)
 
 
-def _render_chunk(m, row_types, rows, row_bg=None):
+def _render_chunk(m, row_types, rows, row_bg=None, cell_rules=()):
     """Render the pale-blue column header + the given body `rows` (indices into
     the measured table) as one page-content image, so the header repeats per
     page. Styled to the client workbook: white ground, a full grid on every
@@ -222,6 +236,7 @@ def _render_chunk(m, row_types, rows, row_bg=None):
     cols, col_w, txt, is_num = m["cols"], m["col_w"], m["txt"], m["is_num"]
     reg, bold, hbold, sign = m["reg"], m["bold"], m["hbold"], m["sign"]
     row_bg = _ROW_BG if row_bg is None else row_bg
+    cell_rules = tuple(cell_rules)
     scratch = ImageDraw.Draw(Image.new("RGB", (1, 1)))
 
     H = head_h + len(rows) * row_h
@@ -253,6 +268,15 @@ def _render_chunk(m, row_types, rows, row_bg=None):
             color = INK
             # Negative growth is filled red (workbook convention), not just
             # coloured — it has to read at a glance on a phone.
+            # conditional formatting: value-driven cell fills (see build())
+            for rcol, test, fill in cell_rules:
+                if c != rcol or t != "store":
+                    continue
+                v = m["raw"][i][j]
+                if v is not None and not pd.isna(v) and test(float(v)):
+                    d.rectangle([x + 1, y + 1, x + col_w[j] - 1, y + row_h - 1],
+                                fill=fill)
+                    f = bold
             if c in sign and s not in ("", "—"):
                 if s.lstrip().startswith("-"):
                     d.rectangle([x + 1, y + 1, x + col_w[j] - 1, y + row_h - 1],
@@ -294,7 +318,7 @@ def _paginate(row_types, budget=ROWS_PER_PAGE):
 
 
 def _add_sheet(contents, section, disp, rt, *, money, pct, sign, money_dp,
-               row_bg=None):
+               row_bg=None, cell_rules=()):
     """Measure, paginate, and append one (possibly multi-page) sheet. The column
     header repeats on every page; continued pages are labelled 'k/total'."""
     m = _measure_table(disp, money=money, pct=pct, sign=sign, money_dp=money_dp)
@@ -302,7 +326,8 @@ def _add_sheet(contents, section, disp, rt, *, money, pct, sign, money_dp,
     n = len(row_pages)
     for k, rows in enumerate(row_pages):
         label = section if n == 1 else f"{section} — {k + 1}/{n}"
-        contents.append((label, _render_chunk(m, rt, rows, row_bg=row_bg)))
+        contents.append((label, _render_chunk(m, rt, rows, row_bg=row_bg,
+                                              cell_rules=cell_rules)))
 
 
 # --------------------------------------------------------------------------- #
@@ -596,19 +621,22 @@ def build(pf, pf_all, asof, basis_label=""):
         rep, rt = gd_sheet_report(pf, asof=asof)
         disp, money, pct = _prep_gd(rep)
         _add_sheet(contents, "GD Sheet — Growth / Degrowth", disp, rt,
-                   money=money, pct=pct, sign=pct, money_dp=0)
+                   money=money, pct=pct, sign=pct, money_dp=0,
+                   cell_rules=PORTFOLIO_CELL_RULES)
 
         # 3) Brand-wise GD
         rep, rt = brand_wise_gd_report(pf, asof=asof)
         disp, money, pct = _prep_gd(rep)
         _add_sheet(contents, "Brand-wise Growth / Degrowth", disp, rt,
-                   money=money, pct=pct, sign=pct, money_dp=0)
+                   money=money, pct=pct, sign=pct, money_dp=0,
+                   cell_rules=PORTFOLIO_CELL_RULES)
 
         # 4) Loc-wise GD
         rep, rt = loc_wise_gd_report(pf, asof=asof)
         disp, money, pct = _prep_gd(rep)
         _add_sheet(contents, "Location-wise Growth / Degrowth", disp, rt,
-                   money=money, pct=pct, sign=pct, money_dp=0)
+                   money=money, pct=pct, sign=pct, money_dp=0,
+                   cell_rules=PORTFOLIO_CELL_RULES)
 
         # 5) Average (store productivity)
         rep, rt = average_report(pf, asof=asof)
