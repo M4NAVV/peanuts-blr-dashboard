@@ -90,14 +90,23 @@ BOLD_COLS = {"STORE NAME MAIN", "STORE NAME", "STORE CODE", "PARENT",
 BOLD_SIGN_CELLS = False
 
 # --- conditional formatting ------------------------------------------------ #
-# Value-driven cell fills, as (column, predicate, fill) triples handed to
-# _add_sheet. Applied to data rows only: total rows are already colour-coded,
-# and an aggregate under the threshold means something different from a store
-# under it. PORTFOLIO ONLY — the VFL pack does not pass these.
-DAY_SALE_FLOOR = 5000                # a store taking less than this today
+# Value-driven cell fills, as (column, predicate, fill, row_types) handed to
+# _add_sheet. `row_types` restricts which rows the rule sees; None means every
+# row in that column, totals included. Each pack passes its own rules — these
+# are NOT shared between the Portfolio and VFL reports.
 DAY_SALE_COL = "Sum of DAY SALE FIGURE"
+
+# Portfolio: one row is one store, so the rule is limited to data rows — the
+# total rows are already colour-coded and aggregate differently.
+DAY_SALE_FLOOR = 5000
 PORTFOLIO_CELL_RULES = (
-    (DAY_SALE_COL, lambda v: v < DAY_SALE_FLOOR, NEG_BG),
+    (DAY_SALE_COL, lambda v: v < DAY_SALE_FLOOR, NEG_BG, {"store"}),
+)
+
+# VFL G/D: a higher bar, applied across the whole day-sale column.
+VFL_DAY_SALE_FLOOR = 50000
+VFL_CELL_RULES = (
+    (DAY_SALE_COL, lambda v: v < VFL_DAY_SALE_FLOOR, NEG_BG, None),
 )
 
 # --- render scale ---------------------------------------------------------- #
@@ -269,8 +278,8 @@ def _render_chunk(m, row_types, rows, row_bg=None, cell_rules=()):
             # Negative growth is filled red (workbook convention), not just
             # coloured — it has to read at a glance on a phone.
             # conditional formatting: value-driven cell fills (see build())
-            for rcol, test, fill in cell_rules:
-                if c != rcol or t != "store":
+            for rcol, test, fill, rtypes in cell_rules:
+                if c != rcol or (rtypes is not None and t not in rtypes):
                     continue
                 v = m["raw"][i][j]
                 if v is not None and not pd.isna(v) and test(float(v)):

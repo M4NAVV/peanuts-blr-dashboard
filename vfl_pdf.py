@@ -31,9 +31,12 @@ def build(df, asof, gen_date=None, basis_label=""):
 
         # 1) VFL — Growth / Degrowth (18-col brand-line sheet, paginated)
         gd, gd_rt = L.vfl_gd_report(df, asof=asof, gen_date=gen_date)
+        # Day sales under 50k are flagged red on this sheet only — the two
+        # gender sheets carry no day-sale column.
         PP._add_sheet(contents, "VFL — Growth / Degrowth", gd, gd_rt,
                       money=L.VFL_GD_MONEY, pct=L.VFL_GD_PCT, sign=L.VFL_GD_PCT,
-                      money_dp=0, row_bg=PP.VFL_ROW_BG)
+                      money_dp=0, row_bg=PP.VFL_ROW_BG,
+                      cell_rules=PP.VFL_CELL_RULES)
 
         # 2) VFL — Gender Contribution % (main table + Region × Gender summary)
         gmain, gm_rt, gsum, gs_rt = L.vfl_gender_report(df, asof=asof)
