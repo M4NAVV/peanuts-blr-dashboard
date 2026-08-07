@@ -1255,26 +1255,19 @@ def render_gd_table(disp, label_cols, key, region_grouped=False):
     return table
 
 
-def gd_basis_control(key, picker_date, index=0):
-    """Renders the 'Live to-date / Month-end review' toggle shared by the G/D
-    tabs and returns the resolved as-of date. Month-end review snaps to the last
-    day of the month *before* the picker's month, reproducing a monthly review
-    sheet (takeover-anchoring is unchanged either way). `index` sets the default
-    (0 = Live, 1 = Month-end)."""
-    basis = st.radio(
-        "As-of basis", ["Live to-date", "Month-end review"], horizontal=True,
-        key=key, index=index, label_visibility="collapsed",
-        help="Live = up to the date picker. Month-end = the last completed "
-             "month, matching the monthly G/D sheet.")
-    d = pd.Timestamp(picker_date)
-    if basis == "Month-end review":
-        asof = d.replace(day=1) - pd.Timedelta(days=1)
-        st.caption(f"Reviewing **{asof:%B %Y}** (month-end · matches the monthly "
-                   "G/D sheet). Stores counted from their takeover date.")
-    else:
-        asof = d
-        st.caption(f"Live to **{asof:%d %b %Y}** (follows the date picker). "
-                   "Stores counted from their takeover date.")
+def gd_asof_note(picker_date):
+    """As-of date for the G/D tabs — always live to the date picker.
+
+    These used to carry a Live/Month-end toggle, with the VFL tabs defaulting to
+    month-end so they reproduced the monthly review sheet. Live-to-date is now
+    the only basis: the reports are read as a current view of trading, not as a
+    reconstruction of a past review, and two bases meant two sets of numbers to
+    explain. A month-end view is still reachable by setting the sidebar To date
+    to a month end.
+    """
+    asof = pd.Timestamp(picker_date)
+    st.caption(f"Live to **{asof:%d %b %Y}** (follows the date picker). "
+               "Stores counted from their takeover date.")
     return asof
 
 
@@ -1746,7 +1739,7 @@ if nav == "🧑‍🤝‍🧑 Gender G/D":
         view = st.radio("View", ["Store detail", "Region summary"], horizontal=True,
                         key="gender_gd_view", label_visibility="collapsed")
     with c2:
-        gd_asof = gd_basis_control("gender_gd_basis", end_d)
+        gd_asof = gd_asof_note(end_d)
     if view == "Store detail":
         g = L.gender_store_gd(df_exec, asof=gd_asof)
         if g.empty:
@@ -1768,7 +1761,7 @@ if nav == "🏷️ Brand G/D":
     st.subheader("Brand-wise Growth / Degrowth")
     st.caption("MTD & YTD YoY by brand. Scope = the Manyavar-group brands in "
                "the sales feed.")
-    gd_asof = gd_basis_control("brand_gd_basis", end_d)
+    gd_asof = gd_asof_note(end_d)
     b = L.brand_wise_gd(df_exec, asof=gd_asof)
     if b.empty:
         st.info("No data for the current filters.")
@@ -1785,7 +1778,7 @@ if nav == "🏬 Store × Brand G/D":
                "into Manyavar), grouped by gender: **MEN Total** and **WOMEN "
                "Total** (peach), a **Store Total** (blue), then region & grand "
                "totals. Takeover-anchored, red = degrowth.")
-    sb_asof = gd_basis_control("storebrand_basis", end_d)
+    sb_asof = gd_asof_note(end_d)
     sb = L.store_brand_gd(df_exec, asof=sb_asof)
     if sb.empty:
         st.info("No data for the current filters.")
@@ -1802,7 +1795,7 @@ if nav == "🧾 VFL G/D":
                "Twamev Men / Mohey (incl. Mebaz) / Twamev-Women — with MEN/WOMEN, "
                "store, location, region and grand totals. Takeover-anchored; "
                "red = degrowth.")
-    v_asof = gd_basis_control("vfl_gd_basis", end_d, index=1)   # month-end matches the sheet
+    v_asof = gd_asof_note(end_d)
     disp, rtypes = L.vfl_gd_report(df_exec, asof=v_asof, gen_date=pd.Timestamp(end_d))
     if disp.empty:
         st.info("No data for the current filters.")
@@ -1822,7 +1815,7 @@ if nav == "🧾 VFL Gender":
                "the store-total row = the store's share of its **location**; region "
                "totals = the region's share of the grand. Below: the Region × "
                "Gender summary.")
-    vg_asof = gd_basis_control("vfl_gender_basis", end_d, index=1)   # month-end matches the sheet
+    vg_asof = gd_asof_note(end_d)
     main, mrt, summ, srt = L.vfl_gender_report(df_exec, asof=vg_asof)
     if main.empty:
         st.info("No data for the current filters.")
@@ -1844,11 +1837,9 @@ if nav == "📄 Report PDF":
     import vfl_pdf
     st.subheader("📄 VFL report (PDF)")
     st.caption("Compiles the **VFL G/D** and **VFL Gender** sheets into one "
-               "shareable, print-clean PDF (honours the current sidebar filters). "
-               "Month-end basis matches the monthly review sheet.")
-    p_asof = gd_basis_control("vfl_pdf_basis", end_d, index=1)
-    p_basis = (f"Month-end review — {p_asof:%B %Y}" if p_asof != pd.Timestamp(end_d)
-               else f"Live to {p_asof:%d %b %Y}")
+               "shareable, print-clean PDF (honours the current sidebar filters).")
+    p_asof = gd_asof_note(end_d)
+    p_basis = f"Live to {p_asof:%d %b %Y}"
     if st.button("🧾 Generate PDF", key="vfl_pdf_gen", type="primary",
                  use_container_width=True):
         with st.spinner("Building the VFL report…"):
@@ -1877,7 +1868,7 @@ if nav == "⚖️ Gender Mix":
         view = st.radio("View", ["Store detail", "Region summary"], horizontal=True,
                         key="gender_mix_view", label_visibility="collapsed")
     with c2:
-        gd_asof = gd_basis_control("gender_mix_basis", end_d)
+        gd_asof = gd_asof_note(end_d)
     detail, summary = L.gender_contribution(df_exec, asof=gd_asof)
     if summary.empty:
         st.info("No data for the current filters.")
@@ -2004,7 +1995,7 @@ if nav == "🏙️ City-wise G/D":
                "total. Same G/D columns as the store report, takeover-anchored. "
                "**Manyavar & Mohey only** (the report's city totals also include "
                "other brands, which aren't in this data feed).")
-    cg_asof = gd_basis_control("citygd_basis", end_d)
+    cg_asof = gd_asof_note(end_d)
     lg = L.loc_store_gd(df_exec, asof=cg_asof)
     if lg.empty:
         st.info("No data for the current filters.")
