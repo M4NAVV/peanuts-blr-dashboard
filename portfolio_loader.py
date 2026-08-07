@@ -30,6 +30,7 @@ import pandas as pd
 
 _DIR = os.path.dirname(__file__)
 _MASTER_PATH = os.path.join(_DIR, "portfolio_store_master.csv")
+_ATTRS_PATH = os.path.join(_DIR, "gd_store_attrs.csv")
 # Committed fallback so the app works before PORTFOLIO_CSV_URL is configured.
 _SNAPSHOT_CANDIDATES = ["portfolio_snapshot.csv", "25v26 data set all str.xlsx"]
 
@@ -227,6 +228,25 @@ def _ty_end(df: pd.DataFrame, asof: pd.Timestamp) -> pd.Series:
     return cur.groupby("code")["date"].max()
 
 
+def closed_map() -> dict:
+    """store code -> closure date, from the curated store attributes.
+
+    The source sheet keeps zero-rows for a shut store indefinitely, so closure
+    cannot be read off the sales data without also catching stores that merely
+    paused trading. Only an explicit date counts.
+    """
+    try:
+        a = pd.read_csv(_ATTRS_PATH)
+    except Exception:
+        return {}
+    if not {"code", "closed"} <= set(a.columns):
+        return {}
+    code = pd.to_numeric(a["code"], errors="coerce")
+    cl = pd.to_datetime(a["closed"], errors="coerce")
+    ok = code.notna() & cl.notna()
+    return dict(zip(code[ok].astype(int), cl[ok]))
+
+
 def active_codes(df: pd.DataFrame, asof=None) -> set:
     """Store codes that traded this fiscal year (the ones the source sheet keeps)."""
     asof = as_of(df) if asof is None else pd.Timestamp(asof)
@@ -246,14 +266,21 @@ def _window_frames(df: pd.DataFrame, kind: str, asof: pd.Timestamp):
     prior_start = start - pd.DateOffset(years=1)
     cur = df[(df["date"] >= start) & (df["date"] <= asof)]
 
-    # Per-store last-year end. A store is "closed" if it made no sale in the as-of
-    # month; its last year is capped to the END of the month it last traded
-    # (shifted back a year) — matching the sheet, e.g. a store that shut on 30 Apr
-    # compares against the full last April. Open stores get the full window to
-    # as-of − 1 year.
-    closed = ty_end < asof.replace(day=1)
-    closed_end = (ty_end + pd.offsets.MonthEnd(0)) - pd.DateOffset(years=1)
-    ly_end_by_code = closed_end.where(closed, asof - pd.DateOffset(years=1))
+    # Per-store last-year end. A store that has SHUT gets its last year capped to
+    # the END of the month it closed (shifted back a year) — a store that shut on
+    # 30 Apr compares against the full last April, matching the sheet.
+    #
+    # Closure is taken from the curated `closed` attribute, NOT inferred from
+    # "made no sale this month". That inference was wrong: a store merely paused
+    # for operational reasons looked closed, its prior-year window was capped
+    # away, and the month came back 0-vs-0 — hiding a full -100% as no movement
+    # (code 69 Turtle City Centre GHT, Aug 2026).
+    cl = closed_map()
+    closed_by_code = pd.Series({c: cl[c] for c in ty_end.index if c in cl},
+                               dtype="datetime64[ns]")
+    closed_end = (closed_by_code + pd.offsets.MonthEnd(0)) - pd.DateOffset(years=1)
+    ly_end_by_code = closed_end.reindex(ty_end.index).fillna(
+        asof - pd.DateOffset(years=1))
     ly_end = df["code"].map(ly_end_by_code)
     ly_end.index = df.index
     prior = df[(df["date"] >= prior_start) & (df["date"] <= ly_end)]
