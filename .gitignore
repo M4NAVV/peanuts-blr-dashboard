@@ -20,3 +20,6 @@ reference_*.pdf
 
 # Locally rendered report PDFs — build output, not source (~20 MB per run).
 _pdf_*/
+
+# Sample store reports for the extraction work — client data, never commit.
+sample_*.pdf
