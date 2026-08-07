@@ -618,7 +618,11 @@ def gd_sheet_report(df: pd.DataFrame, asof=None):
         doo = _doo_ts(a["doo"])
         ytd_start = max(fy_start, doo)
         days_elapsed = max((asof - ytd_start).days + 1, 1)
-        proj_ytd = yty * 365.0 / days_elapsed
+        # A closed store's year is over: freeze the projection at what it
+        # actually took, rather than annualising a shut store to a full year.
+        closed = pd.to_datetime(a["closed"]) if a["closed"] else None
+        proj_ytd = (yty if closed is not None and closed <= asof
+                    else yty * 365.0 / days_elapsed)
         return {
             "Region": a["region"], "NEW/OLD": a["new_old"], "STORE CODE": c,
             "STORE NAME MAIN": a["store_name_main"], "LOCATION": a["location_main"],
@@ -871,12 +875,16 @@ def _gd_store_metrics(df: pd.DataFrame, asof: pd.Timestamp) -> dict:
         doo_s = attrs.loc[c, "doo"]
         doo = pd.to_datetime(doo_s) if doo_s else fy_start
         days_elapsed = max((asof - max(fy_start, doo)).days + 1, 1)
+        cl_s = attrs.loc[c, "closed"]
+        closed = pd.to_datetime(cl_s) if cl_s else None
+        proj_ytd = (yty if closed is not None and closed <= asof
+                    else yty * 365.0 / days_elapsed)
         out[c] = {
             "ytd_ly": yly, "ytd_ty": yty, "gd_ytd": _gd_frac(yty, yly),
             "mtd_ly": mly, "mtd_ty": mty, "gd_mtd": _gd_frac(mty, mly),
             "day": float(day.get(c, 0.0)), "month_ly": float(month_ly.get(c, 0.0)),
             "proj_mtd": mty * days_in_month / asof.day,
-            "ly_full": float(ly_full.get(c, 0.0)), "proj_ytd": yty * 365.0 / days_elapsed,
+            "ly_full": float(ly_full.get(c, 0.0)), "proj_ytd": proj_ytd,
         }
     return out
 
