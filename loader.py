@@ -1684,14 +1684,23 @@ def day_sales_ly_report(df: pd.DataFrame, day):
 # --------------------------------------------------------------------------- #
 # Degrowth drivers — why a store is down, not just that it is
 # --------------------------------------------------------------------------- #
-DRIVERS_COLS = ["DATE", "Region", "STORE CODE", "LOCATION", "Brand / Product",
+DRIVERS_COLS = ["DATE", "Region", "STORE CODE", "LOCATION", "Brand",
+                "Division", "Section", "Department",
                 "YTD LY", "YTD TY", "Shortfall", "Degrowth %"]
+# Division (31) -> Section (160) -> Department (612). The hierarchy nests: no
+# department spans two sections, so the three read as one path rather than three
+# independent tags. `level` picks which of them the product rows are grouped at;
+# the columns above it are filled in as context, the ones below left blank.
+DRIVERS_LEVELS = {"division": [COL_DIVISION],
+                  "section": [COL_DIVISION, COL_SECTION],
+                  "department": [COL_DIVISION, COL_SECTION, COL_DEPARTMENT]}
 DRIVERS_MONEY = ["YTD LY", "YTD TY", "Shortfall"]
 DRIVERS_PCT = ["Degrowth %"]
 
 
 def degrowth_drivers(df: pd.DataFrame, asof=None, top_products: int = 3,
-                     products_under: str = "worst", anchor_takeover: bool = True):
+                     products_under: str = "worst", level: str = "division",
+                     anchor_takeover: bool = True):
     """Every declining store, decomposed: products, then brand totals, then the
     store total beneath them.
 
@@ -1707,14 +1716,15 @@ def degrowth_drivers(df: pd.DataFrame, asof=None, top_products: int = 3,
     Mohey +₹9.5L — a large problem and a large success, not a small problem.
 
     Totals sit BELOW the rows they summarise, matching the review workbook:
-    products, then that brand's total, then the store's total last. Identity
-    columns are filled only on the store total, as the sheets do.
+    products, then that brand's total, then the store's total last. The identity
+    columns repeat on every row, so any row still identifies its own store once
+    the table is sorted or filtered.
 
     `products_under`: "every" breaks out every brand including those that GREW
     (so an offsetting gain is visible, not just its net effect); "all" only
     declining brands; "worst" only the worst-declining one.
 
-    Returns (display_df, row_types) — products plain, brand totals 'storetotal',
+    Returns (display_df, row_types) — products plain, brand totals 'subtotal',
     store totals 'block'.
     """
     asof = as_of(df) if asof is None else pd.Timestamp(asof)
@@ -1730,8 +1740,9 @@ def degrowth_drivers(df: pd.DataFrame, asof=None, top_products: int = 3,
     stores = stores[stores["short"] < 0].sort_values("short")
 
     br_c, br_p = total(cur, [COL_STORE_LABEL, COL_BRAND]), total(pri, [COL_STORE_LABEL, COL_BRAND])
-    dv_c = total(cur, [COL_STORE_LABEL, COL_BRAND, COL_DIVISION])
-    dv_p = total(pri, [COL_STORE_LABEL, COL_BRAND, COL_DIVISION])
+    prod_keys = DRIVERS_LEVELS.get(level, DRIVERS_LEVELS["division"])
+    dv_c = total(cur, [COL_STORE_LABEL, COL_BRAND] + prod_keys)
+    dv_p = total(pri, [COL_STORE_LABEL, COL_BRAND] + prod_keys)
 
     def _frame(c, p, key):
         f = pd.DataFrame({"ty": c.get(key, pd.Series(dtype=float)),
@@ -1741,30 +1752,32 @@ def degrowth_drivers(df: pd.DataFrame, asof=None, top_products: int = 3,
 
     date_txt = f"{asof:%d-%m-%Y}"
     rows, types = [], []
+    ident = {}
 
-    def emit(r, label, rtype, region="", code="", location=""):
+    def emit(r, brand, path, rtype):
         # No prior-year sales means there is no growth rate, only a value.
         # Reporting that as 0% or infinity would both mislead.
         gd = (r["ty"] - r["ly"]) / r["ly"] * 100 if r["ly"] else None
-        rows.append({"DATE": "",
-                     "Region": region, "STORE CODE": code, "LOCATION": location,
-                     "Brand / Product": label, "YTD LY": r["ly"],
-                     "YTD TY": r["ty"], "Shortfall": r["short"],
-                     "Degrowth %": gd})
+        # A bare string must not be iterated into characters — that silently
+        # spreads "Total" across the three columns as T / o / t.
+        path = [path] if isinstance(path, str) else list(path)
+        path = [str(x) for x in path] + [""] * (3 - len(path))
+        rows.append({**ident, "Brand": brand,
+                     "Division": path[0], "Section": path[1],
+                     "Department": path[2],
+                     "YTD LY": r["ly"], "YTD TY": r["ty"],
+                     "Shortfall": r["short"], "Degrowth %": gd})
         types.append(rtype)
 
     for store, s in stores.iterrows():
         m = master.loc[store] if store in master.index else None
-        region = "" if m is None else str(m.get("region", ""))
-        code = "" if m is None else str(m.get("code", ""))
-        # A header opening each block: with the total sitting at the BOTTOM, a
-        # reader would otherwise be several rows into a store's products before
-        # learning whose they are.
-        rows.append({"DATE": date_txt, "Region": region, "STORE CODE": code,
-                     "LOCATION": str(store), "Brand / Product": "",
-                     "YTD LY": None, "YTD TY": None, "Shortfall": None,
-                     "Degrowth %": None})
-        types.append("block")
+        # Identity repeats on EVERY row rather than sitting in a header. It
+        # costs width but the table stays sortable and filterable, and a row
+        # lifted out of context still says which store it belongs to.
+        ident = {"DATE": date_txt,
+                 "Region": "" if m is None else str(m.get("region", "")),
+                 "STORE CODE": "" if m is None else str(m.get("code", "")),
+                 "LOCATION": str(store)}
 
         brands = _frame(br_c, br_p, store)
         worst = brands.index[0] if len(brands) else None
@@ -1782,8 +1795,19 @@ def degrowth_drivers(df: pd.DataFrame, asof=None, top_products: int = 3,
                     if abs(d["ly"]) < 1 and abs(d["ty"]) < 1:
                         continue
                     if d["short"] < 0 or products_under == "every":
-                        emit(d, str(div), "store")
-            emit(b, f"{brand} Total", "storetotal")
-        emit(s, f"{store} Total", "block")
+                        emit(d, str(brand),
+                             div if isinstance(div, tuple) else (div,), "store")
+            # 'subtotal' rather than 'storetotal': the latter is the palest
+            # tier and barely reads against white, and a brand total is the row
+            # a reader scans for. Store totals stay blue, so the two tiers stay
+            # distinct.
+            emit(b, str(brand), ("Total",), "subtotal")
+        emit(s, "TOTAL", (), "block")
 
-    return pd.DataFrame(rows, columns=DRIVERS_COLS), types
+    out = pd.DataFrame(rows, columns=DRIVERS_COLS)
+    # Only keep the product columns the chosen level actually fills. Rendering
+    # Section and Department as permanently blank at Division level just asks
+    # the reader to wonder what is missing.
+    depth = len(DRIVERS_LEVELS.get(level, DRIVERS_LEVELS["division"]))
+    drop = [c for c in ("Division", "Section", "Department")[depth:]]
+    return out.drop(columns=drop), types

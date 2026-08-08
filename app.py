@@ -250,12 +250,29 @@ def stat_card(title, rows) -> str:
 GRN_TXT, RED_TXT = "#137a3a", "#C0143C"
 
 
+# The client's workbook palette, sampled off their reference PDF — the same
+# constants the report PDFs use (see portfolio_pdf.py).
+WB_HDR_BG, WB_INK = "#DAEEF3", "#000000"
+WB_TOTAL, WB_NEG, WB_GRID = "#FFFF00", "#FF0000", "#9AA0A6"
+# GD/Brand/Loc/Average sheets colour every total tier the same yellow; the VFL
+# sheets grade them instead.
+WB_ROWS = {"subtotal": WB_TOTAL, "grand": WB_TOTAL,
+           "storetotal": WB_TOTAL, "block": WB_TOTAL, "loctotal": WB_TOTAL}
+WB_ROWS_VFL = {"storetotal": "#FDE9D9", "subtotal": "#95B3D7",
+               "loctotal": "#92D050", "block": "#92D050", "grand": WB_TOTAL}
+
+
 def styled_report_html(disp, money_cols=(), pct_cols=(), sign_cols=(),
                        row_types=None, font_px=12.5, full_width=True,
-                       compact=False):
+                       compact=False, palette="workbook"):
     """Compact, high-contrast HTML table built with INLINE styles (so colors
-    always render in Streamlit): maroon header, zebra rows, tabular right-aligned
-    numbers, shaded subtotals/totals, and red/green on growth columns.
+    always render in Streamlit): tabular right-aligned numbers, shaded
+    subtotals/totals, and negatives in red.
+
+    Colours are the client's own, sampled off their GROWTH DEGROWTH workbook
+    print, so the dashboard and the report PDFs read as one document rather than
+    two systems that happen to share numbers. `palette="vfl"` selects the graded
+    tiers their VFL sheets use instead of the flat yellow of the GD sheets.
 
     Headers always wrap onto multiple lines (never truncated), so columns size to
     their data rather than to a long header — keeping every report compact and
@@ -271,26 +288,21 @@ def styled_report_html(disp, money_cols=(), pct_cols=(), sign_cols=(),
     def align(c):
         return "right" if (c in money or c in pct) else "left"
 
+    tiers = WB_ROWS_VFL if palette == "vfl" else WB_ROWS
     ths = "".join(
-        f'<th style="background:{MAROON};color:#fff;font-weight:700;'
+        f'<th style="background:{WB_HDR_BG};color:{WB_INK};font-weight:700;'
         f'font-size:{font_px - 1:.0f}px;text-transform:uppercase;letter-spacing:.01em;'
         f'padding:{th_pad};text-align:center;position:sticky;top:0;'
-        f'line-height:1.15;white-space:normal;vertical-align:bottom;">{c}</th>'
+        f'line-height:1.15;white-space:normal;vertical-align:bottom;'
+        f'border:1px solid {WB_GRID};">{c}</th>'
         for c in cols)
 
     trs = []
     for i in range(len(disp)):
         t = row_types[i] if row_types is not None else "store"
-        if t in ("subtotal", "loctotal"):
-            rbg, fw = "#F6D9D5", "700"
-        elif t == "grand":
-            rbg, fw = "#CDE8CF", "800"
-        elif t == "storetotal":
-            rbg, fw = "#FBEEE6", "700"
-        elif t == "block":
-            rbg, fw = "#D6E4F5", "800"          # store-block total (blue)
-        else:
-            rbg, fw = ("#FFFFFF" if i % 2 == 0 else "#FAF6EF"), "500"
+        # White body, no zebra — the workbook relies on the grid, not banding.
+        rbg = tiers.get(t, "#FFFFFF")
+        fw = "700" if t in tiers else "500"
         tds = []
         for c in cols:
             v = disp.iloc[i][c]
@@ -300,15 +312,19 @@ def styled_report_html(disp, money_cols=(), pct_cols=(), sign_cols=(),
                 txt = f"{v:,.2f}%" if pd.notna(v) else "—"
             else:
                 txt = "" if (isinstance(v, float) and pd.isna(v)) else str(v)
-            color = "#1f2937"
+            # Negatives are red TEXT, not a red fill. On screen a solid fill
+            # fights the total-row shading and reads as a block of alarm; the
+            # figures are what matter, so the colour goes on them.
+            cbg, color, cfw = rbg, WB_INK, fw
             if c in sign and pd.notna(v):
                 try:
-                    color = RED_TXT if float(v) < 0 else GRN_TXT
+                    if float(v) < 0:
+                        color, cfw = WB_NEG, "700"
                 except (TypeError, ValueError):
                     pass
             tds.append(
                 f'<td style="padding:{td_pad};text-align:{align(c)};color:{color};'
-                f'font-weight:{fw};background:{rbg};border-bottom:1px solid #ECE4D6;'
+                f'font-weight:{cfw};background:{cbg};border:1px solid {WB_GRID};'
                 f'white-space:nowrap;font-variant-numeric:tabular-nums;">{txt}</td>')
         trs.append(f"<tr>{''.join(tds)}</tr>")
 
@@ -322,8 +338,8 @@ def styled_report_html(disp, money_cols=(), pct_cols=(), sign_cols=(),
         f'<thead><tr>{ths}</tr></thead><tbody>{"".join(trs)}</tbody></table>')
     if not full_width:
         return table
-    return (f'<div style="overflow-x:auto;max-width:100%;border:1px solid #E7E1D6;'
-            f'border-radius:10px;display:inline-block;">{table}</div>')
+    return (f'<div style="overflow-x:auto;max-width:100%;border:1px solid {WB_GRID};'
+            f'border-radius:4px;display:inline-block;">{table}</div>')
 
 
 def render_fit_to_screen(table_html, panel_h=600):
@@ -1687,12 +1703,19 @@ if nav == "🔎 Degrowth Drivers":
              "breaks out brands that GREW, which is how you see what is "
              "offsetting a decline.")
     dd_n = st.slider("Products shown per brand", 1, 6, 3, key="dd_n")
+    dd_level = st.radio(
+        "Detail level", ["Division", "Section", "Department"],
+        horizontal=True, key="dd_level",
+        help="Division (31) is the readable level; Section (160) and "
+             "Department (612) narrow it further. The level decides what the "
+             "worst lines are ranked at, not how many rows are shown.")
 
     drv, drv_types = L.degrowth_drivers(
         df_exec, asof=pd.Timestamp(end_d), top_products=dd_n,
         products_under={"Every brand": "every",
                         "Every declining brand": "all",
-                        "Worst brand only": "worst"}[dd_depth])
+                        "Worst brand only": "worst"}[dd_depth],
+        level=dd_level.lower())
 
     if drv.empty:
         st.success("🎉 No stores in degrowth for this selection.")
@@ -1705,9 +1728,9 @@ if nav == "🔎 Degrowth Drivers":
         c3.metric("Rows", f"{len(drv)}")
         # A store can be masking a large decline with a large gain elsewhere;
         # that is the case worth pointing at, since a store total hides it.
-        _off = [str(drv.iloc[i]["Brand / Product"]).replace(" Total", "")
+        _off = [str(drv.iloc[i]["Brand"])
                 for i, t in enumerate(drv_types)
-                if t == "storetotal" and drv.iloc[i]["Shortfall"] > 0]
+                if t == "subtotal" and drv.iloc[i]["Shortfall"] > 0]
         if _off:
             st.info("Some declining stores have a **growing** brand offsetting "
                     "the fall — the store total hides it: "
@@ -1853,7 +1876,8 @@ if nav == "🧾 VFL G/D":
     else:
         st.markdown(
             styled_report_html(disp, money_cols=L.VFL_GD_MONEY, pct_cols=L.VFL_GD_PCT,
-                               sign_cols=L.VFL_GD_PCT, row_types=rtypes, compact=True),
+                               sign_cols=L.VFL_GD_PCT, row_types=rtypes, compact=True,
+                               palette="vfl"),
             unsafe_allow_html=True)
 
 # =========================================================================== #
@@ -1873,12 +1897,14 @@ if nav == "🧾 VFL Gender":
     else:
         st.markdown(
             styled_report_html(main, money_cols=L.VFL_GENDER_MONEY,
-                               pct_cols=L.VFL_GENDER_PCT, row_types=mrt, compact=True),
+                               pct_cols=L.VFL_GENDER_PCT, row_types=mrt, compact=True,
+                               palette="vfl"),
             unsafe_allow_html=True)
         st.markdown("##### Region × Gender summary")
         st.markdown(
             styled_report_html(summ, money_cols=L.VFL_GENDER_MONEY,
-                               pct_cols=L.VFL_GENDER_PCT, row_types=srt),
+                               pct_cols=L.VFL_GENDER_PCT, row_types=srt,
+                               palette="vfl"),
             unsafe_allow_html=True)
 
 # =========================================================================== #
