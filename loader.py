@@ -149,6 +149,12 @@ def _parse_dates(series: pd.Series) -> pd.Series:
     return dt
 
 
+DIVISION_ALIASES = {
+    "TWAMEV MEN": "TWAMEV-MEN",
+    "MANYAVAR": "MANYAVAR ACCESSORIES",
+}
+
+
 def clean(df: pd.DataFrame) -> pd.DataFrame:
     """Turn a raw export into a clean, typed, analysis-ready DataFrame."""
     df = df.copy()
@@ -179,6 +185,17 @@ def clean(df: pd.DataFrame) -> pd.DataFrame:
     # Net sales after promotion (discount). Promotion is the discount amount.
     df[COL_PROMO] = df[COL_PROMO].fillna(0)
     df["net_amount"] = df[COL_AMOUNT] - df[COL_PROMO]
+
+    # Divisions renamed at source mid-stream. On 7 Aug 2026 the POS stopped
+    # booking "TWAMEV-MEN" and started booking "TWAMEV MEN"; likewise
+    # "MANYAVAR ACCESSORIES" became a bare "MANYAVAR". Left alone that strands
+    # ~13 Cr of history on the retired spelling and makes the new one look like
+    # a division with no last year — reports would show a catastrophic decline
+    # that never happened, and the brand total would look fine, which makes it
+    # harder to spot. Folding keeps year-on-year continuous whichever spelling
+    # arrives. Add to this map whenever a division is renamed at source.
+    df[COL_DIVISION] = (df[COL_DIVISION].astype(str).str.strip()
+                        .replace(DIVISION_ALIASES))
 
     # Brand, derived from Division (Manyavar / Mohey / Twamev / …).
     df[COL_BRAND] = df[COL_DIVISION].map(_brand_of)
@@ -1662,3 +1679,111 @@ def day_sales_ly_report(df: pd.DataFrame, day):
     grand = pd.concat(all_rows, ignore_index=True)
     rows.append(_total_row("Grand Total", grand)); types.append("grand")
     return pd.DataFrame(rows, columns=DAY_REPORT_COLS), types
+
+
+# --------------------------------------------------------------------------- #
+# Degrowth drivers — why a store is down, not just that it is
+# --------------------------------------------------------------------------- #
+DRIVERS_COLS = ["DATE", "Region", "STORE CODE", "LOCATION", "Brand / Product",
+                "YTD LY", "YTD TY", "Shortfall", "Degrowth %"]
+DRIVERS_MONEY = ["YTD LY", "YTD TY", "Shortfall"]
+DRIVERS_PCT = ["Degrowth %"]
+
+
+def degrowth_drivers(df: pd.DataFrame, asof=None, top_products: int = 3,
+                     products_under: str = "worst", anchor_takeover: bool = True):
+    """Every declining store, decomposed: products, then brand totals, then the
+    store total beneath them.
+
+    A store total says a shop is down; it does not say what to do about it. The
+    shortfall is broken out in RUPEES, which is the form that adds up — the
+    brand totals sum to the store total, so the attribution is complete and can
+    be checked rather than taken on trust. Percentages cannot do that, and they
+    over-weight small lines: a ₹1L brand collapsing reads as -80% beside a ₹20L
+    brand losing -15%, which is six times the money.
+
+    It also exposes OFFSETS that a store total hides. M.G. Road and Siliguri
+    both look mild at about -7%, but Siliguri is Twamev -₹17.8L partly masked by
+    Mohey +₹9.5L — a large problem and a large success, not a small problem.
+
+    Totals sit BELOW the rows they summarise, matching the review workbook:
+    products, then that brand's total, then the store's total last. Identity
+    columns are filled only on the store total, as the sheets do.
+
+    `products_under`: "every" breaks out every brand including those that GREW
+    (so an offsetting gain is visible, not just its net effect); "all" only
+    declining brands; "worst" only the worst-declining one.
+
+    Returns (display_df, row_types) — products plain, brand totals 'storetotal',
+    store totals 'block'.
+    """
+    asof = as_of(df) if asof is None else pd.Timestamp(asof)
+    cur, pri = report_frames(df, "YTD", asof=asof, anchor_takeover=anchor_takeover)
+    master = load_store_master().set_index("tableau_name")
+
+    def total(frame, keys):
+        return frame.groupby(keys)[COL_AMOUNT].sum()
+
+    stores = pd.DataFrame({"ty": total(cur, [COL_STORE_LABEL]),
+                           "ly": total(pri, [COL_STORE_LABEL])}).fillna(0.0)
+    stores["short"] = stores["ty"] - stores["ly"]
+    stores = stores[stores["short"] < 0].sort_values("short")
+
+    br_c, br_p = total(cur, [COL_STORE_LABEL, COL_BRAND]), total(pri, [COL_STORE_LABEL, COL_BRAND])
+    dv_c = total(cur, [COL_STORE_LABEL, COL_BRAND, COL_DIVISION])
+    dv_p = total(pri, [COL_STORE_LABEL, COL_BRAND, COL_DIVISION])
+
+    def _frame(c, p, key):
+        f = pd.DataFrame({"ty": c.get(key, pd.Series(dtype=float)),
+                          "ly": p.get(key, pd.Series(dtype=float))}).fillna(0.0)
+        f["short"] = f["ty"] - f["ly"]
+        return f.sort_values("short")
+
+    date_txt = f"{asof:%d-%m-%Y}"
+    rows, types = [], []
+
+    def emit(r, label, rtype, region="", code="", location=""):
+        # No prior-year sales means there is no growth rate, only a value.
+        # Reporting that as 0% or infinity would both mislead.
+        gd = (r["ty"] - r["ly"]) / r["ly"] * 100 if r["ly"] else None
+        rows.append({"DATE": "",
+                     "Region": region, "STORE CODE": code, "LOCATION": location,
+                     "Brand / Product": label, "YTD LY": r["ly"],
+                     "YTD TY": r["ty"], "Shortfall": r["short"],
+                     "Degrowth %": gd})
+        types.append(rtype)
+
+    for store, s in stores.iterrows():
+        m = master.loc[store] if store in master.index else None
+        region = "" if m is None else str(m.get("region", ""))
+        code = "" if m is None else str(m.get("code", ""))
+        # A header opening each block: with the total sitting at the BOTTOM, a
+        # reader would otherwise be several rows into a store's products before
+        # learning whose they are.
+        rows.append({"DATE": date_txt, "Region": region, "STORE CODE": code,
+                     "LOCATION": str(store), "Brand / Product": "",
+                     "YTD LY": None, "YTD TY": None, "Shortfall": None,
+                     "Degrowth %": None})
+        types.append("block")
+
+        brands = _frame(br_c, br_p, store)
+        worst = brands.index[0] if len(brands) else None
+        for brand, b in brands.iterrows():
+            show = (products_under == "every"
+                    or (products_under == "all" and b["short"] < 0)
+                    or (products_under == "worst" and brand == worst
+                        and b["short"] < 0))
+            if show:
+                for div, d in _frame(dv_c, dv_p, (store, brand)).head(top_products).iterrows():
+                    # Under "every" a growing brand is shown too, so its rows
+                    # are whatever moved most — that is how an offset becomes
+                    # visible rather than just its net effect.
+                    # A line with nothing on either side is noise, not detail.
+                    if abs(d["ly"]) < 1 and abs(d["ty"]) < 1:
+                        continue
+                    if d["short"] < 0 or products_under == "every":
+                        emit(d, str(div), "store")
+            emit(b, f"{brand} Total", "storetotal")
+        emit(s, f"{store} Total", "block")
+
+    return pd.DataFrame(rows, columns=DRIVERS_COLS), types

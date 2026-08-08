@@ -1536,7 +1536,7 @@ def render_productivity(pr, key):
 # menu. Selection lives in session_state (active_nav), so it PERSISTS on rerun.
 _TAB_LABELS = [
     "🧾 VFL G/D", "🧾 VFL Gender", "📄 Report PDF",
-    "📋 MTD / YTD Report", "📉 Degrowth",
+    "📋 MTD / YTD Report", "📉 Degrowth", "🔎 Degrowth Drivers",
     "🧑‍🤝‍🧑 Gender G/D", "🏷️ Brand G/D", "🏬 Store × Brand G/D", "⚖️ Gender Mix",
     "📊 Executive", "🎯 Day Targets", "🏙️ City-wise G/D", "📅 Monthly Contribution",
     "📐 Store Productivity", "Overview", "🏬 Stores",
@@ -1671,6 +1671,57 @@ if nav == "📋 MTD / YTD Report":
 # =========================================================================== #
 # DEGROWTH — stores below last year (watchlist)
 # =========================================================================== #
+if nav == "🔎 Degrowth Drivers":
+    st.subheader("Degrowth drivers")
+    st.caption(
+        "Why each declining store is down, not just that it is. Every store's "
+        "shortfall is decomposed into **rupees** by brand, then into the worst "
+        "products beneath the brand doing most of the damage. The brand rows sum "
+        f"to the store's shortfall, so the attribution is complete. As of "
+        f"**{end_d:%d %b %Y}** — respects all filters.")
+    dd_depth = st.radio(
+        "Product detail", ["Every brand", "Every declining brand",
+                           "Worst brand only"],
+        horizontal=True, key="dd_depth",
+        help="How far to break brands down into products. 'Every brand' also "
+             "breaks out brands that GREW, which is how you see what is "
+             "offsetting a decline.")
+    dd_n = st.slider("Products shown per brand", 1, 6, 3, key="dd_n")
+
+    drv, drv_types = L.degrowth_drivers(
+        df_exec, asof=pd.Timestamp(end_d), top_products=dd_n,
+        products_under={"Every brand": "every",
+                        "Every declining brand": "all",
+                        "Worst brand only": "worst"}[dd_depth])
+
+    if drv.empty:
+        st.success("🎉 No stores in degrowth for this selection.")
+    else:
+        _stores = drv_types.count("block")
+        _short = float(drv.loc[[t == "block" for t in drv_types], "Shortfall"].sum())
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Stores degrowing", f"{_stores}")
+        c2.metric("Total shortfall", inr(_short))
+        c3.metric("Rows", f"{len(drv)}")
+        # A store can be masking a large decline with a large gain elsewhere;
+        # that is the case worth pointing at, since a store total hides it.
+        _off = [str(drv.iloc[i]["Brand / Product"]).replace(" Total", "")
+                for i, t in enumerate(drv_types)
+                if t == "storetotal" and drv.iloc[i]["Shortfall"] > 0]
+        if _off:
+            st.info("Some declining stores have a **growing** brand offsetting "
+                    "the fall — the store total hides it: "
+                    + ", ".join(sorted(set(_off))))
+        st.markdown(
+            styled_report_html(drv, money_cols=L.DRIVERS_MONEY,
+                               pct_cols=L.DRIVERS_PCT,
+                               sign_cols=["Shortfall"] + L.DRIVERS_PCT,
+                               row_types=drv_types),
+            unsafe_allow_html=True)
+        st.download_button("⬇ Download (CSV)", drv.to_csv(index=False).encode(),
+                           file_name=f"degrowth_drivers_{end_d:%Y%m%d}.csv",
+                           mime="text/csv")
+
 if nav == "📉 Degrowth":
     st.subheader("Degrowth watchlist")
     dg_kind = st.radio("Period", ["YTD", "MTD"], horizontal=True, key="dg_kind")
