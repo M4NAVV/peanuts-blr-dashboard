@@ -1707,7 +1707,8 @@ DRIVERS_LEVELS = {"division": [COL_DIVISION],
 
 def degrowth_drivers(df: pd.DataFrame, asof=None, kind: str = "YTD",
                      top_products: int = 3, products_under: str = "worst",
-                     level: str = "division", anchor_takeover: bool = True):
+                     level: str = "division", only_declining: bool = True,
+                     stores_only=None, anchor_takeover: bool = True):
     """Every declining store, decomposed: products, then brand totals, then the
     store total beneath them.
 
@@ -1749,7 +1750,15 @@ def degrowth_drivers(df: pd.DataFrame, asof=None, kind: str = "YTD",
     stores = pd.DataFrame({"ty": total(cur, [COL_STORE_LABEL]),
                            "ly": total(pri, [COL_STORE_LABEL])}).fillna(0.0)
     stores["short"] = stores["ty"] - stores["ly"]
-    stores = stores[stores["short"] < 0].sort_values("short")
+    # `only_declining` is right for the group view — a watchlist of stores with
+    # a problem. It is wrong for a per-store snapshot sent to that store's own
+    # manager, where a good month should read as a good month rather than the
+    # manager receiving nothing. There "Shortfall" is simply a surplus.
+    if only_declining:
+        stores = stores[stores["short"] < 0]
+    if stores_only is not None:
+        stores = stores[stores.index.isin(set(stores_only))]
+    stores = stores.sort_values("short")
 
     br_c, br_p = total(cur, [COL_STORE_LABEL, COL_BRAND]), total(pri, [COL_STORE_LABEL, COL_BRAND])
     prod_keys = DRIVERS_LEVELS.get(level, DRIVERS_LEVELS["division"])

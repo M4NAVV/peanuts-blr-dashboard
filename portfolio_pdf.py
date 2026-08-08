@@ -21,6 +21,7 @@ how many pixels each glyph gets.
 from __future__ import annotations
 
 import io
+import math
 import re
 
 import pandas as pd
@@ -47,7 +48,12 @@ LINE = (231, 225, 214)               # hairline (frame furniture, not the table)
 # Sampled directly off the reference PDF, so these are their exact Excel fills.
 HDR_BG = (218, 238, 243)             # #DAEEF3 pale blue — column headers
 TOTAL_BG = (255, 255, 0)             # #FFFF00 yellow  — total / subtotal rows
-NEG_BG = (255, 0, 0)                 # #FF0000 red     — negative % cells
+NEG_INK = (255, 0, 0)                # #FF0000 red — negative figures. Applied
+                                     # to the TEXT, not as a cell fill: a solid
+                                     # block fights the yellow total rows and
+                                     # reads as alarm rather than pointing at
+                                     # anything. The figures are the message.
+NEG_BG = NEG_INK                     # retained for callers that name the colour
 GRID = (99, 99, 99)                  # full gridline, every cell
 INK = (0, 0, 0)                      # body text
 
@@ -91,7 +97,7 @@ BOLD_COLS = {"STORE NAME MAIN", "STORE NAME", "STORE CODE", "PARENT",
 BOLD_SIGN_CELLS = False
 
 # --- conditional formatting ------------------------------------------------ #
-# Value-driven cell fills, as (column, predicate, fill, row_types) handed to
+# Value-driven text colouring, as (column, predicate, ink, row_types) handed to
 # _add_sheet. `row_types` restricts which rows the rule sees; None means every
 # row in that column, totals included. Each pack passes its own rules — these
 # are NOT shared between the Portfolio and VFL reports.
@@ -101,7 +107,7 @@ DAY_SALE_COL = "Sum of DAY SALE FIGURE"
 # total rows are already colour-coded and aggregate differently.
 DAY_SALE_FLOOR = 5000
 PORTFOLIO_CELL_RULES = (
-    (DAY_SALE_COL, lambda v: v < DAY_SALE_FLOOR, NEG_BG, {"store"}),
+    (DAY_SALE_COL, lambda v: v < DAY_SALE_FLOOR, NEG_INK, {"store"}),
 )
 
 # VFL G/D: a higher bar, on the store-total row.
@@ -109,7 +115,7 @@ VFL_DAY_SALE_FLOOR = 50000
 # Fires on the {code} Total row only — the store's whole day, not each
 # brand-line and not the location/region rollups above it.
 VFL_CELL_RULES = (
-    (DAY_SALE_COL, lambda v: v < VFL_DAY_SALE_FLOOR, NEG_BG, {"subtotal"}),
+    (DAY_SALE_COL, lambda v: v < VFL_DAY_SALE_FLOOR, NEG_INK, {"subtotal"}),
 )
 
 # --- render scale ---------------------------------------------------------- #
@@ -142,7 +148,12 @@ FOOTER_H = _px(48)   # footer band height
 # every pixel of side padding costs 36px of page width, and page width is what
 # apparent text size is measured against. Kept tight for that reason.
 PAD_X, PAD_Y = _px(9), _px(10)
-COL_CAP = _px(320)   # max data width before a column stops growing
+# Max data width before a column stops growing. Sized from the real strings:
+# the widest Division is 439px and the widest Section 486px, so a 320px cap
+# meant "MANYAVAR ACCESSORIES" spilled over the number beside it. Departments
+# reach 836px and are still capped — those get clipped rather than dictating the
+# page width.
+COL_CAP = _px(520)
 
 
 def _fmt_in(x, dec=2) -> str:
@@ -222,7 +233,7 @@ def _measure_table(df, *, money=(), pct=(), sign=(), money_dp=0,
         lines = _wrap(scratch, c, hbold, target)
         hw = max(scratch.textlength(ln, font=hbold) for ln in lines)
         hdr_lines.append(lines)
-        col_w.append(int(max(target, hw)) + 2 * PAD_X)
+        col_w.append(int(math.ceil(max(target, hw))) + 2 * PAD_X)
 
     asc, desc = reg.getmetrics()
     row_h = asc + desc + 2 * PAD_Y
@@ -280,21 +291,30 @@ def _render_chunk(m, row_types, rows, row_bg=None, cell_rules=()):
             color = INK
             # Negative growth is filled red (workbook convention), not just
             # coloured — it has to read at a glance on a phone.
-            # conditional formatting: value-driven cell fills (see build())
-            for rcol, test, fill, rtypes in cell_rules:
+            # Conditional formatting and negative figures both colour the TEXT
+            # rather than filling the cell — see NEG_INK.
+            for rcol, test, ink, rtypes in cell_rules:
                 if c != rcol or (rtypes is not None and t not in rtypes):
                     continue
                 v = m["raw"][i][j]
                 if v is not None and not pd.isna(v) and test(float(v)):
-                    d.rectangle([x + 1, y + 1, x + col_w[j] - 1, y + row_h - 1],
-                                fill=fill)
-                    f = bold
+                    color, f = ink, bold
             if c in sign and s not in ("", "—"):
                 if s.lstrip().startswith("-"):
-                    d.rectangle([x + 1, y + 1, x + col_w[j] - 1, y + row_h - 1],
-                                fill=NEG_BG)
-                if BOLD_SIGN_CELLS:
+                    color, f = NEG_INK, bold
+                elif BOLD_SIGN_CELLS:
                     f = bold
+            # Clip to the cell. A value wider than its column would otherwise
+            # be drawn straight over the neighbouring figure, which reads as a
+            # corrupted number rather than as truncated text.
+            # 1px of slack: widths are rounded, and clipping a value that
+            # actually fits turns a figure into a truncated one, which is far
+            # worse than a slightly tight cell.
+            avail = col_w[j] - 2 * PAD_X + 1
+            if scratch.textlength(s, font=f) > avail:
+                while s and scratch.textlength(s + "…", font=f) > avail:
+                    s = s[:-1]
+                s += "…"
             tw = scratch.textlength(s, font=f)
             cx = x + col_w[j] - PAD_X - tw if is_num[j] else x + PAD_X
             d.text((cx, y + PAD_Y), s, font=f, fill=color)

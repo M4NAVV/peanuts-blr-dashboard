@@ -1553,6 +1553,7 @@ def render_productivity(pr, key):
 _TAB_LABELS = [
     "🧾 VFL G/D", "🧾 VFL Gender", "📄 Report PDF",
     "📋 MTD / YTD Report", "📉 Degrowth", "🔎 Degrowth Drivers",
+    "📸 Morning snapshots",
     "🧑‍🤝‍🧑 Gender G/D", "🏷️ Brand G/D", "🏬 Store × Brand G/D", "⚖️ Gender Mix",
     "📊 Executive", "🎯 Day Targets", "🏙️ City-wise G/D", "📅 Monthly Contribution",
     "📐 Store Productivity", "Overview", "🏬 Stores",
@@ -1687,6 +1688,98 @@ if nav == "📋 MTD / YTD Report":
 # =========================================================================== #
 # DEGROWTH — stores below last year (watchlist)
 # =========================================================================== #
+if nav == "📸 Morning snapshots":
+    import io as _io
+    import zipfile
+    import snapshots as SN
+
+    st.subheader("Morning snapshots")
+    st.caption(
+        "The set that goes into the WhatsApp group each morning, as one ZIP of "
+        "PNGs. **Sidebar filters are ignored** — these are always the full "
+        f"estate, as of **{end_d:%d %b %Y}**. Per-store files are for sending "
+        "to that store's manager, so each shows only their own store.")
+
+    _asof = pd.Timestamp(end_d)
+    _master = L.load_store_master().set_index("tableau_name")
+    _closed = L.closed_map()
+    # Unfiltered on purpose: a morning broadcast filtered by whatever was left
+    # in the sidebar would be quietly wrong, and nobody receiving it could tell.
+    _src = df_all
+
+    _stores = [st_ for st_ in sorted(_src[L.COL_STORE_LABEL].dropna().unique())
+               if not (st_ in _master.index
+                       and int(_master.loc[st_, "code"]) in _closed)]
+
+    c1, c2, c3 = st.columns(3)
+    want_store_wise = c1.checkbox("Store-wise MTD / YTD", value=True,
+                                  help="One image, both periods, year on year.")
+    want_degrowth = c2.checkbox("Degrowth by region", value=True,
+                                help="MTD and YTD × South and East & NE = 4.")
+    want_drivers = c3.checkbox("Per-store drivers", value=True,
+                               help=f"{len(_stores)} stores × MTD and YTD.")
+
+    _n = (1 if want_store_wise else 0) + (4 if want_degrowth else 0) \
+        + (len(_stores) * 2 if want_drivers else 0)
+    st.caption(f"**{_n} image(s)** — `shared/` for the group, `by-store/` for "
+               "individual managers.")
+
+    if st.button("📦 Build the ZIP", type="primary", disabled=_n == 0,
+                 use_container_width=True):
+        bar = st.progress(0.0, text="Starting…")
+        buf, failed = _io.BytesIO(), []
+        # A list rather than an int: this block runs at module scope, where a
+        # closure cannot rebind a plain counter.
+        done = [0]
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+            def _add(folder, made):
+                if made:
+                    z.writestr(f"{folder}/{made[0]}", made[1])
+                done[0] += 1
+                bar.progress(min(done[0] / max(_n, 1), 1.0),
+                             text=f"{done[0]} of {_n} — "
+                                  f"{made[0] if made else 'skipped'}")
+
+            try:
+                if want_store_wise:
+                    _add("shared", SN.store_wise(L, _src, _asof))
+                if want_degrowth:
+                    for _k in ("MTD", "YTD"):
+                        for _r in ("South", "East & NE"):
+                            _add("shared",
+                                 SN.degrowth_region(L, _src, _asof, _k, _r))
+                if want_drivers:
+                    for _st in _stores:
+                        _code = (int(_master.loc[_st, "code"])
+                                 if _st in _master.index else None)
+                        for _k in ("MTD", "YTD"):
+                            try:
+                                _add("by-store",
+                                     SN.drivers_store(L, _src, _asof, _k, _st,
+                                                      _code))
+                            except Exception as e:      # one store must not
+                                failed.append(f"{_st} {_k}: {e}")  # sink the run
+                                done[0] += 1
+            except Exception as e:
+                st.error(f"Could not finish the ZIP: {e}")
+                bar.empty()
+                st.stop()
+        bar.empty()
+        st.session_state["snap_zip"] = buf.getvalue()
+        st.session_state["snap_name"] = f"snapshots_{_asof:%Y-%m-%d}.zip"
+        if failed:
+            st.warning(f"{len(failed)} snapshot(s) failed: " + "; ".join(failed[:5]))
+        st.success(f"{done[0]} image(s) · "
+                   f"{len(st.session_state['snap_zip']) / 1e6:.1f} MB")
+
+    if st.session_state.get("snap_zip"):
+        st.download_button("⬇ Download the ZIP", st.session_state["snap_zip"],
+                           file_name=st.session_state.get("snap_name",
+                                                          "snapshots.zip"),
+                           mime="application/zip", use_container_width=True)
+        st.caption("Send these as **documents** in WhatsApp, not photos — "
+                   "photos get recompressed and the detail is lost.")
+
 if nav == "🔎 Degrowth Drivers":
     st.subheader("Degrowth drivers")
     dd_kind = st.radio("Period", list(L.DRIVERS_PERIODS), horizontal=True,
