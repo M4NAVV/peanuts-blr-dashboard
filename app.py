@@ -1689,12 +1689,17 @@ if nav == "📋 MTD / YTD Report":
 # =========================================================================== #
 if nav == "🔎 Degrowth Drivers":
     st.subheader("Degrowth drivers")
+    dd_kind = st.radio("Period", list(L.DRIVERS_PERIODS), horizontal=True,
+                       key="dd_kind",
+                       help="YTD is the year's story; MTD says whether the "
+                            "decline is still happening this month.")
     st.caption(
-        "Why each declining store is down, not just that it is. Every store's "
-        "shortfall is decomposed into **rupees** by brand, then into the worst "
-        "products beneath the brand doing most of the damage. The brand rows sum "
-        f"to the store's shortfall, so the attribution is complete. As of "
-        f"**{end_d:%d %b %Y}** — respects all filters.")
+        f"Why each declining store is down on **{dd_kind}**, not just that it "
+        "is. Every store's shortfall is decomposed into **rupees** by brand, "
+        "then into the worst products beneath the brand doing most of the "
+        "damage. The brand rows sum to the store's shortfall, so the "
+        f"attribution is complete. As of **{end_d:%d %b %Y}** — respects all "
+        "filters.")
     dd_depth = st.radio(
         "Product detail", ["Every brand", "Every declining brand",
                            "Worst brand only"],
@@ -1711,7 +1716,7 @@ if nav == "🔎 Degrowth Drivers":
              "worst lines are ranked at, not how many rows are shown.")
 
     drv, drv_types = L.degrowth_drivers(
-        df_exec, asof=pd.Timestamp(end_d), top_products=dd_n,
+        df_exec, asof=pd.Timestamp(end_d), kind=dd_kind, top_products=dd_n,
         products_under={"Every brand": "every",
                         "Every declining brand": "all",
                         "Worst brand only": "worst"}[dd_depth],
@@ -1736,13 +1741,14 @@ if nav == "🔎 Degrowth Drivers":
                     "the fall — the store total hides it: "
                     + ", ".join(sorted(set(_off))))
         st.markdown(
-            styled_report_html(drv, money_cols=L.DRIVERS_MONEY,
+            styled_report_html(drv, money_cols=L.drivers_money(dd_kind),
                                pct_cols=L.DRIVERS_PCT,
                                sign_cols=["Shortfall"] + L.DRIVERS_PCT,
                                row_types=drv_types),
             unsafe_allow_html=True)
         st.download_button("⬇ Download (CSV)", drv.to_csv(index=False).encode(),
-                           file_name=f"degrowth_drivers_{end_d:%Y%m%d}.csv",
+                           file_name=f"degrowth_drivers_{dd_kind.lower()}_"
+                                     f"{end_d:%Y%m%d}.csv",
                            mime="text/csv")
 
 if nav == "📉 Degrowth":

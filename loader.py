@@ -1684,9 +1684,18 @@ def day_sales_ly_report(df: pd.DataFrame, day):
 # --------------------------------------------------------------------------- #
 # Degrowth drivers — why a store is down, not just that it is
 # --------------------------------------------------------------------------- #
-DRIVERS_COLS = ["DATE", "Region", "STORE CODE", "LOCATION", "Brand",
-                "Division", "Section", "Department",
-                "YTD LY", "YTD TY", "Shortfall", "Degrowth %"]
+DRIVERS_PERIODS = ("YTD", "MTD")
+DRIVERS_PCT = ["Degrowth %"]
+
+
+def drivers_money(kind: str = "YTD"):
+    return [f"{kind} LY", f"{kind} TY", "Shortfall"]
+
+
+def drivers_cols(kind: str = "YTD"):
+    return ["DATE", "Region", "STORE CODE", "LOCATION", "Brand",
+            "Division", "Section", "Department",
+            f"{kind} LY", f"{kind} TY", "Shortfall", "Degrowth %"]
 # Division (31) -> Section (160) -> Department (612). The hierarchy nests: no
 # department spans two sections, so the three read as one path rather than three
 # independent tags. `level` picks which of them the product rows are grouped at;
@@ -1694,13 +1703,11 @@ DRIVERS_COLS = ["DATE", "Region", "STORE CODE", "LOCATION", "Brand",
 DRIVERS_LEVELS = {"division": [COL_DIVISION],
                   "section": [COL_DIVISION, COL_SECTION],
                   "department": [COL_DIVISION, COL_SECTION, COL_DEPARTMENT]}
-DRIVERS_MONEY = ["YTD LY", "YTD TY", "Shortfall"]
-DRIVERS_PCT = ["Degrowth %"]
 
 
-def degrowth_drivers(df: pd.DataFrame, asof=None, top_products: int = 3,
-                     products_under: str = "worst", level: str = "division",
-                     anchor_takeover: bool = True):
+def degrowth_drivers(df: pd.DataFrame, asof=None, kind: str = "YTD",
+                     top_products: int = 3, products_under: str = "worst",
+                     level: str = "division", anchor_takeover: bool = True):
     """Every declining store, decomposed: products, then brand totals, then the
     store total beneath them.
 
@@ -1728,7 +1735,12 @@ def degrowth_drivers(df: pd.DataFrame, asof=None, top_products: int = 3,
     store totals 'block'.
     """
     asof = as_of(df) if asof is None else pd.Timestamp(asof)
-    cur, pri = report_frames(df, "YTD", asof=asof, anchor_takeover=anchor_takeover)
+    # MTD answers a different question from YTD: whether a decline is history
+    # or happening right now. A store can be badly down on the year while
+    # trading level this month, or the reverse — and those need opposite
+    # responses.
+    kind = kind if kind in DRIVERS_PERIODS else "YTD"
+    cur, pri = report_frames(df, kind, asof=asof, anchor_takeover=anchor_takeover)
     master = load_store_master().set_index("tableau_name")
 
     def total(frame, keys):
@@ -1765,7 +1777,7 @@ def degrowth_drivers(df: pd.DataFrame, asof=None, top_products: int = 3,
         rows.append({**ident, "Brand": brand,
                      "Division": path[0], "Section": path[1],
                      "Department": path[2],
-                     "YTD LY": r["ly"], "YTD TY": r["ty"],
+                     f"{kind} LY": r["ly"], f"{kind} TY": r["ty"],
                      "Shortfall": r["short"], "Degrowth %": gd})
         types.append(rtype)
 
@@ -1804,7 +1816,7 @@ def degrowth_drivers(df: pd.DataFrame, asof=None, top_products: int = 3,
             emit(b, str(brand), ("Total",), "subtotal")
         emit(s, "TOTAL", (), "block")
 
-    out = pd.DataFrame(rows, columns=DRIVERS_COLS)
+    out = pd.DataFrame(rows, columns=drivers_cols(kind))
     # Only keep the product columns the chosen level actually fills. Rendering
     # Section and Department as permanently blank at Division level just asks
     # the reader to wonder what is missing.
