@@ -22,11 +22,12 @@ DATE is Indian day-first (e.g. 1/4/2025 = 1 April 2025).
 
 from __future__ import annotations
 
-import calendar
 import io
 import os
 
 import pandas as pd
+
+from projections import project_mtd, project_ytd
 
 _DIR = os.path.dirname(__file__)
 _MASTER_PATH = os.path.join(_DIR, "portfolio_store_master.csv")
@@ -631,7 +632,6 @@ def gd_sheet_report(df: pd.DataFrame, asof=None):
                    (df["date"] <= pd.Timestamp(fy_year, 3, 31))])
 
     # Projection day-counts.
-    days_in_month = calendar.monthrange(asof.year, asof.month)[1]
     fy_start = pd.Timestamp(fy_year, 4, 1)
 
     def _doo_ts(s):
@@ -641,15 +641,11 @@ def gd_sheet_report(df: pd.DataFrame, asof=None):
         c = int(a["code"])
         mty, mly = float(mtd_ty.get(c, 0.0)), float(mtd_ly.get(c, 0.0))
         yty, yly = float(ytd_ty.get(c, 0.0)), float(ytd_ly.get(c, 0.0))
-        proj_mtd = mty * days_in_month / asof.day
         doo = _doo_ts(a["doo"])
-        ytd_start = max(fy_start, doo)
-        days_elapsed = max((asof - ytd_start).days + 1, 1)
-        # A closed store's year is over: freeze the projection at what it
-        # actually took, rather than annualising a shut store to a full year.
         closed = pd.to_datetime(a["closed"]) if a["closed"] else None
-        proj_ytd = (yty if closed is not None and closed <= asof
-                    else yty * 365.0 / days_elapsed)
+        # Run-rate over the days actually traded (see projections.py).
+        proj_mtd = project_mtd(mty, asof, doo, closed)
+        proj_ytd = project_ytd(yty, fy_start, doo, asof, closed)
         return {
             "Region": a["region"], "NEW/OLD": a["new_old"], "STORE CODE": c,
             "STORE NAME MAIN": a["store_name_main"], "LOCATION": a["location_main"],
@@ -892,7 +888,6 @@ def _gd_store_metrics(df: pd.DataFrame, asof: pd.Timestamp) -> dict:
     fy_year = asof.year if asof.month >= 4 else asof.year - 1
     ly_full = g(df[(df["date"] >= pd.Timestamp(fy_year - 1, 4, 1)) &
                    (df["date"] <= pd.Timestamp(fy_year, 3, 31))])
-    days_in_month = calendar.monthrange(asof.year, asof.month)[1]
     fy_start = pd.Timestamp(fy_year, 4, 1)
     out = {}
     for c in attrs.index:
@@ -901,16 +896,14 @@ def _gd_store_metrics(df: pd.DataFrame, asof: pd.Timestamp) -> dict:
         yty, yly = float(ytd_ty.get(c, 0.0)), float(ytd_ly.get(c, 0.0))
         doo_s = attrs.loc[c, "doo"]
         doo = pd.to_datetime(doo_s) if doo_s else fy_start
-        days_elapsed = max((asof - max(fy_start, doo)).days + 1, 1)
         cl_s = attrs.loc[c, "closed"]
         closed = pd.to_datetime(cl_s) if cl_s else None
-        proj_ytd = (yty if closed is not None and closed <= asof
-                    else yty * 365.0 / days_elapsed)
+        proj_ytd = project_ytd(yty, fy_start, doo, asof, closed)
         out[c] = {
             "ytd_ly": yly, "ytd_ty": yty, "gd_ytd": _gd_frac(yty, yly),
             "mtd_ly": mly, "mtd_ty": mty, "gd_mtd": _gd_frac(mty, mly),
             "day": float(day.get(c, 0.0)), "month_ly": float(month_ly.get(c, 0.0)),
-            "proj_mtd": mty * days_in_month / asof.day,
+            "proj_mtd": project_mtd(mty, asof, doo, closed),
             "ly_full": float(ly_full.get(c, 0.0)), "proj_ytd": proj_ytd,
         }
     return out

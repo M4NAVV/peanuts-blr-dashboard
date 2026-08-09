@@ -21,6 +21,8 @@ from datetime import datetime
 
 import pandas as pd
 
+import projections as PROJ
+
 # Column names as they appear in the raw Tableau export.
 COL_STORE = "SHORT_NAME"
 COL_DATE = "Bill Date"
@@ -1092,7 +1094,6 @@ def _gd_by(df: pd.DataFrame, keys, asof=None, anchor_takeover: bool = True,
     from report_frames (takeover-anchored unless `anchor_takeover=False`); adds
     day-sale, LY same-month, LY full year, run-rate projections and GD% columns.
     `new_store_no_ly=True` zeros last-year for stores opened this FY (report view)."""
-    import calendar
     asof, day, ly_month, ly_full = _extra_gd_windows(df, asof)
     ycur, ypri = report_frames(df, "YTD", asof=asof, anchor_takeover=anchor_takeover,
                                new_store_no_ly=new_store_no_ly)
@@ -1109,13 +1110,15 @@ def _gd_by(df: pd.DataFrame, keys, asof=None, anchor_takeover: bool = True,
         "LY Full Sales": g(ly_full),
     }).fillna(0.0)
 
-    # Simple run-rate projections (calendar-day based). NOTE: the source sheet
-    # projects on OPERATIONAL days — calibrate here once that formula is known.
-    dim_total = calendar.monthrange(asof.year, asof.month)[1]
+    # Run-rate projections (projections.py). Rows here can be brand-lines rather
+    # than stores, so there is no meaningful per-row DOO — the period start is
+    # the plain fiscal/month start. `vfl_gd_report` recomputes its own store rows
+    # against their real DOO and closure afterwards.
     fy_year = asof.year if asof.month >= 4 else asof.year - 1
-    days_elapsed = (asof - pd.Timestamp(fy_year, 4, 1)).days + 1
-    out["Projected MTD"] = out["MTD TY"] * dim_total / max(asof.day, 1)
-    out["Projected YTD"] = out["YTD TY"] * 365.0 / max(days_elapsed, 1)
+    out["Projected MTD"] = PROJ.project(
+        out["MTD TY"], asof.replace(day=1), asof, None, PROJ.MONTH_DAYS)
+    out["Projected YTD"] = PROJ.project(
+        out["YTD TY"], pd.Timestamp(fy_year, 4, 1), asof, None, PROJ.YEAR_DAYS)
 
     ly_ytd = out["YTD LY"].replace(0, pd.NA)
     ly_mtd = out["MTD LY"].replace(0, pd.NA)
@@ -1322,34 +1325,32 @@ def vfl_gd_report(df: pd.DataFrame, asof=None, gen_date=None):
     sb["Location"] = sb["location"]
     sb["DOO"] = _doo_series(sb["Store Code"], sb["takeover_date"])
 
-    # Projections on the GEN-DATE elapsed days (matches the workbook): MTD over the
-    # (1st-of-review-month → gen date) window projected to the full month; YTD
-    # scaled from the days a store has actually traded to the days it CAN trade
-    # this fiscal year.
+    # Projections on the GEN-DATE operational days — the shared rule in
+    # projections.py: achieved / days actually traded x 365 (year) or x 30 (month).
+    # Both denominators run from the later of the period start and the store's
+    # DOO, so a store opened mid-period is rated on the days it has traded.
     #
-    # That second denominator is per-store, not a flat 365 (verified against the
-    # 05-08-2026 workbook, which it reproduces to 0.00% on 20 of 21 stores):
-    #   window  = (FY-end   - max(FY-start, DOO)) + 1   # days available this FY
-    #   elapsed = (min(gen, closed) - max(FY-start, DOO)) + 1
-    # A store opened mid-year has a shorter year to fill — South opened 19-Apr,
-    # so its window is 347 days, and annualising it over 365 overstated its
-    # projection by 5.2%. A closed store stops accruing elapsed days at closure.
-    import calendar
+    # ⚠️ This REPLACED a per-store 347-day fiscal window that reproduced the
+    # 05-08-2026 workbook to 0.00% on 20 of 21 stores. Manav restated the rule as
+    # a flat 365 on 9 Aug, which is what the portfolio pack always used; the two
+    # packs now agree with each other and with him, and no longer with that
+    # workbook's YTD projection column. Deliberate — do not "fix" it back.
     rm_start = asof.replace(day=1)
-    dim = calendar.monthrange(asof.year, asof.month)[1]
-    elapsed_mtd = max((gen_date - rm_start).days + 1, 1)
     fy_year = asof.year if asof.month >= 4 else asof.year - 1
     fy_start = pd.Timestamp(fy_year, 4, 1)
-    fy_end = pd.Timestamp(fy_year + 1, 3, 31)
     _doo = pd.to_datetime(sb["Store Code"].map(doo_map()), errors="coerce")
     _doo = _doo.fillna(pd.to_datetime(sb["takeover_date"], errors="coerce"))
-    store_start = _doo.where(_doo > fy_start, fy_start)
     _closed = pd.to_datetime(sb["Store Code"].map(closed_map()), errors="coerce")
-    store_end = _closed.where(_closed.notna() & (_closed < gen_date), gen_date)
-    window_ytd = ((fy_end - store_start).dt.days + 1).clip(lower=1)
-    elapsed_ytd = ((store_end - store_start).dt.days + 1).clip(lower=1)
-    sb["Projected MTD"] = sb["MTD TY"] * dim / elapsed_mtd
-    sb["Projected YTD"] = sb["YTD TY"] * window_ytd / elapsed_ytd
+    ytd_start = _doo.where(_doo > fy_start, fy_start)
+    mtd_start = _doo.where(_doo > rm_start, rm_start)
+    op_ytd = ((gen_date - ytd_start).dt.days + 1).clip(lower=1)
+    op_mtd = ((gen_date - mtd_start).dt.days + 1).clip(lower=1)
+    shut = _closed.notna() & (_closed <= gen_date)
+    # A closed store's period is over: freeze at what it actually took.
+    sb["Projected MTD"] = (sb["MTD TY"] * PROJ.MONTH_DAYS / op_mtd).where(
+        ~shut, sb["MTD TY"])
+    sb["Projected YTD"] = (sb["YTD TY"] * PROJ.YEAR_DAYS / op_ytd).where(
+        ~shut, sb["YTD TY"])
 
     # Drop pure-return / all-zero brand-lines (no positive activity), like the sheet.
     keep = ((sb["YTD LY"] > 0) | (sb["YTD TY"] > 0)
