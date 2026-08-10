@@ -47,23 +47,22 @@ def build(df, asof, gen_date=None, basis_label=""):
                       money=L.VFL_GENDER_MONEY, pct=L.VFL_GENDER_PCT, sign=[],
                       money_dp=0, row_bg=PP.VFL_ROW_BG)
 
-        cover_rows = [
-            ("As of", f"{asof:%d %b %Y}"),
-            ("Basis", basis_label or f"Live to {asof:%d %b %Y}"),
-            ("Sheets", "Growth / Degrowth · Gender Contribution · Region × Gender"),
-            ("Generated", f"{pd.Timestamp.now(tz='Asia/Kolkata'):%d %b %Y, %H:%M} IST"),
-        ]
+        # Executive Snapshot — replaces the cover. Sized to the box the sheets
+        # establish, then placed first.
+        import exec_snapshot as ES
+        tbl_w = max(c.width for _, c in contents)
+        tbl_h = max(c.height for _, c in contents)
+        snap = ES.content(ES.vfl_metrics(df, asof, gen_date, basis_label),
+                          tbl_w, tbl_h)
+        contents = [("Executive Snapshot", snap)] + contents
 
         page_w = max(c.width for _, c in contents) + 2 * (PP.MARGIN + PP.FRAME + PP.PAD)
         page_h = max(c.height for _, c in contents) + (
             PP.MARGIN + PP.FRAME + PP.HEADER_H + PP.PAD + PP.FOOTER_H
             + PP.FRAME + PP.MARGIN)
-        pages = [PP._cover(page_w, asof, basis_label, cover_rows,
-                           title="Peanuts Retail — VFL Report",
-                           subtitle="Manyavar · Mohey — Growth / Degrowth",
-                           page_h=page_h)]
-        total = len(contents) + 1
-        for i, (section, content) in enumerate(contents, start=2):
+        pages = []
+        total = len(contents)
+        for i, (section, content) in enumerate(contents, start=1):
             pages.append(PP._compose(content, section, asof_label, i, total, page_w,
                                      footer_right=_FOOTER, page_h=page_h))
 

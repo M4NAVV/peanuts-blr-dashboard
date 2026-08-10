@@ -687,16 +687,6 @@ def build(pf, pf_all, asof, basis_label=""):
                    money=[c for c in _AVG_MONEY if c in disp.columns],
                    pct=["Sum of GD_YTD_%"], sign=["Sum of GD_YTD_%"], money_dp=2)
 
-        # cover
-        regions = ", ".join(sorted(pf["region"].dropna().unique())) if "region" in pf.columns else "—"
-        cover_rows = [
-            ("As of", f"{asof:%d %b %Y}"),
-            ("Basis", basis_label or f"Live to {asof:%d %b %Y}"),
-            ("Regions", regions or "—"),
-            ("Sheets", "MW Data · GD Sheet · Brand-wise · Loc-wise · Average"),
-            ("Generated", f"{pd.Timestamp.now(tz='Asia/Kolkata'):%d %b %Y, %H:%M} IST"),
-        ]
-
         # MW Data (whole portfolio, unfiltered), across two pages. Page one puts
         # the CURRENT year on its own row with the two prior years beneath it —
         # the current year is what gets read, and giving it a full row lets the
@@ -714,14 +704,22 @@ def build(pf, pf_all, asof, basis_label=""):
                              f"({_hist})", _fit_mw(_mw, _older, tbl_w, tbl_h)))
         contents = mw_pages + contents
 
+        # 1) Executive Snapshot — replaces the cover. Built last because it is
+        # sized to the box the tables establish, then put at the front so it is
+        # the first thing opened.
+        import exec_snapshot as ES
+        snap = ES.content(ES.portfolio_metrics(pf_all, asof, basis_label),
+                          tbl_w, tbl_h)
+        contents = [("Executive Snapshot", snap)] + contents
+
         # uniform page width = widest content + frame + margins; uniform height
         # = tallest page, so the document doesn't change size as you scroll.
         page_w = max(c.width for _, c in contents) + 2 * (MARGIN + FRAME + PAD)
         page_h = max(c.height for _, c in contents) + (
             MARGIN + FRAME + HEADER_H + PAD + FOOTER_H + FRAME + MARGIN)
-        pages = [_cover(page_w, asof, basis_label, cover_rows, page_h=page_h)]
-        total = len(contents) + 1
-        for i, (section, content) in enumerate(contents, start=2):
+        pages = []
+        total = len(contents)
+        for i, (section, content) in enumerate(contents, start=1):
             pages.append(_compose(content, section, asof_label, i, total, page_w,
                                   page_h=page_h))
 
