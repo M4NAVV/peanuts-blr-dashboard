@@ -1116,7 +1116,7 @@ def _gd_by(df: pd.DataFrame, keys, asof=None, anchor_takeover: bool = True,
     # against their real DOO and closure afterwards.
     fy_year = asof.year if asof.month >= 4 else asof.year - 1
     out["Projected MTD"] = PROJ.project(
-        out["MTD TY"], asof.replace(day=1), asof, None, PROJ.MONTH_DAYS)
+        out["MTD TY"], asof.replace(day=1), asof, None, PROJ.month_days(asof))
     out["Projected YTD"] = PROJ.project(
         out["YTD TY"], pd.Timestamp(fy_year, 4, 1), asof, None, PROJ.YEAR_DAYS)
 
@@ -1347,7 +1347,7 @@ def vfl_gd_report(df: pd.DataFrame, asof=None, gen_date=None):
     op_mtd = ((gen_date - mtd_start).dt.days + 1).clip(lower=1)
     shut = _closed.notna() & (_closed <= gen_date)
     # A closed store's period is over: freeze at what it actually took.
-    sb["Projected MTD"] = (sb["MTD TY"] * PROJ.MONTH_DAYS / op_mtd).where(
+    sb["Projected MTD"] = (sb["MTD TY"] * PROJ.month_days(asof) / op_mtd).where(
         ~shut, sb["MTD TY"])
     sb["Projected YTD"] = (sb["YTD TY"] * PROJ.YEAR_DAYS / op_ytd).where(
         ~shut, sb["YTD TY"])

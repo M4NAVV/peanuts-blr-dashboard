@@ -4,17 +4,18 @@ Projected MTD / YTD — ONE definition, shared by every report.
 The rule (Manav's, 9 Aug 2026):
 
     Projected YTD = YTD achieved  / operational days in the year  x 365
-    Projected MTD = MTD achieved  / operational days in the month x 30
+    Projected MTD = MTD achieved  / operational days in the month x days in that month
 
 "Operational days" = the days the store has actually been open in the period,
 counted inclusively from the later of the period start and its opening date
 (DOO) through the as-of date. A store that opened mid-year is therefore rated on
 the days it has traded, not on the whole period.
 
-Note the period multipliers are FLAT 365 and FLAT 30 — deliberately, not the
-store's remaining fiscal window and not the true length of the calendar month.
-The projection answers "at this run-rate, what does a full year / a full month
-look like?", which is a constant yardstick every store is measured against.
+★ THE MONTH MULTIPLIER IS THE REAL CALENDAR MONTH, NOT A CONSTANT (Manav,
+10 Aug). A flat 30 understated every 31-day month by 3.3% and overstated
+February by 7%, and the error moved with the calendar, so the same run-rate
+projected differently depending on which month you asked in. The year multiplier
+stays a flat 365; if a leap year ever needs handling it belongs here too.
 
 This module exists because this rule previously lived in FOUR copies (two in
 portfolio_loader, two in loader) which drifted apart — the VFL sheet annualised
@@ -25,9 +26,15 @@ report needing a projection must call `project()` rather than re-deriving it.
 
 from __future__ import annotations
 
-# Period multipliers. Flat by design — see the module docstring.
+import calendar
+
+# The year multiplier is flat; the month multiplier is not — see the docstring.
 YEAR_DAYS = 365.0
-MONTH_DAYS = 30.0
+
+
+def month_days(asof) -> float:
+    """Days in the calendar month `asof` falls in: 31, 30 or 28/29."""
+    return float(calendar.monthrange(asof.year, asof.month)[1])
 
 
 def operational_days(start, asof) -> int:
@@ -59,7 +66,8 @@ def project_ytd(achieved: float, fy_start, doo, asof, closed=None) -> float:
 
 
 def project_mtd(achieved: float, asof, doo=None, closed=None) -> float:
-    """Projected MTD: run-rate since the later of the 1st and opening x 30."""
+    """Projected MTD: run-rate since the later of the 1st and opening, scaled to
+    the length of the month actually being projected."""
     month_start = asof.replace(day=1)
     start = month_start if doo is None else max(month_start, doo)
-    return project(achieved, start, asof, closed, MONTH_DAYS)
+    return project(achieved, start, asof, closed, month_days(asof))
