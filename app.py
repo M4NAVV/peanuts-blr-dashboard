@@ -951,10 +951,23 @@ def render_portfolio():
         except Exception:
             pass
 
-        available = {"south_ltol": "South L-to-L sheet  ·  current month first, "
-                                   "then each earlier month of the year"}
+        available = {
+            "south_ltol": "South L-to-L sheet  ·  current month first, then each "
+                          "earlier month of the year",
+            "mw_south": "South month-wise total sale  ·  25-26 vs 26-27",
+            "mw_east": "East & NE month-wise total sale  ·  all stores, then the "
+                       "Mohey Manyavar stores",
+        }
         chosen = [k for k, label in available.items()
                   if st.checkbox(label, value=True, key=f"td_{k}")]
+        if "mw_east" in chosen:
+            # Its last-year store COUNT (and so the last-year store average and
+            # carpet area) comes from a comparable-store list kept by hand, which
+            # no data we hold reproduces. The sales columns are exact both years.
+            st.caption("⚠️ East month-wise: last-year **store counts, store "
+                       "averages and carpet area** are computed from the data and "
+                       "will differ from the workbook, which uses a hand-kept "
+                       "comparable-store list. All sales figures match.")
 
         if st.button("🧾 Generate", key="td_gen", type="primary",
                      use_container_width=True, disabled=not chosen):
@@ -965,9 +978,15 @@ def render_portfolio():
                     # year exists only in that feed.
                     vdf = get_data()
                     v_asof = L.as_of(vdf)
+                    basis = f"Live to {v_asof:%d %b %Y}"
                     built = []
                     if "south_ltol" in chosen:
-                        built.append(RTD.build_south_ltol(vdf, v_asof))
+                        built.append(RTD.build_south_ltol(vdf, v_asof, basis))
+                    if "mw_south" in chosen:
+                        built.append(RTD.build_month_wise_south(vdf, v_asof, basis))
+                    if "mw_east" in chosen:
+                        built.append(
+                            RTD.build_month_wise_east(pf_all, vdf, v_asof, basis))
                     name, payload, mime = RTD.bundle(built)
                     st.session_state["td_out"] = (name, payload, mime)
                 except Exception as e:                    # surface, don't crash tab

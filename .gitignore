@@ -23,3 +23,7 @@ _pdf_*/
 
 # Sample store reports for the extraction work — client data, never commit.
 sample_*.pdf
+
+# The full store master carries GST, phone numbers, addresses and store
+# mail IDs. This repo is PUBLIC — only the carpet-area extract is tracked.
+store_master_full.csv
