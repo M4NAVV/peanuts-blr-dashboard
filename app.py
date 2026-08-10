@@ -438,7 +438,7 @@ def _cr(x) -> str:
 _PF_TABS = ["📈 MW Data", "🧾 GD Sheet", "🏷️ Brand-wise GD", "🗺️ Loc-wise GD",
             "📐 Average", "📊 Executive", "📋 MTD / YTD Report", "📉 Degrowth",
             "🎯 Day Targets", "🥧 Contribution", "🏙️ City-wise G/D", "🏬 Stores",
-            "📅 Monthly", "📄 Report PDF"]
+            "📅 Monthly", "📄 Report PDF", "📑 REPORT T.D."]
 
 
 def render_portfolio():
@@ -512,6 +512,11 @@ def render_portfolio():
     st.sidebar.caption(f"Portfolio data loaded {pf_at:%d %b %Y, %I:%M %p} IST")
     if st.sidebar.button("🔄 Refresh portfolio data"):
         _load_portfolio_cached.clear()
+        # Report T.D. reads the VFL feed from this mode (South's last year lives
+        # only there), so refreshing here has to clear that cache too — it is
+        # the only refresh control this mode offers, and a button that silently
+        # leaves half the data stale is worse than no button.
+        _load_cached.clear()
         st.rerun()
 
     # ---- Apply category filters ----
@@ -920,6 +925,60 @@ def render_portfolio():
                 "⬇ Download PDF", st.session_state["pf_pdf"],
                 file_name=st.session_state.get("pf_pdf_name", "portfolio.pdf"),
                 mime="application/pdf", use_container_width=True)
+
+    elif nav == "📑 REPORT T.D.":
+        # A SEPARATE REPORTING VERTICAL. These reproduce the operational
+        # workbooks (L-to-L, month-wise totals, night SMS) and deliberately look
+        # like those Excel files rather than like the report packs above, which
+        # keep the growth-degrowth palette. Nothing here touches those.
+        import report_td as RTD
+        st.subheader("📑 Report T.D.")
+        st.caption(
+            "Reproductions of the operational workbooks, in their own format. "
+            "Pick one to download it as a PDF, or several to get them as a ZIP. "
+            "These are independent of the report packs on the other tabs.")
+
+        # South's last year is the previous operator's history, which only the
+        # VFL feed retains — the portfolio feed has no South last year at all.
+        # Show what the report will be built from. Every page is stamped with
+        # this date too, so a stale cache produces a report that says so rather
+        # than one that looks current.
+        try:
+            _td_asof = L.as_of(get_data())
+            st.caption(f"Sales data through **{_td_asof:%d %b %Y}**. "
+                       "Use *Refresh portfolio data* in the sidebar if the sheet "
+                       "has been updated since.")
+        except Exception:
+            pass
+
+        available = {"south_ltol": "South L-to-L sheet  ·  current month first, "
+                                   "then each earlier month of the year"}
+        chosen = [k for k, label in available.items()
+                  if st.checkbox(label, value=True, key=f"td_{k}")]
+
+        if st.button("🧾 Generate", key="td_gen", type="primary",
+                     use_container_width=True, disabled=not chosen):
+            with st.spinner("Building…"):
+                try:
+                    # Portfolio mode never loads the VFL frame, so pull it here
+                    # through the same cache the VFL side uses — South's last
+                    # year exists only in that feed.
+                    vdf = get_data()
+                    v_asof = L.as_of(vdf)
+                    built = []
+                    if "south_ltol" in chosen:
+                        built.append(RTD.build_south_ltol(vdf, v_asof))
+                    name, payload, mime = RTD.bundle(built)
+                    st.session_state["td_out"] = (name, payload, mime)
+                except Exception as e:                    # surface, don't crash tab
+                    st.session_state["td_out"] = None
+                    st.error(f"Could not build: {e}")
+
+        if st.session_state.get("td_out"):
+            name, payload, mime = st.session_state["td_out"]
+            st.success(f"Ready — {name}")
+            st.download_button(f"⬇ Download {name}", payload, file_name=name,
+                               mime=mime, use_container_width=True)
 
 
 # ---- Top-level data mode: whole-Portfolio breadth vs VFL depth ----
