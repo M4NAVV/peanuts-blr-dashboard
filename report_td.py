@@ -595,7 +595,7 @@ def build_month_wise_south(vfl_df, asof, basis_label="") -> tuple[str, bytes]:
 
 
 def build_month_wise_east(pf_df, vfl_df, asof, basis_label="") -> tuple[str, bytes]:
-    """Both sheets of the East workbook: ALL STORES, then the VFL stores."""
+    """Both sheets of the East workbook: OVERALL, then the VFL stores."""
     L, master, vfl = _scopes()
     asof = pd.Timestamp(asof)
     carpet = _carpet_map()
@@ -612,8 +612,8 @@ def build_month_wise_east(pf_df, vfl_df, asof, basis_label="") -> tuple[str, byt
                                store_col=L.COL_STORE_LABEL,
                                amount_col=L.COL_AMOUNT, code_col="_code")
         contents = [
-            ("East & NE · All stores",
-             render_monthwise(all_sheet, "ALL STORES — MONTH-WISE SALE DETAIL")),
+            ("East & NE · Overall",
+             render_monthwise(all_sheet, "OVERALL STORES — MONTH-WISE SALE DETAIL")),
             ("East & NE · Mohey Manyavar stores",
              render_monthwise(vfl_sheet,
                               "MOHEY MANYAVAR STORES — MONTH-WISE SALE DETAIL")),

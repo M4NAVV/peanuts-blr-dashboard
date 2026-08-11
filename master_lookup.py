@@ -21,6 +21,14 @@ import os
 import pandas as pd
 
 MASTER_URL_ENV = "STORE_MASTER_URL"
+
+# ★ HEAD OFFICE IS NOT A STORE (Manav, 11 Aug): "this should not be counted when
+# doing any sort of analytics. this is our office." It is a row in the master —
+# code 1001, name "HO", first bill date "X", 2,600 sqft — so it has to be
+# excluded explicitly wherever the master is read, or its floor space lands in
+# the carpet total and quietly deflates every throughput figure.
+# The store-intake pipeline carries the same exclusion for the same reason.
+NON_STORE_CODES = {1001}
 _EXTRACT = os.path.join(os.path.dirname(__file__), "store_carpet.csv")
 
 
@@ -44,7 +52,8 @@ def carpet() -> dict:
             code = pd.to_numeric(m.get("STORE CODE"), errors="coerce")
             area = pd.to_numeric(m.get("CARPET"), errors="coerce")
             got = {int(c): float(a) for c, a in zip(code, area)
-                   if pd.notna(c) and pd.notna(a)}
+                   if pd.notna(c) and pd.notna(a)
+                   and int(c) not in NON_STORE_CODES}
             if got:
                 return got
         except Exception:
@@ -53,4 +62,4 @@ def carpet() -> dict:
         return {}
     m = pd.read_csv(_EXTRACT)
     return {int(c): float(a) for c, a in zip(m["code"], m["carpet_sqft"])
-            if pd.notna(c) and pd.notna(a)}
+            if pd.notna(c) and pd.notna(a) and int(c) not in NON_STORE_CODES}

@@ -52,9 +52,13 @@ def build(df, asof, gen_date=None, basis_label=""):
         import exec_snapshot as ES
         tbl_w = max(c.width for _, c in contents)
         tbl_h = max(c.height for _, c in contents)
-        snap = ES.content(ES.vfl_metrics(df, asof, gen_date, basis_label),
-                          tbl_w, tbl_h)
-        contents = [("Executive Snapshot", snap)] + contents
+        # Whole estate first, then one page per region, each on its own scope.
+        snaps = [(None, "Executive Snapshot")]
+        for r in ES.regions_of(df, vfl=True):
+            snaps.append((r, f"Executive Snapshot · {r}"))
+        contents = [(sec, ES.content(
+            ES.vfl_metrics(df, asof, gen_date, basis_label, region=r),
+            tbl_w, tbl_h)) for r, sec in snaps] + contents
 
         page_w = max(c.width for _, c in contents) + 2 * (PP.MARGIN + PP.FRAME + PP.PAD)
         page_h = max(c.height for _, c in contents) + (

@@ -15,17 +15,21 @@ Five bands, top to bottom:
   1. six tiles      — YTD, MTD, day, projected year, breadth, estate
   2. trajectory     — the last five months, this year against last
   3. a four-column body — region/concentration, mix, gained, declined
-  4. attention      — stores under the day-sale floor, bounded
 
-★ THE LIKE-FOR-LIKE RULE (Manav, 9 Aug). The portfolio headline is computed two
+One page per scope: the whole estate, then each region. Same format throughout,
+each page computed on its own scope rather than sliced from a national figure.
+The movers columns list EVERY store that moved, not a top-n — a manager looking
+for their own store should find it.
+
+★ THE LIKE TO LIKE RULE (Manav, 9 Aug). The portfolio headline is computed two
 ways and both are printed. Total growth reads +114% because the eight South
-stores have no last year at all; like-for-like — stores trading in BOTH years and
+stores have no last year at all; like to like — stores trading in BOTH years and
 still open — reads +4.9%, and the month reads -7.3% against a total of +128%. A
 page that printed only the first number would be a misread waiting to happen, and
 the gap between the two is itself the finding. VFL needs no such split: it keeps
 South's pre-takeover history, so every store is already comparable.
 
-★ ONE LIKE-FOR-LIKE SET, DEFINED ONCE. An early draft mixed a 44-store set (from
+★ ONE LIKE TO LIKE SET, DEFINED ONCE. An early draft mixed a 44-store set (from
 the YTD window) with a 41-store set (from the MTD window) and printed -7.3% and
 -10.1% for the same month — closed stores' last-year sales were leaking into one
 of them. `_lfl_codes` is now the single definition every figure on the page uses.
@@ -53,13 +57,12 @@ BAR_LY = HDR_BG                  # #DAEEF3
 MUTED_INK = (68, 68, 68)
 FAINT_INK = (85, 85, 85)
 
-# Day-sale floors for the attention band. Manav's numbers; one line to change.
-# NOTE at 50,000 the VFL floor flags 14 of 21 open stores — an estate, not an
-# exception list. The band is bounded so it cannot overflow either way.
+# Day-sale floors. The attention band that used them was removed from the
+# snapshot on Manav's instruction (11 Aug); the floors stay because the tile
+# still reports how many stores fall under one.
 PORTFOLIO_DAY_FLOOR = 10_000
 VFL_DAY_FLOOR = 50_000
 
-MAX_CHIPS = 8
 MOVERS_N = 6
 TRAJ_MONTHS = 5
 
@@ -93,6 +96,79 @@ def _growth(cur, pri):
 # --------------------------------------------------------------------------- #
 # Metrics — portfolio
 # --------------------------------------------------------------------------- #
+def regions_of(df, vfl=False) -> list:
+    """Regions present in the frame, in the packs' display order.
+
+    Derived from the data rather than hardcoded, so a third region appears as a
+    third page on its own without anyone remembering to add it.
+    """
+    if vfl:
+        import loader as L
+        m = L.load_store_master()
+        reg = dict(zip(m["tableau_name"], m["region"]))
+        present = set(df[L.COL_STORE_LABEL].map(reg).dropna())
+    else:
+        present = set(df["region"].dropna())
+    order = ["East & NE", "South"]
+    return ([r for r in order if r in present]
+            + sorted(present - set(order)))
+
+
+def portfolio_frame_from_vfl(vfl_df, region=None):
+    """The VFL frame reshaped into the portfolio schema.
+
+    ★ Why this exists (Manav, 11 Aug): "even for south, if we look at the VFL
+    sheet, we will get all of last years data, if you look at portfolio sheet,
+    you will get nothing." South was taken over on 19 April 2026, so the
+    portfolio feed starts there and its last year is simply absent — a South page
+    built from it has no trajectory, no movers and no growth. The VFL feed keeps
+    the previous operator's history, and all eight South stores are VFL stores,
+    so it can supply the whole comparison.
+
+    Returns one row per store-day, with the identity columns the portfolio
+    reports expect, so the page format is unchanged.
+    """
+    import loader as L
+    import portfolio_loader as PL
+    m = L.load_store_master()
+    code = dict(zip(m["tableau_name"], m["code"]))
+    d = pd.DataFrame({
+        "date": vfl_df["date"],
+        "code": pd.to_numeric(vfl_df[L.COL_STORE_LABEL].map(code), errors="coerce"),
+        "sales": vfl_df[L.COL_AMOUNT],
+    })
+    d = d[d["code"].notna() & d["date"].notna()]
+    d["code"] = d["code"].astype(int)
+    d = d.groupby(["date", "code"], as_index=False)["sales"].sum()
+    pm = PL.store_master().dropna(subset=["code"]).copy()
+    pm["code"] = pm["code"].astype(int)
+    pm = pm.set_index("code")
+    for col in ("region", "city", "location", "brand", "takeover_date", "is_vfl"):
+        d[col] = d["code"].map(pm[col])
+    # The rest of the portfolio schema, so every report helper works unchanged.
+    # takeover_date is carried through deliberately: the windows stay
+    # takeover-anchored, so South compares 19 April onward in BOTH years, exactly
+    # as the VFL pack and the L-to-L sheets do.
+    d["date"] = pd.to_datetime(d["date"])
+    d["month"] = d["date"].dt.to_period("M").dt.to_timestamp()
+    d["month_label"] = d["date"].dt.strftime("%b %Y")
+    fy_start = d["date"].dt.year.where(d["date"].dt.month >= 4,
+                                       d["date"].dt.year - 1)
+    d["fy"] = "FY" + ((fy_start + 1) % 100).astype(int).astype(str).str.zfill(2)
+    if region:
+        d = d[d["region"] == region]
+    return d.reset_index(drop=True)
+
+
+def has_prior_year(pf, asof, region) -> bool:
+    """Does this region have ANY last-year sales in the frame given?"""
+    fy = asof.year if asof.month >= 4 else asof.year - 1
+    d = pf[pf["region"] == region]
+    prev = d[(d["date"] >= pd.Timestamp(fy - 1, 4, 1))
+             & (d["date"] < pd.Timestamp(fy, 4, 1))]
+    return float(prev["sales"].sum()) > 0
+
+
 def _closed_codes(pf, asof) -> set:
     import portfolio_loader as PL
     attrs = PL.gd_store_attrs_dyn(pf, asof).set_index("code")
@@ -105,7 +181,7 @@ def _closed_codes(pf, asof) -> set:
 
 
 def _lfl_codes(pf, asof) -> set:
-    """Stores trading in BOTH years and still open — the one like-for-like set.
+    """Stores trading in BOTH years and still open — the one like to like set.
 
     Both halves matter. Without 'both years' the new South stores make every
     growth rate meaningless; without 'still open' a shut store's last year is
@@ -144,10 +220,17 @@ def _monthly(cur, pri, asof, value_col, month_col="date", n=TRAJ_MONTHS):
     }
 
 
-def portfolio_metrics(pf, asof, basis_label="") -> dict:
-    """Everything the portfolio snapshot prints, computed on one basis."""
+def portfolio_metrics(pf, asof, basis_label="", region=None) -> dict:
+    """Everything the portfolio snapshot prints, computed on one basis.
+
+    `region` scopes the whole page — the frame is filtered first, so every
+    figure below (like to like set, trajectory, movers, concentration) is that
+    region's own rather than a slice of a national number.
+    """
     import portfolio_loader as PL
     asof = pd.Timestamp(asof)
+    if region:
+        pf = pf[pf["region"] == region]
     closed = _closed_codes(pf, asof)
     lfl = _lfl_codes(pf, asof)
 
@@ -160,7 +243,7 @@ def portfolio_metrics(pf, asof, basis_label="") -> dict:
     ytd_l, ytd_ll = yl["cur"].sum(), yl["prior"].sum()
     mtd_l, mtd_ll = ml["cur"].sum(), ml["prior"].sum()
 
-    # Day: the whole estate for the headline figure, like-for-like for the rate.
+    # Day: the whole estate for the headline figure, like to like for the rate.
     # Same WEEKDAY is the honest comparison — a single date a year ago lands on a
     # different day of the week and its year-on-year is mostly noise.
     day_all = pf[pf["date"] == asof]["sales"].sum()
@@ -173,39 +256,66 @@ def portfolio_metrics(pf, asof, basis_label="") -> dict:
     proj = sum(v["proj_ytd"] for v in mets.values())
     ly_full = sum(v["ly_full"] for v in mets.values())
 
+    # South has NO last year in the portfolio feed, so its like to like set is
+    # empty and a like to like trajectory would be five zero bars — a page that
+    # looks broken rather than one that says "no comparison exists". Fall back to
+    # every store: the current-year shape is real and worth seeing, and the
+    # absent last-year bars state the situation themselves.
     cur, pri = PL._window_frames(pf, "YTD", asof)
-    traj = _monthly(cur[cur["code"].isin(lfl)], pri[pri["code"].isin(lfl)],
+    _tset = lfl if lfl else set(y["code"])
+    traj = _monthly(cur[cur["code"].isin(_tset)], pri[pri["code"].isin(_tset)],
                     asof, "sales")
+    traj_note = ("Like to like, Rs crore by month" if lfl
+                 else "Overall, Rs crore by month — no last year to compare")
 
     tot = y["cur"].sum()
     top5 = y.nlargest(5, "cur")
     top1 = top5.iloc[0] if len(top5) else None
 
-    reg_y = y.groupby("region")[["cur", "prior"]].sum()
-    reg_m = m.groupby("region")[["cur", "prior"]].sum()
+    # On the overall page this splits by region. On a region page that would be a
+    # single row repeating the total underneath it, so it splits by CITY instead
+    # — same columns, same shape, but it says something.
+    # Region page splits by city; a one-city region (South is all Bengaluru)
+    # would repeat its own total, so it splits by store location instead.
+    split = "region"
+    if region:
+        split = "city" if y["city"].nunique() > 1 else "location"
+    reg_y = y.groupby(split)[["cur", "prior"]].sum()
+    reg_m = m.groupby(split)[["cur", "prior"]].sum()
     region_rows = []
-    for r in reg_y.index:
+    for r in reg_y.sort_values("cur", ascending=False).index:
         yc, yp = reg_y.loc[r, "cur"], reg_y.loc[r, "prior"]
         mc, mp = reg_m.loc[r, "cur"] if r in reg_m.index else 0, \
             reg_m.loc[r, "prior"] if r in reg_m.index else 0
-        region_rows.append([str(r), _cr(yc), _pct(_growth(yc, yp)),
+        region_rows.append([str(r).title(), _cr(yc), _pct(_growth(yc, yp)),
                             _cr(mc), _pct(_growth(mc, mp))])
     region_rows.append(["Total", _cr(ytd_all), _pct(_growth(ytd_all, ytd_ly)),
                         _cr(mtd_all), _pct(_growth(mtd_all, mtd_ly))])
 
-    b = yl.groupby("brand")[["cur", "prior"]].sum()
-    b["move"] = b["cur"] - b["prior"]
-    b = b.sort_values("move", ascending=False)
-    brand_rows = ([[str(i).title(), _rupee_move(r["move"]),
-                    _pct(_growth(r["cur"], r["prior"]))]
-                   for i, r in b.head(3).iterrows()]
-                  + [[str(i).title(), _rupee_move(r["move"]),
-                      _pct(_growth(r["cur"], r["prior"]))]
-                     for i, r in b.tail(3).iterrows()])
+    # EVERY brand, biggest gain to biggest decline — not the three best and
+    # three worst. A brand missing from the list is indistinguishable from a
+    # brand that did nothing, and the middle is where most of the estate sits.
+    if not len(yl):
+        brand_rows = [["No last-year comparison", "—", "—"]]
+    else:
+        b = yl.groupby("brand")[["cur", "prior"]].sum()
+        b["move"] = b["cur"] - b["prior"]
+        b = b.sort_values("move", ascending=False)
+        brand_rows = [[str(i).title(), _rupee_move(r["move"]),
+                       _pct(_growth(r["cur"], r["prior"]))]
+                      for i, r in b.iterrows()]
 
     def mover_rows(frame, best):
-        f = frame.nlargest(MOVERS_N, "shortfall") if best \
-            else frame.nsmallest(MOVERS_N, "shortfall")
+        """EVERY store that moved that way, not a top-n. A manager looking for
+        their own store should find it; a list of five answers only about five."""
+        f = frame[frame["shortfall"] > 0].sort_values("shortfall", ascending=False) \
+            if best else \
+            frame[frame["shortfall"] < 0].sort_values("shortfall")
+        if not len(f):
+            # South has no last year in the portfolio feed, so "gained" and
+            # "declined" are undefined there. Say so — two blank columns read as
+            # a broken report rather than as an absent comparison.
+            return [["No last-year comparison", "—", "—"]]
         return [[f"{str(r['location'])[:16]}  {int(r['code'])}",
                  _rupee_move(r["shortfall"]), _pct(r["growth"])]
                 for _, r in f.iterrows()]
@@ -222,47 +332,52 @@ def portfolio_metrics(pf, asof, basis_label="") -> dict:
 
     return {
         "title": "Executive Snapshot",
-        "subtitle": "Whole Portfolio",
+        "subtitle": "Whole Portfolio" + (f"  ·  {region}" if region else ""),
+        "region": region,
         "stamp": [
             f"As of {asof:%d %b %Y}",
             basis_label or f"Live to {asof:%d %b %Y}",
             f"{len(y)} trading  |  {len(closed)} closed  |  {n_open} open",
-            f"Like-for-like = {len(lfl)} stores trading both years",
+            f"Like to like = {len(lfl)} stores trading both years",
         ],
         "tiles": [
             {"label": "Year to date", "value": f"Rs {_cr(ytd_all)} Cr",
              "sub": f"LY Rs {_cr(ytd_ly)} Cr",
-             "rows": [("All", _pct(_growth(ytd_all, ytd_ly)))],
-             "key": ("Like-for-like", _pct(_growth(ytd_l, ytd_ll)))},
+             "rows": [("Overall", _pct(_growth(ytd_all, ytd_ly)))],
+             "key": ("Like to like", _pct(_growth(ytd_l, ytd_ll)))},
             {"label": "Month to date", "value": f"Rs {_cr(mtd_all)} Cr",
              "sub": f"LY Rs {_cr(mtd_ly)} Cr",
-             "rows": [("All", _pct(_growth(mtd_all, mtd_ly)))],
-             "key": ("Like-for-like", _pct(_growth(mtd_l, mtd_ll)))},
+             "rows": [("Overall", _pct(_growth(mtd_all, mtd_ly)))],
+             "key": ("Like to like", _pct(_growth(mtd_l, mtd_ll)))},
             {"label": f"Day {asof:%d %b}", "value": f"Rs {_cr(day_all)} Cr",
-             "sub": f"Like-for-like Rs {_cr(d_ty)} Cr",
+             "sub": f"Like to like Rs {_cr(d_ty)} Cr",
              "rows": [("vs same date", _pct(_growth(d_ty, d_date)))],
              "key": ("vs same weekday", _pct(_growth(d_ty, d_wday)))},
             {"label": "Projected year", "value": f"Rs {_cr(proj)} Cr",
              "sub": f"last full year Rs {_cr(ly_full)} Cr",
              "rows": [("Run-rate", "x365 op-days")],
              "key": ("Implied", _pct(_growth(proj, ly_full)))},
-            {"label": "Breadth  l-f-l",
-             "value": f"{int((ml['shortfall'] > 0).sum())} up  "
-                      f"{int((ml['shortfall'] < 0).sum())} dn",
-             "sub": f"this month, of {len(ml)}",
-             "rows": [("Year to date", f"{int((yl['shortfall'] > 0).sum())} up")],
-             "key": ("", f"{int((yl['shortfall'] < 0).sum())} down")},
+            {"label": "Breadth  LTL",
+             "value": (f"{int((ml['shortfall'] > 0).sum())} up  "
+                       f"{int((ml['shortfall'] < 0).sum())} dn") if len(ml) else "—",
+             "sub": (f"this month, of {len(ml)}" if len(ml)
+                     else "no comparable stores"),
+             "rows": [("Year to date",
+                       f"{int((yl['shortfall'] > 0).sum())} up" if len(yl) else "—")],
+             "key": ("", f"{int((yl['shortfall'] < 0).sum())} down" if len(yl) else "")},
             {"label": "Estate", "value": f"{n_open} open",
              "sub": f"{len(closed)} closed, excluded",
              "rows": [("Filed today", f"{n_filed} of {n_open}")],
              "key": (f"Under {_rs(PORTFOLIO_DAY_FLOOR)}", str(len(low)))},
         ],
-        "traj": {**traj, "note": "Like-for-like, Rs crore by month"},
+        "traj": {**traj, "note": traj_note},
         "tables": [
-            {"title": "Region", "sub": "all stores",
-             "cols": ["Region", "YTD", "G/D", "MTD", "G/D"], "rows": region_rows,
-             "total_last": True},
-            {"title": "Brands", "sub": "like-for-like",
+            {"title": {"region": "Region", "city": "Cities",
+                       "location": "Stores"}[split], "sub": "overall",
+             "cols": [{"region": "Region", "city": "City",
+                       "location": "Store"}[split], "YTD", "G/D", "MTD", "G/D"],
+             "rows": region_rows, "total_last": True},
+            {"title": "Brands", "sub": "like to like",
              "cols": ["Brand", "Moved", "G/D"], "rows": brand_rows},
             {"title": "Gained", "sub": "by rupees",
              "cols": ["Store", "Moved", "G/D"], "rows": mover_rows(yl, True)},
@@ -275,20 +390,13 @@ def portfolio_metrics(pf, asof, basis_label="") -> dict:
             "top1_name": str(top1["location"]) if top1 is not None else "—",
             "top1_share": (top1["cur"] / tot * 100) if (top1 is not None and tot) else 0,
         },
-        "attn": {
-            "title": f"Attention  ·  day sale under {_rs(PORTFOLIO_DAY_FLOOR)} "
-                     f"on {asof:%d %b}  —  {len(low)} of {n_open} open stores",
-            "note": "closed excluded",
-            "chips": [(n, c, v) for n, c, v in low[:MAX_CHIPS]],
-            "more": max(0, len(low) - MAX_CHIPS),
-        },
     }
 
 
 # --------------------------------------------------------------------------- #
 # Metrics — VFL
 # --------------------------------------------------------------------------- #
-def vfl_metrics(df, asof, gen_date=None, basis_label="") -> dict:
+def vfl_metrics(df, asof, gen_date=None, basis_label="", region=None) -> dict:
     """VFL snapshot, on the pack's TAKEOVER-ANCHORED basis (Manav, 9 Aug).
 
     Every other sheet in the VFL pack anchors each store's window to its takeover
@@ -297,12 +405,17 @@ def vfl_metrics(df, asof, gen_date=None, basis_label="") -> dict:
     Apr-1 basis the same YTD reads Rs 31.61 Cr / +8.2% instead of Rs 27.40 Cr /
     +8.4%; the difference is South's pre-takeover April.
 
-    VFL needs no like-for-like split: it retains South's pre-takeover history, so
+    VFL needs no like to like split: it retains South's pre-takeover history, so
     all 22 stores already compare against a real last year.
     """
     import loader as L
     asof = pd.Timestamp(asof)
     gen_date = asof if gen_date is None else pd.Timestamp(gen_date)
+    if region:
+        # Scope the whole page, so every figure below is this region's own.
+        _m = L.load_store_master()
+        _reg = dict(zip(_m["tableau_name"], _m["region"]))
+        df = df[df[L.COL_STORE_LABEL].map(_reg) == region]
 
     ytd = L.window_yoy_takeover(df, "YTD", asof=asof)
     mtd = L.window_yoy_takeover(df, "MTD", asof=asof)
@@ -338,7 +451,11 @@ def vfl_metrics(df, asof, gen_date=None, basis_label="") -> dict:
     sy["shortfall"] = sy["cur"] - sy["prior"]
 
     def mover_rows(best):
-        f = sy.nlargest(5, "shortfall") if best else sy.nsmallest(5, "shortfall")
+        """EVERY store that moved that way, not a top-n."""
+        f = sy[sy["shortfall"] > 0].sort_values("shortfall", ascending=False) \
+            if best else sy[sy["shortfall"] < 0].sort_values("shortfall")
+        if not len(f):
+            return [["No last-year comparison", "—", "—"]]
         return [[str(r["store"])[:18], _rupee_move(r["shortfall"]), _pct(r["growth"])]
                 for _, r in f.iterrows()]
 
@@ -364,7 +481,8 @@ def vfl_metrics(df, asof, gen_date=None, basis_label="") -> dict:
 
     return {
         "title": "Executive Snapshot",
-        "subtitle": "VFL  ·  Manyavar & Mohey",
+        "subtitle": "VFL  ·  Manyavar & Mohey" + (f"  ·  {region}" if region else ""),
+        "region": region,
         "stamp": [
             f"As of {asof:%d %b %Y}",
             basis_label or f"Live to {asof:%d %b %Y}",
@@ -413,13 +531,6 @@ def vfl_metrics(df, asof, gen_date=None, basis_label="") -> dict:
              "cols": ["Store", "Moved", "G/D"], "rows": mover_rows(False)},
         ],
         "concentration": None,
-        "attn": {
-            "title": f"Attention  ·  day sale under {_rs(VFL_DAY_FLOOR)} "
-                     f"on {asof:%d %b}  —  {len(low)} of {n_open} trading stores",
-            "note": "closed excluded",
-            "chips": [(n, c, v) for n, c, v in low[:MAX_CHIPS]],
-            "more": max(0, len(low) - MAX_CHIPS),
-        },
     }
 
 
@@ -630,50 +741,25 @@ def _concentration(d, x, y, w, conc):
     return h
 
 
-def _attention(d, x, y, w, h, attn):
-    sml, smlb = _f(18)
-    hh = _p(28)
-    d.rectangle([x, y, x + w, y + h], outline=GRID, width=2)
-    d.rectangle([x, y, x + w, y + hh], fill=HDR_BG)
-    d.rectangle([x, y, x + w, y + hh], outline=GRID, width=2)
-    d.text((x + _p(8), y + _p(5)), attn["title"], font=smlb, fill=INK)
-    nw = d.textlength(attn["note"], font=sml)
-    d.text((x + w - _p(8) - nw, y + _p(6)), attn["note"], font=sml, fill=MUTED_INK)
-
-    cx, cy = x + _p(8), y + hh + _p(8)
-    ch = _p(26)
-    for name, code, val in attn["chips"]:
-        label = f"{name}" + (f"  {code}" if code is not None else "")
-        amt = _rs(val)
-        cw = d.textlength(label, font=sml) + d.textlength(amt, font=smlb) + _p(24)
-        if cx + cw > x + w - _p(8):
-            break
-        d.rectangle([cx, cy, cx + cw, cy + ch], outline=GRID, width=1)
-        d.text((cx + _p(6), cy + _p(4)), label, font=sml, fill=INK)
-        aw = d.textlength(amt, font=smlb)
-        d.text((cx + cw - _p(6) - aw, cy + _p(4)), amt, font=smlb,
-               fill=NEG_INK if val <= 0 else INK)
-        cx += cw + _p(7)
-    if attn["more"]:
-        d.text((cx + _p(2), cy + _p(5)), f"...and {attn['more']} others",
-               font=sml, fill=FAINT_INK)
-
-
 def _plan(m):
     """Band heights at the current scale, and the total they need."""
     row_h, head_h = _p(34), _p(32)
     gap = _p(16)
-    tiles_h, traj_h, attn_h = _p(178), _p(360), _p(80)
+    tiles_h, traj_h = _p(178), _p(360)
     strip_h = max(_p(44), _p(21) * len(m["stamp"]))
     body_rows = max(len(t["rows"]) for t in m["tables"])
     body_h = _p(26) + head_h + body_rows * row_h
     if m.get("concentration"):
-        body_h = max(body_h, _p(26) + head_h + 3 * row_h + _p(12) + _p(136))
-    total = (strip_h + _p(8) + gap + tiles_h + gap + traj_h + gap
-             + body_h + gap + attn_h)
+        # Concentration is drawn BELOW the first table, so the band has to hold
+        # both — not whichever is taller. Taking the max worked only while that
+        # table was three region rows; at nine store rows the box fell off the
+        # page entirely.
+        first_rows = len(m["tables"][0]["rows"])
+        body_h = max(body_h,
+                     _p(26) + head_h + first_rows * row_h + _p(12) + _p(136))
+    total = strip_h + _p(8) + gap + tiles_h + gap + traj_h + gap + body_h
     return dict(row_h=row_h, head_h=head_h, gap=gap, tiles_h=tiles_h,
-                traj_h=traj_h, attn_h=attn_h, strip_h=strip_h, body_h=body_h,
-                total=total)
+                traj_h=traj_h, strip_h=strip_h, body_h=body_h, total=total)
 
 
 def content(m, width, max_height=None) -> Image.Image:
@@ -694,7 +780,7 @@ def content(m, width, max_height=None) -> Image.Image:
         plan = _plan(m)
 
     row_h, head_h, gap = plan["row_h"], plan["head_h"], plan["gap"]
-    tiles_h, traj_h, attn_h = plan["tiles_h"], plan["traj_h"], plan["attn_h"]
+    tiles_h, traj_h = plan["tiles_h"], plan["traj_h"]
     strip_h, body_h = plan["strip_h"], plan["body_h"]
     height = min(plan["total"], int(max_height)) if max_height else plan["total"]
 
@@ -730,7 +816,4 @@ def content(m, width, max_height=None) -> Image.Image:
         end = _table(d, cx, y, int(cw), t, row_h, head_h)
         if i == 0 and m.get("concentration"):
             _concentration(d, cx, end + _p(12), int(cw), m["concentration"])
-    y += body_h + gap
-
-    _attention(d, x, y, w, attn_h, m["attn"])
     return img

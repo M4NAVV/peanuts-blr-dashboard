@@ -913,7 +913,11 @@ def render_portfolio():
                      use_container_width=True):
             with st.spinner("Building the report pack…"):
                 try:
-                    st.session_state["pf_pdf"] = PPDF.build(pf, pf_all, pdf_asof, basis)
+                    # The VFL frame supplies last year for South, whose history
+                    # predates the takeover and is absent from the portfolio
+                    # feed. Same cache the VFL side uses.
+                    st.session_state["pf_pdf"] = PPDF.build(
+                        pf, pf_all, pdf_asof, basis, vfl_df=get_data())
                     st.session_state["pf_pdf_name"] = (
                         f"peanuts_portfolio_{pdf_asof:%Y%m%d}.pdf")
                 except Exception as e:                    # surface, don't crash tab
@@ -955,7 +959,7 @@ def render_portfolio():
             "south_ltol": "South L-to-L sheet  ·  current month first, then each "
                           "earlier month of the year",
             "mw_south": "South month-wise total sale  ·  25-26 vs 26-27",
-            "mw_east": "East & NE month-wise total sale  ·  all stores, then the "
+            "mw_east": "East & NE month-wise total sale  ·  overall, then the "
                        "Mohey Manyavar stores",
         }
         chosen = [k for k, label in available.items()

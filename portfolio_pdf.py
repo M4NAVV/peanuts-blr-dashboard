@@ -640,11 +640,12 @@ def _to_num(s):
     return pd.to_numeric(s, errors="coerce")
 
 
-def build(pf, pf_all, asof, basis_label=""):
+def build(pf, pf_all, asof, basis_label="", vfl_df=None):
     """Compile the five portfolio sheets into one PDF (bytes), in dashboard
     order: MW Data, GD Sheet, Brand-wise GD, Loc-wise GD, Average.
     `pf` = filtered portfolio frame; `pf_all` = unfiltered (MW Data ignores
-    filters, like the tab)."""
+    filters, like the tab). `vfl_df` supplies last year for any region the
+    portfolio feed does not cover — South, whose history predates the takeover."""
     import pandas as pd
     asof = pd.Timestamp(asof)
     asof_label = f"As of {asof:%d %b %Y}" + (f" · {basis_label}" if basis_label else "")
@@ -707,10 +708,27 @@ def build(pf, pf_all, asof, basis_label=""):
         # 1) Executive Snapshot — replaces the cover. Built last because it is
         # sized to the box the tables establish, then put at the front so it is
         # the first thing opened.
+        #
+        # One page for the whole estate, then one per region. Each is computed on
+        # its OWN scope rather than sliced from a national figure, so a region's
+        # like to like set, trajectory and concentration are its own.
         import exec_snapshot as ES
-        snap = ES.content(ES.portfolio_metrics(pf_all, asof, basis_label),
-                          tbl_w, tbl_h)
-        contents = [("Executive Snapshot", snap)] + contents
+        snaps = [(None, "Executive Snapshot")]
+        for r in ES.regions_of(pf_all):
+            snaps.append((r, f"Executive Snapshot · {r}"))
+        snap_pages = []
+        for r, sec in snaps:
+            src = pf_all
+            # A region the portfolio feed has no last year for (South, taken over
+            # 19 Apr 2026) is built from the VFL feed instead, which keeps the
+            # previous operator's history. Without it that page has no
+            # trajectory, no movers and no growth at all.
+            if r and vfl_df is not None and not ES.has_prior_year(pf_all, asof, r):
+                src = ES.portfolio_frame_from_vfl(vfl_df, region=r)
+            snap_pages.append((sec, ES.content(
+                ES.portfolio_metrics(src, asof, basis_label, region=r),
+                tbl_w, tbl_h)))
+        contents = snap_pages + contents
 
         # uniform page width = widest content + frame + margins; uniform height
         # = tallest page, so the document doesn't change size as you scroll.
