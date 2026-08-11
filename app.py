@@ -428,7 +428,11 @@ def _safe_dataframe(data, **kwargs):
 def _load_portfolio_cached():
     from datetime import datetime
     from zoneinfo import ZoneInfo
-    return PL.load_portfolio(), datetime.now(ZoneInfo("Asia/Kolkata"))
+    df = PL.load_portfolio()
+    # Carried out of the cache explicitly rather than read off df.attrs, which
+    # is not guaranteed to survive caching.
+    return (df, datetime.now(ZoneInfo("Asia/Kolkata")),
+            df.attrs.get("provisional_date"))
 
 
 def _cr(x) -> str:
@@ -442,7 +446,7 @@ _PF_TABS = ["📈 MW Data", "🧾 GD Sheet", "🏷️ Brand-wise GD", "🗺️ L
 
 
 def render_portfolio():
-    pf_all, pf_at = _load_portfolio_cached()
+    pf_all, pf_at, pf_provisional = _load_portfolio_cached()
 
     # ---- Sidebar: portfolio brand + cascading sales-only filters ----
     st.sidebar.markdown(
@@ -455,6 +459,13 @@ def render_portfolio():
     st.sidebar.caption(
         f"{pf_all['code'].nunique()} stores · {pf_all['brand'].nunique()} brands · "
         f"sales-only breadth view")
+    if pf_provisional is not None:
+        # The latest day came from the night fill, before the morning paste.
+        # Say so wherever it is used: a provisional figure that looks final is
+        # the failure this whole pipeline exists to avoid.
+        st.sidebar.warning(
+            f"**{pf_provisional:%d %b}** is provisional — taken from the night "
+            f"fill, not yet pasted or replaced by Tableau.")
 
     min_d, max_d = pf_all["date"].min().date(), pf_all["date"].max().date()
     st.sidebar.markdown("#### 📅 Date")
@@ -909,6 +920,8 @@ def render_portfolio():
         pdf_asof = pd.Timestamp(st.date_input(
             "As of", value=_dmax, min_value=_dmin, max_value=_dmax, key="pf_pdf_asof"))
         basis = f"Live to {pdf_asof:%d %b %Y}"
+        if pf_provisional is not None and pd.Timestamp(pdf_asof) >= pf_provisional:
+            basis += f" · {pf_provisional:%d %b} provisional (night fill)"
         if st.button("🧾 Generate PDF", key="pf_pdf_gen", type="primary",
                      use_container_width=True):
             with st.spinner("Building the report pack…"):

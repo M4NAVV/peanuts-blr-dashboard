@@ -170,8 +170,28 @@ def load_portfolio() -> pd.DataFrame:
     Per the authoritative Growth-Degrowth sheet, stores that opened THIS fiscal
     year (South / 2526NA) have no last-year comparison — they show as NEW, not as
     degrowth. We do NOT invent last-year sales for them: with no 2025 rows in the
-    portfolio sheet, their YTD_LY is simply 0 and their YoY reads as 'new'."""
-    return clean(_read_raw())
+    portfolio sheet, their YTD_LY is simply 0 and their YoY reads as 'new'.
+
+    If a night fill is configured and holds a day NEWER than anything in the
+    sheet, its rows are appended here — before `clean()`, so they are typed,
+    takeover-filtered and given fiscal columns by exactly the same code as every
+    other row. A day the sheet already covers is ignored, so the paste and
+    Tableau always win. Without `NIGHT_FILL_URL` set, nothing changes at all.
+    `df.attrs["provisional_date"]` names the appended day, for reports that want
+    to say so."""
+    raw = _read_raw()
+    provisional = None
+    try:
+        import night_fill
+        extra = night_fill.raw_rows_if_newer(raw)
+        if extra is not None and len(extra):
+            provisional = pd.to_datetime(extra[C_DATE].iloc[0], dayfirst=True)
+            raw = pd.concat([raw, extra], ignore_index=True)
+    except Exception:
+        provisional = None          # never let the overlay break the load
+    df = clean(raw)
+    df.attrs["provisional_date"] = provisional
+    return df
 
 
 # --------------------------------------------------------------------------- #
