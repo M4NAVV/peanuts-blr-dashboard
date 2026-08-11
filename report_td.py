@@ -694,7 +694,15 @@ def month_wise(df, asof, *, scope, carpet=None, store_col=None, amount_col=None,
             # as the workbook does: the month in progress has not earned a full
             # month of floor space, and counting it drags the 12-month average
             # down and the throughput with it.
-            "ty_carpet": _carpet(ty) if done else None,
+            # The month in progress DOES contribute carpet area — its floor
+            # space exists. The two source sheets disagree here: the East
+            # workbook fills August's carpet (56,380) while the South one leaves
+            # it blank. Generalising from South put a zero in East's August and
+            # threw its carpet average and throughput out, so this follows East,
+            # which makes that sheet tie exactly. South's blank is an unfilled
+            # cell in a live file; until it is filled, its own average and
+            # throughput will differ from ours.
+            "ty_carpet": _carpet(ty) if ty_sale is not None else None,
             "done": done, "current": t0 <= asof <= t1,
         })
     return {"rows": rows, "fy": fy}
