@@ -706,3 +706,328 @@ def month_wise(df, asof, *, scope, carpet=None, store_col=None, amount_col=None,
             "done": done, "current": t0 <= asof <= t1,
         })
     return {"rows": rows, "fy": fy}
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# EAST & NE — L TO L SHEET (18 columns)
+# ═══════════════════════════════════════════════════════════════════════════
+# ★ THE LIKE-TO-LIKE RULES (Manav, 11-12 Aug). All three come from him:
+#
+#   1. A store that CLOSES leaves last year from the month AFTER its closure
+#      month — the closure date is the last month still counted.
+#   2. NEW/OLD is decided ONCE A YEAR against 1 April of the PREVIOUS year: a
+#      store open before it traded all of last year and is comparable; a store
+#      opened on or after it is NEW for the whole fiscal year and joins on the
+#      next 1 April. "NA till 31-03-2027, PY from 01-04-2027."
+#   3. A store that goes quiet stays IN until a closure date is given.
+#
+# ★ Rule 2 is an ANNUAL classification, and that is the point. Deciding it
+# monthly — "did this store trade in the same month last year?" — lets a store
+# switch sides mid-year, so May's index and June's index are computed on
+# different populations and the movement between them is part trading and part
+# bookkeeping. It also compares against an opening month: Silchar opened
+# 01-06-2025 and took Rs 17.0 L that June, then settled to 12.2 and 8.4 — so a
+# perfectly ordinary June 2026 of Rs 12.1 L reads as index 71, a 29% "decline"
+# that never happened.
+#
+# ⚠️ THIS DELIBERATELY DIVERGES FROM THE EXISTING WORKBOOK, which decides monthly:
+#   * APR — it counts 104 West Point as new; the master says it opened
+#     01-12-2024, so under rule 2 it is comparable. Index 84 -> 82.
+#   * JUN/JUL — it treats Silchar as comparable once it has a same-month last
+#     year; under rule 2 it stays new all year. Index 103 -> 108 and 97 -> 100.
+#   * AUG — it drops store 102 from the 8th; 102 has no closure date and Manav
+#     said not to drop it until 31-08-2026, so it stays.
+#   * 13-JUL — the workbook's new-store cell reads 37,831 against an actual
+#     37,891: transposed digits.
+EAST_COLS = [
+    ("DATE", "c"), ("DAY", "c"),
+    ("GRAND TOTAL SALE PRPL {LY}", "r"),
+    ("GRAND TOTAL SALE PRPL CUMULATIVE {LY}", "r"),
+    ("PRPL STORE TOTAL SALE {LY}", "r"),
+    ("DATE", "c"), ("DAY", "c"),
+    ("PRPL STORE TOTAL SALE {TY}", "r"),
+    ("STORE 58 PLANET MALL TOTAL SALE {TY}", "r"),
+    ("NEW STORE {TY}", "r"),
+    ("WITHOUT STORE 58 AND NEW STORE SALE", "r"),
+    ("PRPL TOTAL {MON} {Y1}", "r"), ("PRPL TOTAL {MON} {Y2}", "r"),
+    ("GROTH / D GROTH", "r"),
+    ("STORE 58 {MON} {Y1}", "r"),
+    ("WITHOUT STORE 58 AND NEW STORE TOTAL {MON} {Y1}", "r"),
+    ("WITHOUT STORE 58 AND NEW STORE TOTAL {MON} {Y2}", "r"),
+    ("WITHOUT STORE 58 AND NEW STORE GROTH / D GROTH", "r"),
+]
+
+CARVE_OUT_CODE = 58          # shown on its own; it has no like-to-like partner
+# New-store contribution assumed for the rest of the month, in the projection
+# block. Manav types this into the workbook (200000 x days remaining); it is not
+# derived from anything, so it is a parameter here rather than a computed value.
+NEW_STORE_DAILY_TARGET = 200_000
+
+
+def _east_sets(codes_this_fy, opened, closed, fy, month):
+    """(new, comparable) for one month, under the three rules above."""
+    bench = pd.Timestamp(fy - 1, 4, 1)          # 1 April of the PREVIOUS year
+    new = {c for c in codes_this_fy
+           if c in opened and pd.notna(opened[c]) and opened[c] >= bench}
+
+    def gone(c):
+        d = closed.get(c)
+        if d is None or pd.isna(d):
+            return False
+        # Compare on the fiscal timeline so Jan-Mar sort after Apr-Dec.
+        f = lambda y, m: (y - fy) * 12 + m
+        return f(month.year, month.month) > f(d.year, d.month)
+
+    comparable = {c for c in codes_this_fy if c not in new and not gone(c)}
+    return new, comparable
+
+
+def east_months(pf_df, asof, region="East & NE") -> list[dict]:
+    """One dict per month of the fiscal year to date, in the sheet's shape."""
+    import master_lookup
+    asof = pd.Timestamp(asof)
+    fy = _fy(asof)
+    d = pf_df[pf_df["region"] == region].copy()
+    d["code"] = pd.to_numeric(d["code"], errors="coerce").astype("Int64")
+    d = d[d["code"].notna()]
+    d["code"] = d["code"].astype(int)
+
+    opened, closed = master_lookup.opened(), master_lookup.closed()
+    if not opened:
+        raise RuntimeError(
+            "no opening dates available — the store master is unreachable and "
+            "store_attrs.csv is missing. Refusing to build: without them every "
+            "store would silently count as comparable.")
+
+    this_fy = set(d[(d["date"] >= pd.Timestamp(fy, 4, 1)) & (d["sales"] > 0)]["code"])
+    daily = d.groupby(["date", "code"])["sales"].sum()
+    by_day = d.groupby("date")["sales"].sum()
+
+    def traded(y, m, codes=None):
+        a = pd.Timestamp(y, m, 1); b = a + pd.offsets.MonthEnd(0)
+        f = d[(d["date"] >= a) & (d["date"] <= b) & (d["sales"] > 0)]
+        if codes is not None:
+            f = f[f["code"].isin(codes)]
+        return int(f["code"].nunique())
+
+    def sales(day, codes=None):
+        if codes is None:
+            return float(by_day.get(day, 0.0))
+        if day not in daily.index.get_level_values(0):
+            return 0.0
+        s = daily.loc[day]
+        return float(s[s.index.isin(codes)].sum())
+
+    out, m = [], pd.Timestamp(fy, 4, 1)
+    while m <= asof:
+        out.append(_east_month(m, asof, fy, this_fy, opened, closed, sales, traded))
+        m += pd.DateOffset(months=1)
+    return out
+
+
+def _east_month(month_start, asof, fy, this_fy, opened, closed, sales,
+                traded) -> dict:
+    new, comparable = _east_sets(this_fy, opened, closed, fy, month_start)
+    y2, mth = month_start.year, month_start.month
+    ndays = calendar.monthrange(y2, mth)[1]
+    rows = []
+    ly_cum = ty_cum = k_cum = o_cum = 0.0
+    elapsed = 0
+    for i in range(1, ndays + 1):
+        ly_d = pd.Timestamp(y2 - 1, mth, i)
+        ty_d = pd.Timestamp(y2, mth, i)
+        e = sales(ly_d, comparable)                 # comparable LY
+        o = sales(ly_d, {CARVE_OUT_CODE})           # store 58 LY
+        ly_cum += e
+        o_cum += o
+        live = ty_d <= asof
+        h = sales(ty_d) if live else None           # every store, this year
+        i_ = sales(ty_d, {CARVE_OUT_CODE}) if live else None
+        j = sales(ty_d, new) if live else None
+        k = (h - i_ - j) if live else None
+        if live:
+            ty_cum += h
+            k_cum += k
+            elapsed = i
+        rows.append({
+            "DATE_LY": ly_d, "DAY_LY": ly_d.strftime("%a").upper(),
+            "C": e, "D": ly_cum, "E": e,
+            "DATE_TY": ty_d, "DAY_TY": ty_d.strftime("%a").upper(),
+            "H": h, "I": i_, "J": j, "K": k,
+            "L": ly_cum, "M": ty_cum,
+            "N": (ty_cum * 100 / ly_cum) if ly_cum else None,
+            "O": o,
+            "P": ly_cum - o_cum,
+            "Q": k_cum,
+            "R": (k_cum * 100 / (ly_cum - o_cum)) if (ly_cum - o_cum) else None,
+        })
+
+    elapsed = max(elapsed, 1)
+    remaining = max(ndays - elapsed, 0)
+    ly_total = ly_cum
+    ty_total = ty_cum
+    i_total = sum(r["I"] or 0 for r in rows)
+    j_total = sum(r["J"] or 0 for r in rows)
+    k_total = k_cum
+    ly_at = next((r["L"] for r in reversed(rows) if r["H"] is not None), 0.0)
+    growth10 = ly_total * 0.10
+    new_target = NEW_STORE_DAILY_TARGET * remaining
+    shortfall = ly_total - ty_total
+    return {
+        "month": month_start.strftime("%b").upper(), "ty_year": y2, "fy": fy,
+        "ndays": ndays, "elapsed": elapsed, "rows": rows,
+        # Counts for THAT MONTH, not for the year — the labels beneath them say
+        # "AUG 2025 NO. OF STORE", and a year-wide count under a month's label
+        # would be a different number from the one the reader expects.
+        "n_comparable": len(comparable), "n_trading": len(this_fy),
+        "n_ly_month": traded(y2 - 1, mth, comparable),
+        "n_ty_month": traded(y2, mth),
+        "new_codes": sorted(new),
+        "foot": {
+            "ly_total": ly_total, "ty_total": ty_total,
+            "i_total": i_total, "j_total": j_total, "k_total": k_total,
+            "o_total": o_cum,
+            "ly_avg_per_day": ly_total / ndays,
+            "ty_avg_per_day": ty_total / elapsed,
+            "i_avg": i_total / elapsed, "j_avg": j_total / elapsed,
+            "k_avg": k_total / elapsed,
+            "trending": ty_total / elapsed * ndays,
+            "i_trend": i_total / elapsed * ndays,
+            "j_trend": j_total / elapsed * ndays,
+            "k_trend": k_total / elapsed * ndays,
+            "days_remaining": remaining,
+            "ly_day_avg_till_yesterday": ly_at / elapsed,
+            "ly_avg_per_store": (ly_at / elapsed / len(comparable)) if comparable else 0,
+            "ty_avg_per_store": (ty_total / elapsed / len(this_fy)) if this_fy else 0,
+            "shortfall": shortfall, "growth_10": growth10,
+            "target_total": shortfall + growth10,
+            "new_target": new_target,
+            "grand_target": shortfall + growth10 + new_target,
+            "avg_req_daily": ((shortfall + growth10 + new_target) / remaining)
+                             if remaining else 0,
+            "projection": ly_total + growth10 + new_target,
+        },
+    }
+
+
+def _row(spec, n):
+    """A grid row from {column index: cell}, gaps filled, spans respected."""
+    out, i = [], 0
+    while i < n:
+        c = spec.get(i)
+        if c is None:
+            out.append(cell()); i += 1
+        else:
+            out.append(c); i += c["span"]
+    return out
+
+
+def render_east(sheet) -> Image.Image:
+    mon, y2, fy = sheet["month"], sheet["ty_year"], sheet["fy"]
+    subs = {"{MON}": mon, "{LY}": f"{fy - 1}-{str(fy)[2:]}",
+            "{TY}": f"{fy}-{str(fy + 1)[2:]}", "{Y1}": str(y2 - 1), "{Y2}": str(y2)}
+    header = []
+    for h, _ in EAST_COLS:
+        for k, v in subs.items():
+            h = h.replace(k, v)
+        header.append(h)
+    aligns = [a for _, a in EAST_COLS]
+    n = len(EAST_COLS)
+
+    rows = []
+    for r in sheet["rows"]:
+        pct = lambda v: "" if v is None else f"{v:,.0f}"
+        vals = [r["DATE_LY"].strftime("%d-%m-%Y"), r["DAY_LY"],
+                _money(r["C"]), _money(r["D"]), _money(r["E"]),
+                r["DATE_TY"].strftime("%d-%m-%Y"), r["DAY_TY"],
+                _money(r["H"]), _money(r["I"]), _money(r["J"]), _money(r["K"]),
+                _money(r["L"]), _money(r["M"]), pct(r["N"]),
+                _money(r["O"]), _money(r["P"]), _money(r["Q"]), pct(r["R"])]
+        cs = [cell(v, align=aligns[i]) for i, v in enumerate(vals)]
+        # Red marks a decline against last year — an index under 100 — nothing else.
+        for idx, key in ((13, "N"), (17, "R")):
+            if r[key] is not None and r[key] < 100:
+                cs[idx] = cell(vals[idx], align="r", ink=NEG_INK)
+        rows.append((cs, ROW_H))
+
+    f = sheet["foot"]
+    nd = sheet["ndays"]
+    ncmp, ntr = sheet["n_ly_month"], sheet["n_ty_month"]
+    Y = lambda a, b: f"{a}-{str(b)[2:]}"
+
+    rows.append((_row({i: cell(v, align="r", fill=TOTAL_BG, bold=True)
+                       for i, v in ((2, _money(f["ly_total"])),
+                                    (4, _money(f["ly_total"])),
+                                    (7, _money(f["ty_total"])),
+                                    (8, _money(f["i_total"])),
+                                    (9, _money(f["j_total"])),
+                                    (10, _money(f["k_total"])),
+                                    (14, _money(f["o_total"])))}
+                      | {i: cell(fill=TOTAL_BG) for i in
+                         (0, 1, 3, 5, 6, 11, 12, 13, 15, 16, 17)}, n), ROW_H))
+
+    rows.append((_row({0: cell(Y(fy - 1, fy)), 1: cell(str(ncmp)),
+                       2: cell(_money(f["ly_avg_per_day"]), align="r", bold=True),
+                       4: cell(f"AVG. PER DAY {mon} {y2}", fill=HDR_BG, span=3),
+                       7: cell(_money(f["ty_avg_per_day"]), align="r", bold=True),
+                       8: cell(_money(f["i_avg"]), align="r"),
+                       9: cell(_money(f["j_avg"]), align="r"),
+                       10: cell(_money(f["k_avg"]), align="r")}, n), ROW_H))
+
+    rows.append((_row({0: cell(Y(fy, fy + 1)), 1: cell(str(ntr)),
+                       2: cell(f"AVG. {mon} {y2 - 1}"),
+                       4: cell(f"{nd} DAYS TRENDING {mon} {y2}", fill=HDR_BG, span=3),
+                       7: cell(_money(f["trending"]), align="r", bold=True),
+                       8: cell(_money(f["i_trend"]), align="r"),
+                       9: cell(_money(f["j_trend"]), align="r"),
+                       10: cell(_money(f["k_trend"]), align="r")}, n), ROW_H))
+
+    rows.append((_row({0: cell(_money(f["ly_avg_per_store"]), align="r"),
+                       2: cell(_money(f["projection"]), align="r", bold=True),
+                       3: cell(_money(f["ly_day_avg_till_yesterday"]), align="r"),
+                       7: cell(f"NO. OF DAYS REMAINING  {f['days_remaining']}",
+                               fill=HDR_BG, span=4)}, n), ROW_H))
+
+    rows.append((_row({0: cell(f"AVG. PER DAY PER STORE {mon} {Y(fy - 1, fy)}",
+                               fill=HDR_BG, span=2, wrap=True),
+                       2: cell(f"{mon} PROJECTIONS", fill=HDR_BG, wrap=True),
+                       3: cell(f"{mon} {y2 - 1} DAY AVG. TILL YESTERDAY",
+                               fill=HDR_BG, wrap=True),
+                       7: cell(_money(f["shortfall"]), align="r", bold=True),
+                       8: cell(_money(f["growth_10"]), align="r", bold=True),
+                       9: cell(_money(f["target_total"]), align="r", bold=True),
+                       10: cell(_money(f["new_target"]), align="r", bold=True),
+                       11: cell(_money(f["grand_target"]), align="r", bold=True),
+                       12: cell(_money(f["avg_req_daily"]), align="r", bold=True)},
+                      n), FOOT_LABEL_H))
+
+    rows.append((_row({0: cell(_money(f["ty_avg_per_store"]), align="r", span=2),
+                       2: cell(str(ntr)),
+                       7: cell("LY-TY TILL DATE ACHVD.", fill=HDR_BG, wrap=True),
+                       8: cell("10% GROWTH ON LY SALE", fill=HDR_BG, wrap=True),
+                       9: cell("TOTAL", fill=HDR_BG, wrap=True),
+                       10: cell(f"NEW STORE @ {NEW_STORE_DAILY_TARGET:,}/DAY",
+                                fill=HDR_BG, wrap=True),
+                       11: cell("TOTAL WITH NEW STORE", fill=HDR_BG, wrap=True),
+                       12: cell("AVG. REQ DAILY", fill=HDR_BG, wrap=True)},
+                      n), FOOT_LABEL_H))
+
+    rows.append((_row({0: cell(f"AVG. PER DAY PER STORE {mon} {Y(fy, fy + 1)}",
+                               fill=HDR_BG, span=2, wrap=True),
+                       2: cell(f"{mon} {y2 - 1} NO. OF STORE", fill=HDR_BG,
+                               span=2, wrap=True)}, n), FOOT_LABEL_H))
+    return _draw_grid(header, rows)
+
+
+def build_east_ltol(pf_df, asof, basis_label="") -> tuple[str, bytes]:
+    """East & NE L-to-L, current month first."""
+    asof = pd.Timestamp(asof)
+    with _LOCK:
+        months = list(reversed(east_months(pf_df, asof)))
+        contents = [(f"East & NE L-to-L · {m['month']} {m['ty_year']}",
+                     render_east(m)) for m in months]
+        pdf = _pdf_from(contents, _label(asof, basis_label))
+    fy = _fy(asof)
+    return (f"{asof:%b}".upper()
+            + f" L TO L SHEET ({fy - 1}-{str(fy)[2:]} TO {fy}-{str(fy + 1)[2:]}).pdf",
+            pdf)

@@ -7,9 +7,10 @@ PUBLIC, so the master itself is never committed here. Two sources, in order:
   1. `STORE_MASTER_URL` (env var or Streamlit secret) — the live master tab, read
      through its CSV /export endpoint, the same mechanism the dashboard uses for
      its data. Set this and new stores appear without a code change.
-  2. `store_carpet.csv` — a committed extract of just `code, carpet_sqft`, which
-     carries nothing sensitive and keeps the reports working before the secret is
-     configured.
+  2. `store_attrs.csv` — a committed extract of `code, carpet_sqft, opened,
+     closed`, which carries nothing sensitive and keeps the reports working
+     before the secret is configured. Regenerate it whenever the master gains a
+     store, an opening date or a closure.
 
 If neither is available the carpet and throughput columns come out blank rather
 than wrong.
@@ -29,7 +30,7 @@ MASTER_URL_ENV = "STORE_MASTER_URL"
 # the carpet total and quietly deflates every throughput figure.
 # The store-intake pipeline carries the same exclusion for the same reason.
 NON_STORE_CODES = {1001}
-_EXTRACT = os.path.join(os.path.dirname(__file__), "store_carpet.csv")
+_EXTRACT = os.path.join(os.path.dirname(__file__), "store_attrs.csv")
 
 
 def _master_url():
@@ -63,3 +64,64 @@ def carpet() -> dict:
     m = pd.read_csv(_EXTRACT)
     return {int(c): float(a) for c, a in zip(m["code"], m["carpet_sqft"])
             if pd.notna(c) and pd.notna(a) and int(c) not in NON_STORE_CODES}
+
+
+def _read():
+    """The live master as a frame, or None when it is not configured."""
+    url = _master_url()
+    if not url:
+        return None
+    try:
+        m = pd.read_csv(url, dtype=str)
+        m.columns = [str(c).strip() for c in m.columns]
+        m["_code"] = pd.to_numeric(m.get("STORE CODE"), errors="coerce")
+        return m[m["_code"].notna()]
+    except Exception:
+        return None
+
+
+def _dates(column, fallback) -> dict:
+    """store code -> date, from the live master or the committed extract.
+
+    Falling back matters: an empty map would silently mean "no store is new and
+    none has closed", which is a wrong answer rather than a missing one.
+    """
+    m = _read()
+    if m is None or column not in m.columns:
+        return _extract_dates(fallback)
+    out = {}
+    for c, v in zip(m["_code"], m[column]):
+        v = str(v).strip()
+        if not v or v.upper() == "X":       # "X" means not applicable (head office)
+            continue
+        d = pd.to_datetime(v, dayfirst=True, errors="coerce")
+        if pd.notna(d) and int(c) not in NON_STORE_CODES:
+            out[int(c)] = d
+    return out or _extract_dates(fallback)
+
+
+def _extract_dates(column) -> dict:
+    if not os.path.exists(_EXTRACT):
+        return {}
+    m = pd.read_csv(_EXTRACT)
+    if column not in m.columns:
+        return {}
+    d = pd.to_datetime(m[column], errors="coerce")
+    return {int(c): v for c, v in zip(m["code"], d)
+            if pd.notna(c) and pd.notna(v) and int(c) not in NON_STORE_CODES}
+
+
+def opened() -> dict:
+    """store code -> opening date (the master's FIRST BILL DATE).
+
+    The sales feeds cannot supply this: the portfolio sheet begins on
+    1 Apr 2025, so a store that opened in 2024 and one that opened that very
+    morning both look like they started that day. Using the feed classified
+    every store as new in April.
+    """
+    return _dates("FIRST BILL DATE", "opened")
+
+
+def closed() -> dict:
+    """store code -> closure date, the LAST month still counted (Manav, 7 Aug)."""
+    return _dates("CLOSURE DATE", "closed")
