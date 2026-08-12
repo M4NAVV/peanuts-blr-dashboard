@@ -1041,14 +1041,19 @@ def build_east_ltol(pf_df, asof, basis_label="") -> tuple[str, bytes]:
 # come from the portfolio history, which the night-fill overlay has already
 # brought up to the same day.
 #
-# ⚠️ TARGETS ARE NOT AVAILABLE YET. The three target columns and the two
-# achievement percentages that divide by them are rendered EMPTY rather than
-# omitted, so the report keeps the workbook's shape and fills itself in the day
-# targets exist. `targets` takes {code: {...}} whenever that day comes.
+# ★ WHERE THE TARGETS COME FROM. Year and month come from the Targets tab, which
+# holds a year target and twelve month columns per store; the day target comes
+# from the NIGHT FILL, because it is the one that moves daily and so belongs
+# beside the day's figures. Verified against the 09-Aug SMS: both the year and
+# the August column match all eight South stores exactly.
 #
-# MANUAL SALE is read from the night fill when the tab has that column and shown
-# as blank until then; DAY ACHIEVED is system sale plus manual, so it equals
-# system sale while manual is absent.
+# Any target still missing renders as an EMPTY cell, and the achievement
+# percentage that divides by it is left empty too rather than shown as zero or
+# infinite. A store with no target is a store nobody has set one for, which is
+# not the same as a store asked for nothing.
+#
+# MANUAL SALE is read from the night fill when the tab has that column; DAY
+# ACHIEVED is system sale plus manual, so it equals system sale until then.
 SMS_COLS = [
     ("STORE NAME", "l"), ("MTD TARGET", "r"), ("MTD ACHIVED", "r"),
     ("MTD ACHIVED %", "r"), ("YTD TARGET", "r"),
@@ -1077,12 +1082,15 @@ def south_night_sms(pf_df, region="South", targets=None) -> dict:
     """The night SMS for one region, as of the night fill's own day."""
     import night_fill
     import portfolio_loader as PL
+    import targets as TG
     t = night_fill.load()
     if t is None:
         raise RuntimeError(
             f"the night fill is not available ({night_fill.last_problem() or 'not configured'}) "
             "— it is the only source for the day's figures at this hour.")
     day = pd.Timestamp(t["date"].iloc[0])
+    if targets is None:
+        targets = TG.for_month(day)          # year + month; day comes below
 
     master = PL.store_master().dropna(subset=["code"]).copy()
     master["code"] = master["code"].astype(int)
@@ -1112,12 +1120,18 @@ def south_night_sms(pf_df, region="South", targets=None) -> dict:
         tgt = (targets or {}).get(c, {})
         sysS = float(t[t["code"] == c]["value"].sum())
         man = col(c, "manual")
+        # The day target is the night fill's, unless a caller passed one.
+        day_t = tgt.get("day")
+        if day_t is None:
+            day_t = col(c, "day_target")
+        if day_t is not None and not (day_t > 0):
+            day_t = None                     # zero means unset, not zero-target
         m_ach, y_ach = float(mtd.get(c, 0.0)), float(ytd.get(c, 0.0))
         rows.append({
             "code": c, "name": str(loc.get(c, c)).upper(),
             "mtd_target": tgt.get("mtd"), "mtd": m_ach,
             "ytd_target": tgt.get("ytd"), "ytd": y_ach,
-            "day_target": tgt.get("day"),
+            "day_target": day_t,
             "system": sysS, "manyavar": g(c, "manyavar"), "mohey": g(c, "mohey"),
             "twamev": g(c, "twamev"), "manual": man,
             "achieved": sysS + (man or 0.0),

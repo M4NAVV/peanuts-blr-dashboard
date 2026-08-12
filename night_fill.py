@@ -162,7 +162,10 @@ def load(url=None) -> pd.DataFrame | None:
         # store (on its MANYAVAR line), so they SUM correctly per store.
         for key, names in (("bills", ("BILL", "BILLS")), ("qty", ("QTY",)),
                            ("footfall", ("FOOTFALL",)),
-                           ("manual", ("MANUAL SALE", "MANUAL"))):
+                           ("manual", ("MANUAL SALE", "MANUAL")),
+                           # The day target moves daily, so it belongs beside
+                           # the day's figures rather than in the targets tab.
+                           ("day_target", ("DAY TARGET", "TODAY TARGET"))):
             col = _find(cols, names)
             if col is not None:
                 t[key] = pd.to_numeric(raw.loc[t.index, col], errors="coerce")
