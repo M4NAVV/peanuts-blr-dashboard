@@ -440,6 +440,15 @@ def vfl_metrics(df, asof, gen_date=None, basis_label="", region=None) -> dict:
     cur, pri = L.report_frames(df, "YTD", asof=asof)
     amt = L.COL_AMOUNT
     traj = _monthly(cur, pri, asof, amt)
+    # The market's own movement, supplied by Manav rather than derived (see
+    # city_growth). Printed under ours so the page answers whether we are
+    # beating the city or losing share. Absent for a region with no rows yet,
+    # and absent for a month not yet filled — never zero.
+    try:
+        import city_growth
+        traj["city"] = city_growth.for_months(region, traj["months"], asof)
+    except Exception:
+        traj["city"] = [None] * len(traj["months"])
 
     g_ty = cur.groupby(L.COL_MWC)[amt].sum()
     g_ly = pri.groupby(L.COL_MWC)[amt].sum()
@@ -660,7 +669,12 @@ def _trajectory(d, x, y, w, h, tr):
     gd_y = y + _p(38)
     axis_h = _p(30)
     base = y + h - axis_h
-    plot_top = y + _p(64)
+    # The city's growth, when there is any, takes a second line under ours, so
+    # the plot has to start below BOTH — otherwise the bars' value labels run
+    # through it, which is the same collision the fixed bands were introduced
+    # to prevent.
+    has_city = any(v is not None for v in (tr.get("city") or []))
+    plot_top = y + _p(92 if has_city else 64)
     plot_h = base - plot_top - _p(22)
     n = len(tr["months"])
     if n == 0:
@@ -692,6 +706,13 @@ def _trajectory(d, x, y, w, h, tr):
         gs = _pct(gd)
         gw_ = d.textlength(gs, font=smlb)
         d.text((cx - gw_ / 2, gd_y), gs, font=smlb, fill=_ink(gs))
+        # The city's growth for the same month, where it exists. Muted, so ours
+        # stays the figure being read and this is the context beneath it.
+        city = (tr.get("city") or [None] * n)[i]
+        if city is not None:
+            cs = f"CITY {city:+,.1f}%"
+            cw_ = d.textlength(cs, font=sml)
+            d.text((cx - cw_ / 2, gd_y + _p(22)), cs, font=sml, fill=FAINT_INK)
         ms = mon if not part else f"{mon}  ({tr['part_days']} days)"
         mw = d.textlength(ms, font=labb if not part else lab)
         d.text((cx - mw / 2, base + _p(6)), ms,
