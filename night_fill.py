@@ -51,10 +51,24 @@ URL_ENV = "NIGHT_FILL_URL"
 C_DATE, C_CODE, C_NAME, C_LOC, C_CITY, C_TOTAL = (
     "DATE", "STORE CODE", "STORE NAME", "LOCATION", "CITY", "Total")
 
-# The tab's own columns. The seventh header is blank in the sheet and the eighth
-# is the fiscal year ("26-27"), so they are taken by position rather than name.
-_COLS = ["CODE", "VFL_NAME", "VFL_G", "STORE_NAME", "LOCATION", "CLUSTER",
-         "DATE", "VAL"]
+# ★ COLUMNS ARE FOUND BY HEADER NAME, NEVER BY POSITION.
+# The first version read the first eight columns positionally. On 12 Aug the tab
+# was restructured — Date moved from the seventh column to the first, and BILL,
+# QTY and FOOTFALL were inserted before the value — and the overlay silently
+# stopped working: every guard held, nothing raised, and it simply produced no
+# rows. Safe, but invisible. Reading by header survives columns being added,
+# moved or reordered, which is what actually happens to a sheet in daily use.
+_CODE = ("CODE", "STORE CODE")
+_DATE = ("DATE",)
+_FY_RE = r"^\d{2}-\d{2}(\.\d+)?$"
+
+_LAST_PROBLEM = None
+
+
+def last_problem():
+    """Why the night fill was not used, or None. Surfaced in the sidebar, so a
+    dead overlay is visible rather than merely harmless."""
+    return _LAST_PROBLEM
 
 
 def _url():
@@ -67,36 +81,89 @@ def _url():
         return None
 
 
+def _find(cols, names):
+    want = {n.strip().upper() for n in names}
+    for c in cols:
+        if str(c).strip().upper() in want:
+            return c
+    return None
+
+
+def _value_col(cols, day):
+    """The column holding this year's sale, headed with the fiscal year.
+
+    Duplicate headers get a suffix from pandas, so the current year's column is
+    the first exact match; anything fiscal-year-shaped is the fallback.
+    """
+    import re
+    fy = day.year if day.month >= 4 else day.year - 1
+    label = f"{str(fy)[2:]}-{str(fy + 1)[2:]}"
+    for c in cols:
+        if str(c).strip() == label:
+            return c
+    for c in cols:
+        if re.match(_FY_RE, str(c).strip()):
+            return c
+    return None
+
+
 def load(url=None) -> pd.DataFrame | None:
-    """The tab, tidied: one row per store per line. None if anything is wrong."""
+    """The tab, tidied: one row per store per brand line. None if unusable."""
+    global _LAST_PROBLEM
+    _LAST_PROBLEM = None
     url = url or _url()
     if not url:
         return None
     try:
         raw = pd.read_csv(url, dtype=str)
-        if raw.shape[1] < len(_COLS):
+    except Exception as e:
+        _LAST_PROBLEM = f"could not be read ({type(e).__name__})"
+        return None
+    try:
+        cols = list(raw.columns)
+        c_code, c_date = _find(cols, _CODE), _find(cols, _DATE)
+        if c_code is None or c_date is None:
+            _LAST_PROBLEM = "no CODE or Date column"
             return None
-        t = raw.iloc[:, :len(_COLS)].copy()
-        t.columns = _COLS
-        t["code"] = pd.to_numeric(t["CODE"], errors="coerce")
-        t["value"] = pd.to_numeric(t["VAL"], errors="coerce")
-        t["date"] = pd.to_datetime(t["DATE"], dayfirst=True, errors="coerce",
-                                   format="mixed")
-        t = t[t["code"].notna() & t["value"].notna()]
+        t = pd.DataFrame({
+            "code": pd.to_numeric(raw[c_code], errors="coerce"),
+            "date": pd.to_datetime(raw[c_date], dayfirst=True, errors="coerce",
+                                   format="mixed"),
+        })
+        t = t[t["code"].notna()]
         if t.empty or t["date"].notna().sum() == 0:
+            _LAST_PROBLEM = "no dated store rows"
             return None
         # The tab is a one-day template, so every row belongs to that day. A row
-        # whose date cell does not parse still counts: the sheet carries a "Date"
-        # label in that column on the first store's line, and dropping it lost
-        # that store from the day entirely — a zero-value row, but its absence
-        # changed the store count the reports print.
+        # whose own date cell does not parse still counts — dropping one once
+        # lost a store from the day's count.
         days = t.loc[t["date"].notna(), "date"].unique()
         if len(days) != 1:
-            return None                      # more than one day: not a night fill
-        t["date"] = pd.Timestamp(days[0])
+            _LAST_PROBLEM = f"holds {len(days)} dates, expected one"
+            return None
+        day = pd.Timestamp(days[0])
+        c_val = _value_col(cols, day)
+        if c_val is None:
+            _LAST_PROBLEM = "no fiscal-year value column"
+            return None
+        t["date"] = day
+        t["value"] = pd.to_numeric(raw.loc[t.index, c_val], errors="coerce")
+        t = t[t["value"].notna()]
+        if t.empty:
+            _LAST_PROBLEM = "no numeric values"
+            return None
         t["code"] = t["code"].astype(int)
+        # Per-store extras, carried when the sheet has them. Entered once per
+        # store (on its MANYAVAR line), so they SUM correctly per store.
+        for key, names in (("bills", ("BILL", "BILLS")), ("qty", ("QTY",)),
+                           ("footfall", ("FOOTFALL",)),
+                           ("manual", ("MANUAL SALE", "MANUAL"))):
+            col = _find(cols, names)
+            if col is not None:
+                t[key] = pd.to_numeric(raw.loc[t.index, col], errors="coerce")
         return t
-    except Exception:
+    except Exception as e:
+        _LAST_PROBLEM = f"unexpected shape ({type(e).__name__})"
         return None
 
 

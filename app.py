@@ -466,6 +466,16 @@ def render_portfolio():
         st.sidebar.warning(
             f"**{pf_provisional:%d %b}** is provisional — taken from the night "
             f"fill, not yet pasted or replaced by Tableau.")
+    else:
+        # A configured night fill that yields nothing is worth saying out loud:
+        # it went dead once already when the tab's columns were rearranged, and
+        # nothing on screen showed it.
+        try:
+            import night_fill as _NF
+            if _NF.last_problem():
+                st.sidebar.caption(f"Night fill not used — {_NF.last_problem()}.")
+        except Exception:
+            pass
 
     min_d, max_d = pf_all["date"].min().date(), pf_all["date"].max().date()
     st.sidebar.markdown("#### 📅 Date")
