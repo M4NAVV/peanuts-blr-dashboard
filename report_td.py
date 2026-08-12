@@ -1031,3 +1031,181 @@ def build_east_ltol(pf_df, asof, basis_label="") -> tuple[str, bytes]:
     return (f"{asof:%b}".upper()
             + f" L TO L SHEET ({fy - 1}-{str(fy)[2:]} TO {fy}-{str(fy + 1)[2:]}).pdf",
             pdf)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# SOUTH — NIGHT SALE SMS
+# ═══════════════════════════════════════════════════════════════════════════
+# The report that goes out at close, so every figure for the day comes from the
+# night fill — the only source that exists at that hour. Month- and year-to-date
+# come from the portfolio history, which the night-fill overlay has already
+# brought up to the same day.
+#
+# ⚠️ TARGETS ARE NOT AVAILABLE YET. The three target columns and the two
+# achievement percentages that divide by them are rendered EMPTY rather than
+# omitted, so the report keeps the workbook's shape and fills itself in the day
+# targets exist. `targets` takes {code: {...}} whenever that day comes.
+#
+# MANUAL SALE is read from the night fill when the tab has that column and shown
+# as blank until then; DAY ACHIEVED is system sale plus manual, so it equals
+# system sale while manual is absent.
+SMS_COLS = [
+    ("STORE NAME", "l"), ("MTD TARGET", "r"), ("MTD ACHIVED", "r"),
+    ("MTD ACHIVED %", "r"), ("YTD TARGET", "r"),
+    ("YTD ACHIVED FROM {TK}", "r"), ("YTD ACHIVED %", "r"),
+    ("DAY TARGET", "r"), ("TOTAL SYSTEM SALE", "r"),
+    ("MANYAVAR SYSTEM SALE", "r"), ("MOHEY SYSTEM SALE", "r"),
+    ("TWAMEV SYSTEM SALE", "r"), ("MANUAL SALE", "r"), ("DAY ACHIVED", "r"),
+    ("BILL", "r"), ("QTY", "r"), ("FOOTFALL", "r"),
+]
+KPI_COLS = [("STORE NAME", "l"), ("ABS", "r"), ("ABV", "r"), ("ASP", "r"),
+            ("CONVERSION", "r")]
+
+
+def _line_bucket(name: str) -> str:
+    n = str(name).upper()
+    if n.startswith("TWAMEV"):
+        return "twamev"
+    if n.startswith("MOHEY"):
+        return "mohey"
+    if n.startswith("MANYAVAR"):
+        return "manyavar"
+    return "other"
+
+
+def south_night_sms(pf_df, region="South", targets=None) -> dict:
+    """The night SMS for one region, as of the night fill's own day."""
+    import night_fill
+    import portfolio_loader as PL
+    t = night_fill.load()
+    if t is None:
+        raise RuntimeError(
+            f"the night fill is not available ({night_fill.last_problem() or 'not configured'}) "
+            "— it is the only source for the day's figures at this hour.")
+    day = pd.Timestamp(t["date"].iloc[0])
+
+    master = PL.store_master().dropna(subset=["code"]).copy()
+    master["code"] = master["code"].astype(int)
+    south = master[master["region"] == region]
+    codes = sorted(south["code"])
+    loc = dict(zip(south["code"], south["location"]))
+    tk = pd.to_datetime(south["takeover_date"]).min()
+    fy = day.year if day.month >= 4 else day.year - 1
+    ytd_from = max(pd.Timestamp(fy, 4, 1), tk) if pd.notna(tk) else pd.Timestamp(fy, 4, 1)
+    mtd_from = day.replace(day=1)
+
+    p = pf_df[pf_df["region"] == region].copy()
+    p["code"] = pd.to_numeric(p["code"], errors="coerce").astype("Int64")
+    mtd = (p[(p["date"] >= mtd_from) & (p["date"] <= day)]
+           .groupby("code")["sales"].sum())
+    ytd = (p[(p["date"] >= ytd_from) & (p["date"] <= day)]
+           .groupby("code")["sales"].sum())
+
+    t = t[t["code"].isin(codes)].copy()
+    t["bucket"] = t["line"].map(_line_bucket)
+    g = lambda c, b: float(t[(t["code"] == c) & (t["bucket"] == b)]["value"].sum())
+    col = lambda c, k: (float(t[t["code"] == c][k].sum())
+                        if k in t.columns else None)
+
+    rows = []
+    for c in codes:
+        tgt = (targets or {}).get(c, {})
+        sysS = float(t[t["code"] == c]["value"].sum())
+        man = col(c, "manual")
+        m_ach, y_ach = float(mtd.get(c, 0.0)), float(ytd.get(c, 0.0))
+        rows.append({
+            "code": c, "name": str(loc.get(c, c)).upper(),
+            "mtd_target": tgt.get("mtd"), "mtd": m_ach,
+            "ytd_target": tgt.get("ytd"), "ytd": y_ach,
+            "day_target": tgt.get("day"),
+            "system": sysS, "manyavar": g(c, "manyavar"), "mohey": g(c, "mohey"),
+            "twamev": g(c, "twamev"), "manual": man,
+            "achieved": sysS + (man or 0.0),
+            "bills": col(c, "bills"), "qty": col(c, "qty"),
+            "footfall": col(c, "footfall"),
+        })
+    return {"day": day, "region": region, "rows": rows,
+            "ytd_from": ytd_from, "has_targets": bool(targets)}
+
+
+def _sms_totals(rows):
+    keys = ("mtd", "ytd", "system", "manyavar", "mohey", "twamev", "manual",
+            "achieved", "bills", "qty", "footfall", "mtd_target", "ytd_target",
+            "day_target")
+    out = {}
+    for k in keys:
+        vals = [r[k] for r in rows if r[k] is not None]
+        out[k] = sum(vals) if vals else None
+    return out
+
+
+def render_night_sms(sheet) -> Image.Image:
+    day, rows = sheet["day"], sheet["rows"]
+    tk = f"{sheet['ytd_from']:%d}TH {sheet['ytd_from']:%b}".upper()
+    header = [h.replace("{TK}", tk) for h, _ in SMS_COLS]
+    aligns = [a for _, a in SMS_COLS]
+    T = _sms_totals(rows)
+
+    def pct(a, b):
+        return f"{a / b * 100:,.1f}" if (a and b) else ""
+
+    grid = []
+    for r in rows:
+        vals = [r["name"], _money(r["mtd_target"]), _money(r["mtd"]),
+                pct(r["mtd"], r["mtd_target"]), _money(r["ytd_target"]),
+                _money(r["ytd"]), pct(r["ytd"], r["ytd_target"]),
+                _money(r["day_target"]), _money(r["system"]),
+                _money(r["manyavar"]), _money(r["mohey"]), _money(r["twamev"]),
+                _money(r["manual"]), _money(r["achieved"]),
+                _money(r["bills"]), _money(r["qty"]), _money(r["footfall"])]
+        grid.append(([cell(v, align=aligns[i]) for i, v in enumerate(vals)], ROW_H))
+    tot = ["G. TOTAL", _money(T["mtd_target"]), _money(T["mtd"]),
+           pct(T["mtd"], T["mtd_target"]), _money(T["ytd_target"]),
+           _money(T["ytd"]), pct(T["ytd"], T["ytd_target"]),
+           _money(T["day_target"]), _money(T["system"]), _money(T["manyavar"]),
+           _money(T["mohey"]), _money(T["twamev"]), _money(T["manual"]),
+           _money(T["achieved"]), _money(T["bills"]), _money(T["qty"]),
+           _money(T["footfall"])]
+    grid.append(([cell(v, align=aligns[i], fill=TOTAL_BG, bold=True)
+                  for i, v in enumerate(tot)], ROW_H))
+    main = _draw_grid(header, grid,
+                      title=f"{sheet['region'].upper()} — ALL MANYAVAR STORE "
+                            f"TOTAL SMS  ·  {day:%d %b %Y}")
+
+    def kpis(r):
+        b, q, f_, s = r["bills"], r["qty"], r["footfall"], r["system"]
+        return [f"{q / b:,.2f}" if b else "", f"{s / b:,.0f}" if b else "",
+                f"{s / q:,.0f}" if q else "", f"{b / f_ * 100:,.1f}" if f_ else ""]
+
+    kg = [([cell(r["name"], align="l")]
+           + [cell(v, align="r") for v in kpis(r)], ROW_H) for r in rows]
+    kg.append(([cell("G. TOTAL", align="l", fill=TOTAL_BG, bold=True)]
+               + [cell(v, align="r", fill=TOTAL_BG, bold=True) for v in kpis(T)],
+               ROW_H))
+    kpi = _draw_grid([h for h, _ in KPI_COLS], kg,
+                     title=f"{sheet['region'].upper()} — DAILY KPI REPORT")
+    return _stack([main, kpi], _px(28))
+
+
+def _stack(images, gap):
+    """Two tables on one page, left-aligned, with a gap between them."""
+    w = max(i.width for i in images)
+    h = sum(i.height for i in images) + gap * (len(images) - 1)
+    out = Image.new("RGB", (w, h), WHITE)
+    y = 0
+    for im in images:
+        out.paste(im, (0, y))
+        y += im.height + gap
+    return out
+
+
+def build_night_sms(pf_df, region="South", targets=None,
+                    basis_label="") -> tuple[str, bytes]:
+    with _LOCK:
+        sheet = south_night_sms(pf_df, region=region, targets=targets)
+        img = render_night_sms(sheet)
+        day = sheet["day"]
+        pdf = _pdf_from([(f"{region} · Night sale SMS · {day:%d %b %Y}", img)],
+                        f"As of {day:%d %b %Y}"
+                        + (f" · {basis_label}" if basis_label else ""))
+    return (f"{region.upper()} NIGHT SALE SMS {day:%d-%m-%Y}.pdf", pdf)

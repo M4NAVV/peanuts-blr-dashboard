@@ -153,6 +153,11 @@ def load(url=None) -> pd.DataFrame | None:
             _LAST_PROBLEM = "no numeric values"
             return None
         t["code"] = t["code"].astype(int)
+        # The brand line this row is for (MANYAVAR / MOHEY / TWAMEV …). The tab
+        # splits VFL stores by line, and the night SMS reports that split.
+        c_line = _find(cols, ("STORE NAME",))
+        t["line"] = (raw.loc[t.index, c_line].astype(str).str.strip().str.upper()
+                     if c_line is not None else "")
         # Per-store extras, carried when the sheet has them. Entered once per
         # store (on its MANYAVAR line), so they SUM correctly per store.
         for key, names in (("bills", ("BILL", "BILLS")), ("qty", ("QTY",)),
