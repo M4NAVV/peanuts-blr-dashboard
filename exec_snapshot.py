@@ -256,6 +256,20 @@ def portfolio_metrics(pf, asof, basis_label="", region=None) -> dict:
     proj = sum(v["proj_ytd"] for v in mets.values())
     ly_full = sum(v["ly_full"] for v in mets.values())
 
+    # Floor space actually being traded from, and what it earns. Carpet comes
+    # from the store master; closed stores are excluded from both sides, so the
+    # area and the sales that divide by it describe the same estate.
+    # Throughput is annualised — the projected year over the area — because a
+    # part-year figure understates it and is not comparable with the month-wise
+    # report's own throughput, which annualises the same way.
+    import master_lookup
+    carpet_map = master_lookup.carpet()
+    open_codes = set(int(c) for c in y["code"]) - closed
+    area = float(sum(carpet_map.get(c, 0) or 0 for c in open_codes))
+    proj_open = sum(v["proj_ytd"] for c, v in mets.items()
+                    if int(c) in open_codes)
+    throughput = (proj_open / area) if area else None
+
     # South has NO last year in the portfolio feed, so its like to like set is
     # empty and a like to like trajectory would be five zero bars — a page that
     # looks broken rather than one that says "no comparison exists". Fall back to
@@ -367,8 +381,9 @@ def portfolio_metrics(pf, asof, basis_label="", region=None) -> dict:
              "key": ("", f"{int((yl['shortfall'] < 0).sum())} down" if len(yl) else "")},
             {"label": "Estate", "value": f"{n_open} open",
              "sub": f"{len(closed)} closed, excluded",
-             "rows": [("Filed today", f"{n_filed} of {n_open}")],
-             "key": (f"Under {_rs(PORTFOLIO_DAY_FLOOR)}", str(len(low)))},
+             "rows": [("Carpet area", f"{area:,.0f} sq ft" if area else "—")],
+             "key": ("Throughput / sq ft",
+                     f"Rs {throughput:,.0f}" if throughput else "—")},
         ],
         "traj": {**traj, "note": traj_note},
         "tables": [
