@@ -46,6 +46,14 @@ import os
 import pandas as pd
 
 URL_ENV = "NIGHT_FILL_URL"
+# The tab's own gid, so the URL can be derived from the workbook the portfolio
+# feed already names — the same approach targets.py and city_growth.py take.
+# A configured URL that has lost its gid serves the workbook's FIRST tab (the
+# VFL transaction data) instead, which is how a correct-looking secret produced
+# "no CODE or Date column"; the derived URL is tried as a fallback for exactly
+# that case, so a mangled secret self-corrects.
+_GID = "1754360378"
+_PORTFOLIO_ENV = "PORTFOLIO_CSV_URL"
 
 # Raw portfolio sheet schema — appended rows must look exactly like sheet rows.
 C_DATE, C_CODE, C_NAME, C_LOC, C_CITY, C_TOTAL = (
@@ -71,14 +79,39 @@ def last_problem():
     return _LAST_PROBLEM
 
 
-def _url():
-    if os.environ.get(URL_ENV):
-        return os.environ[URL_ENV]
+def _secret(name):
+    if os.environ.get(name):
+        return os.environ[name]
     try:
         import streamlit as st
-        return st.secrets.get(URL_ENV)
+        return st.secrets.get(name)
     except Exception:
         return None
+
+
+def _derived():
+    """The tab's export URL, built from the workbook the portfolio feed names."""
+    import re
+    base = _secret(_PORTFOLIO_ENV)
+    if not base:
+        return None
+    m = re.search(r"/spreadsheets/d/([A-Za-z0-9_-]+)", str(base))
+    return (f"https://docs.google.com/spreadsheets/d/{m.group(1)}"
+            f"/export?format=csv&gid={_GID}") if m else None
+
+
+def _urls():
+    """Every URL worth trying, best first, without duplicates."""
+    out = []
+    for u in (_secret(URL_ENV), _derived()):
+        if u and u not in out:
+            out.append(u)
+    return out
+
+
+def _url():
+    us = _urls()
+    return us[0] if us else None
 
 
 def _find(cols, names):
@@ -108,10 +141,26 @@ def _value_col(cols, day):
 
 
 def load(url=None) -> pd.DataFrame | None:
-    """The tab, tidied: one row per store per brand line. None if unusable."""
+    """The tab, tidied: one row per store per brand line. None if unusable.
+
+    Each candidate URL is tried in turn, so a secret that has lost its gid — and
+    therefore serves the wrong tab — is rescued by the derived one.
+    """
+    global _LAST_PROBLEM
+    if url is None:
+        for candidate in _urls():
+            got = _load_one(candidate)
+            if got is not None:
+                return got
+        if not _urls():
+            _LAST_PROBLEM = f"${URL_ENV} is not set and no workbook to derive it from"
+        return None
+    return _load_one(url)
+
+
+def _load_one(url) -> pd.DataFrame | None:
     global _LAST_PROBLEM
     _LAST_PROBLEM = None
-    url = url or _url()
     if not url:
         # Say so. An unconfigured overlay used to return None with no reason,
         # so the sidebar printed nothing and a missing secret looked exactly
@@ -128,7 +177,10 @@ def load(url=None) -> pd.DataFrame | None:
         cols = list(raw.columns)
         c_code, c_date = _find(cols, _CODE), _find(cols, _DATE)
         if c_code is None or c_date is None:
-            _LAST_PROBLEM = "no CODE or Date column"
+            # Name what WAS found: the usual cause is a URL without its gid,
+            # which serves the workbook's first tab instead of this one.
+            _LAST_PROBLEM = ("no CODE or Date column — found "
+                             + ", ".join(str(c) for c in cols[:4]) + "…")
             return None
         t = pd.DataFrame({
             "code": pd.to_numeric(raw[c_code], errors="coerce"),
