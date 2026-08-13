@@ -125,11 +125,21 @@ def _load_cached():
     from datetime import datetime
     from zoneinfo import ZoneInfo
     df = L.load_data()
-    return df, datetime.now(ZoneInfo("Asia/Kolkata"))
+    # Carried out of the cache explicitly; attrs are not guaranteed to survive it.
+    return (df, datetime.now(ZoneInfo("Asia/Kolkata")),
+            df.attrs.get("provisional_date"))
 
 
 def get_data() -> pd.DataFrame:
     return _load_cached()[0]
+
+
+def vfl_provisional_date():
+    """The day VFL data came from the night fill rather than the sheet, if any."""
+    try:
+        return _load_cached()[2]
+    except Exception:
+        return None
 
 
 def data_loaded_at():
@@ -1239,8 +1249,17 @@ st.sidebar.markdown("---")
 st.sidebar.caption(
     f"**Data through:** {fresh['max_date']:%d %b %Y}  \n**Rows:** {fresh['rows']:,}  \n"
     f"**Loaded:** {data_loaded_at():%d %b, %I:%M %p} IST")
+_vfl_prov = vfl_provisional_date()
+if _vfl_prov is not None:
+    # The latest day came from the night fill, before it reached this sheet.
+    # It carries sales, brand line, gender and units but no bill-level detail,
+    # so say so rather than let a coarse day pass for a settled one.
+    st.sidebar.warning(
+        f"**{_vfl_prov:%d %b}** is provisional — from the night fill, so it has "
+        f"no division, category or bill detail yet.")
 if st.sidebar.button("🔄 Refresh data now"):
     _load_cached.clear()
+    _load_portfolio_cached.clear()
     st.rerun()
 
 if df.empty:

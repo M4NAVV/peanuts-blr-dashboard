@@ -212,6 +212,9 @@ def _load_one(url) -> pd.DataFrame | None:
         t["code"] = t["code"].astype(int)
         # The brand line this row is for (MANYAVAR / MOHEY / TWAMEV …). The tab
         # splits VFL stores by line, and the night SMS reports that split.
+        c_gender = _find(cols, ("VFL G", "MEN/WOMEN/CHILD"))
+        t["gender"] = (raw.loc[t.index, c_gender].astype(str).str.strip().str.upper()
+                       if c_gender is not None else "")
         c_line = _find(cols, ("STORE NAME",))
         t["line"] = (raw.loc[t.index, c_line].astype(str).str.strip().str.upper()
                      if c_line is not None else "")
@@ -276,5 +279,91 @@ def raw_rows_if_newer(raw: pd.DataFrame, url=None) -> pd.DataFrame | None:
             C_NAME: "", C_LOC: "", C_CITY: "",
             C_TOTAL: [f"{v:.2f}" for v in rows["value"]],
         }, columns=[C_DATE, C_CODE, C_NAME, C_LOC, C_CITY, C_TOTAL])
+    except Exception:
+        return None
+
+
+# ── VFL side ────────────────────────────────────────────────────────────────
+# ★ WHAT CAN AND CANNOT BE CARRIED ACROSS.
+#
+# The portfolio sheet is already ONE ROW PER STORE PER DAY, so a night-fill row
+# appended to it is the same kind of thing the paste would add. The VFL frame is
+# TRANSACTIONAL — one row per line item, carrying division, section, department,
+# category, salesperson and a bill number — and the night fill has none of that.
+# So what is appended here is honest about its own coarseness:
+#
+#   sales, brand line and gender  -> faithful. Division is set to the brand line
+#       the tab states, which is exactly what `brand_line_vfl` reads, so the VFL
+#       G/D and gender reports are correct for the day.
+#   units                         -> faithful, from the tab's QTY.
+#   section / department / category / salesperson -> literally "(PROVISIONAL)",
+#       so a finer breakdown SHOWS the day as provisional instead of quietly
+#       filing it under a real division it was never measured against.
+#   BILLS                         -> cannot be represented. A bill count is a
+#       count of distinct bill numbers, and inventing 32 bill numbers to make
+#       one store's count come out right would be fabricating transactions.
+#       Bill No is left null, so provisional rows contribute no bills, and
+#       `_PROVISIONAL_COL` marks them so bill-derived figures (bills, average
+#       bill value) can exclude the day and stay internally consistent rather
+#       than dividing today's sales by yesterday's bills.
+_PROVISIONAL_COL = "_provisional"
+
+# The tab's brand-line spelling -> the Division spelling `brand_line_vfl` reads.
+_LINE_TO_DIVISION = {
+    "MANYAVAR": "MANYAVAR", "MOHEY": "MOHEY",
+    "TWAMEV MEN": "TWAMEV-MEN", "TWAMEV-MEN": "TWAMEV-MEN",
+    "TWAMEV WOMEN": "TWAMEV-WOMEN", "TWAMEV-WOMEN": "TWAMEV-WOMEN",
+}
+
+
+def vfl_rows_if_newer(raw: pd.DataFrame, url=None) -> pd.DataFrame | None:
+    """Rows to append to the RAW VFL frame, or None to leave it alone.
+
+    Same forward-only rule as the portfolio side: a day the VFL sheet already
+    covers is ignored, so Tableau always wins the moment it lands.
+    """
+    try:
+        import loader as L
+        t = load(url)
+        if t is None:
+            return None
+        day = fill_date(t)
+        if day is None:
+            return None
+
+        have = L._parse_dates(raw[L.COL_DATE])
+        latest = have.max()
+        if pd.isna(latest) or day <= latest:
+            return None                      # already covered — stand aside
+
+        # Only stores the VFL feed knows; the tab also carries 31 non-VFL ones.
+        m = L.load_store_master()
+        label = {int(c): n for c, n in zip(
+            pd.to_numeric(m["code"], errors="coerce"), m["tableau_name"])
+            if pd.notna(c)}
+        t = t[t["code"].isin(label)]
+        if t.empty:
+            return None
+
+        line = t["line"].astype(str).str.strip().str.upper()
+        out = pd.DataFrame({
+            L.COL_STORE: t["code"].map(label),
+            # ⚠️ THE VFL SHEET IS MONTH-FIRST (%m/%d/%Y), unlike the portfolio
+            # sheet, which is day-first. Writing the portfolio's format here
+            # turned 12 August into 8 December — silently, because both are
+            # valid dates. Match `loader._parse_dates` exactly.
+            L.COL_DATE: day.strftime("%m/%d/%Y"),
+            L.COL_AMOUNT: t["value"].astype(float),
+            L.COL_QTY: (t["qty"] if "qty" in t.columns else pd.NA),
+            L.COL_DIVISION: line.map(_LINE_TO_DIVISION).fillna("MANYAVAR"),
+            L.COL_MWC: t.get("gender", pd.Series("", index=t.index)),
+            L.COL_BILL: pd.NA,               # a bill count cannot be invented
+        })
+        for c in (L.COL_SECTION, L.COL_DEPARTMENT, L.COL_STYLE, L.COL_COLOR,
+                  L.COL_SALESPERSON):
+            out[c] = "(PROVISIONAL)"
+        out[L.COL_PROMO] = 0
+        out[_PROVISIONAL_COL] = True
+        return out
     except Exception:
         return None

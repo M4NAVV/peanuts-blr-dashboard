@@ -226,10 +226,35 @@ def clean(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def load_data() -> pd.DataFrame:
-    """Public entry point. Streamlit caching is applied in app.py."""
-    df = clean(_read_raw())
+    """Public entry point. Streamlit caching is applied in app.py.
+
+    If a night fill is configured and holds a day NEWER than anything in the VFL
+    sheet, its rows are appended before `clean()`, so they are typed and enriched
+    by the same code as every other row. A day the sheet already covers is
+    ignored, so Tableau always wins once it lands — the same forward-only rule
+    the portfolio side follows. `df.attrs["provisional_date"]` names the day.
+
+    Those rows are COARSE by nature: see night_fill.vfl_rows_if_newer. Sales,
+    brand line, gender and units are faithful; bills cannot be represented and
+    the finer dimensions read "(PROVISIONAL)".
+    """
+    raw = _read_raw()
+    provisional = None
+    try:
+        import night_fill
+        extra = night_fill.vfl_rows_if_newer(raw)
+        if extra is not None and len(extra):
+            provisional = _parse_dates(extra[COL_DATE]).max()
+            raw = pd.concat([raw, extra], ignore_index=True)
+    except Exception:
+        provisional = None          # never let the overlay break the load
+    df = clean(raw)
     df = _apply_takeover_filter(df)
     df = _enrich(df)
+    if night_fill._PROVISIONAL_COL not in df.columns:
+        df[night_fill._PROVISIONAL_COL] = False
+    df[night_fill._PROVISIONAL_COL] = df[night_fill._PROVISIONAL_COL].fillna(False)
+    df.attrs["provisional_date"] = provisional
     return df
 
 
@@ -838,7 +863,16 @@ def _frame_metrics(f: pd.DataFrame) -> dict:
 
 
 def window_yoy_takeover(df: pd.DataFrame, kind: str, asof=None) -> dict:
-    """YoY for MTD/YTD using per-store takeover-anchored windows (for exec cards)."""
+    """YoY for MTD/YTD using per-store takeover-anchored windows (for exec cards).
+
+    Provisional rows are left out of this one. It reports bills and average bill
+    value alongside sales, and a night fill carries no bill numbers — including
+    its sales but not its bills would divide today's takings by yesterday's
+    bills and overstate the ticket. Better that the whole block reads as of the
+    last settled day than that one number inside it lies.
+    """
+    if "_provisional" in df.columns:
+        df = df[~df["_provisional"].astype(bool)]
     cur, prior = report_frames(df, kind, asof=asof)
     c, p = _frame_metrics(cur), _frame_metrics(prior)
     growth = {k: ((c[k] - p[k]) / p[k] * 100 if p[k] else None) for k in c}
