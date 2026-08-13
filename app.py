@@ -459,6 +459,13 @@ def render_portfolio():
     st.sidebar.caption(
         f"{pf_all['code'].nunique()} stores · {pf_all['brand'].nunique()} brands · "
         f"sales-only breadth view")
+    # Always state the last day the data covers. Portfolio mode had no freshness
+    # line at all, so a stale cache and a fresh one looked identical — the point
+    # of the reliability audit's fourth finding, and how a missing night fill
+    # went unnoticed.
+    st.sidebar.caption(
+        f"**Data through {pf_all['date'].max():%d %b %Y}** · "
+        f"loaded {pf_at:%H:%M}")
     if pf_provisional is not None:
         # The latest day came from the night fill, before the morning paste.
         # Say so wherever it is used: a provisional figure that looks final is

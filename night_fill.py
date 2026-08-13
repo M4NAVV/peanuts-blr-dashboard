@@ -113,6 +113,11 @@ def load(url=None) -> pd.DataFrame | None:
     _LAST_PROBLEM = None
     url = url or _url()
     if not url:
+        # Say so. An unconfigured overlay used to return None with no reason,
+        # so the sidebar printed nothing and a missing secret looked exactly
+        # like a working one — the invisible failure this whole module is meant
+        # to avoid, left in the one path that never got tested.
+        _LAST_PROBLEM = f"${URL_ENV} is not set"
         return None
     try:
         raw = pd.read_csv(url, dtype=str)
