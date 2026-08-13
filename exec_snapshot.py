@@ -56,6 +56,11 @@ BAR_TY = (47, 102, 144)          # #2F6690
 BAR_LY = HDR_BG                  # #DAEEF3
 MUTED_INK = (68, 68, 68)
 FAINT_INK = (85, 85, 85)
+# The growth strip above the bars: the workbook's header blue, thinned so it
+# reads as a band without competing with the bars drawn in the same hue.
+BAND_BG = (241, 248, 251)
+BAND_RULE = (214, 228, 235)
+CITY_LAB = (130, 130, 130)
 
 # Day-sale floors. The attention band that used them was removed from the
 # snapshot on Manav's instruction (11 Aug); the floors stay because the tile
@@ -65,6 +70,26 @@ VFL_DAY_FLOOR = 50_000
 
 MOVERS_N = 6
 TRAJ_MONTHS = 5
+
+# Brands that are one brand seen from the store master's point of view. Manav,
+# 13 Aug: "some stores are Manyavar only and some are Manyavar and Mohey — from
+# the brand perspective they should be combined, because same brand." The
+# master's value describes what a STORE carries, which is a format, not a
+# separate brand; ten stores were filed under MANYAVAR and twelve under
+# MANYAVAR & MOHEY, so the table showed one brand twice and neither row was the
+# brand's real movement.
+#
+# Applied where the Brands table is built, and nowhere else: a store's own brand
+# attribute stays exactly as the master states it, so filters, the Brand-wise GD
+# sheet (which groups by parent company) and every other report are untouched.
+BRAND_FOLD = {
+    "MANYAVAR": "MANYAVAR & MOHEY",
+    "MOHEY": "MANYAVAR & MOHEY",
+}
+
+
+def _brand_fold(s) -> str:
+    return BRAND_FOLD.get(str(s).strip().upper(), s)
 
 
 # --------------------------------------------------------------------------- #
@@ -312,7 +337,8 @@ def portfolio_metrics(pf, asof, basis_label="", region=None) -> dict:
     if not len(yl):
         brand_rows = [["No last-year comparison", "—", "—"]]
     else:
-        b = yl.groupby("brand")[["cur", "prior"]].sum()
+        b = yl.assign(brand=yl["brand"].map(_brand_fold)) \
+              .groupby("brand")[["cur", "prior"]].sum()
         b["move"] = b["cur"] - b["prior"]
         b = b.sort_values("move", ascending=False)
         brand_rows = [[str(i).title(), _rupee_move(r["move"]),
@@ -473,6 +499,8 @@ def vfl_metrics(df, asof, gen_date=None, basis_label="", region=None) -> dict:
 
     sy = L.store_yoy(df, kind="YTD", asof=asof).copy()
     sy["shortfall"] = sy["cur"] - sy["prior"]
+    sm = L.store_yoy(df, kind="MTD", asof=asof).copy()
+    sm["shortfall"] = sm["cur"] - sm["prior"]
 
     def mover_rows(best):
         """EVERY store that moved that way, not a top-n."""
@@ -492,16 +520,85 @@ def vfl_metrics(df, asof, gen_date=None, basis_label="", region=None) -> dict:
     # frames are keyed by store label, the closure map by code, so map across.
     master = L.load_store_master()[["tableau_name", "code"]]
     shut = L.closed_map()
+    code_of = {str(n): int(c) for n, c in zip(master["tableau_name"], master["code"])
+               if pd.notna(c)}
+    # Scoped to the stores THIS page is about. Read off the master alone, a
+    # region page counted the whole estate's closures — South printed "8 stores
+    # | 1 closed | 8 trading" for a store shut in East.
+    _here = set(sy["store"].astype(str))
     closed_labels = {
-        str(n) for n, c in zip(master["tableau_name"], master["code"])
-        if pd.notna(c) and int(c) in shut
-        and pd.to_datetime(shut[int(c)]) <= asof
+        s for s, c in code_of.items()
+        if s in _here and c in shut and pd.to_datetime(shut[c]) <= asof
     }
     day_by = cur[cur["date"] == asof].groupby(L.COL_STORE_LABEL)[amt].sum()
     low = sorted([(str(s)[:15], None, float(v)) for s, v in day_by.items()
                   if str(s) not in closed_labels and v < VFL_DAY_FLOOR],
                  key=lambda t: t[2])
     n_open = int(sy[~sy["store"].astype(str).isin(closed_labels)]["cur"].gt(0).sum())
+
+    # ---- the six tiles the portfolio pack prints, on the VFL feed ------------
+    # Manav, 13 Aug: the same tile row on both packs. Same definitions, so a
+    # figure means the same thing whichever pack it is read in — which is the
+    # whole point of replicating them rather than approximating them.
+    #
+    # LIKE TO LIKE, defined exactly as `_lfl_codes` defines it for the portfolio:
+    # trading in BOTH years AND still open. VFL keeps South's pre-takeover
+    # history, so the set is nearly everything — 20 of 22 today, short only
+    # Dibrugarh (opened this year) and Roodraksh (shut 31 Jul). The split is
+    # still worth printing: it is what separates a real move from an estate
+    # change, and a page that only shows it when it is large teaches nobody.
+    lfl = {str(r["store"]) for _, r in sy.iterrows()
+           if r["cur"] > 0 and r["prior"] > 0 and str(r["store"]) not in closed_labels}
+    yl, ml = sy[sy["store"].astype(str).isin(lfl)], sm[sm["store"].astype(str).isin(lfl)]
+
+    # Day figures come off the WHOLE frame, not the year-to-date windows: the
+    # same weekday a year ago (asof - 364) falls one day outside the prior
+    # window, so reading it there returns zero and the comparison prints +inf.
+    dl = df[df[L.COL_STORE_LABEL].astype(str).isin(lfl)]
+    day_all = float(cur[cur["date"] == asof][amt].sum())
+    d_ty = float(dl[dl["date"] == asof][amt].sum())
+    d_date = float(dl[dl["date"] == asof - pd.DateOffset(years=1)][amt].sum())
+    d_wday = float(dl[dl["date"] == asof - pd.Timedelta(days=364)][amt].sum())
+
+    # Projected year on the SHARED rule (projections.py) with the same last-full-
+    # year definition the portfolio pack uses — achieved / days actually traded
+    # x 365, frozen for a closed store, against the whole of the prior fiscal
+    # year. Projected off `gen_date`, like the GD sheet on page 2, so the tile
+    # and the sheet behind it agree.
+    import projections as PROJ
+    fy_year = asof.year if asof.month >= 4 else asof.year - 1
+    fy_start = pd.Timestamp(fy_year, 4, 1)
+    doo_by_code, tk_by_label = L.doo_map(), L.takeover_map()
+    ly_full_by = df[(df["date"] >= pd.Timestamp(fy_year - 1, 4, 1))
+                    & (df["date"] <= pd.Timestamp(fy_year, 3, 31))] \
+        .groupby(L.COL_STORE_LABEL)[amt].sum()
+    proj = proj_open = ly_full = 0.0
+    for _, r in sy.iterrows():
+        s = str(r["store"])
+        c = code_of.get(s)
+        opened = pd.to_datetime(doo_by_code.get(c), errors="coerce") if c else pd.NaT
+        if pd.isna(opened):
+            opened = pd.to_datetime(tk_by_label.get(s), errors="coerce")
+        if pd.isna(opened):
+            opened = fy_start
+        cl = pd.to_datetime(shut.get(c), errors="coerce") if c else pd.NaT
+        p = PROJ.project_ytd(float(r["cur"]), fy_start, opened, gen_date,
+                             None if pd.isna(cl) else cl)
+        proj += p
+        ly_full += float(ly_full_by.get(s, 0.0))
+        if s not in closed_labels:
+            proj_open += p
+
+    # Floor space being traded from, and what it earns. Closed stores are out of
+    # both the area and the sales that divide by it, so the two describe the
+    # same estate; throughput is annualised for the same reason it is on the
+    # portfolio page — a part year understates it.
+    import master_lookup
+    carpet_map = master_lookup.carpet()
+    open_codes = {code_of[s] for s in sy["store"].astype(str)
+                  if s in code_of and s not in closed_labels}
+    area = float(sum(carpet_map.get(c, 0) or 0 for c in open_codes))
+    throughput = (proj_open / area) if area else None
 
     return {
         "title": "Executive Snapshot",
@@ -510,37 +607,46 @@ def vfl_metrics(df, asof, gen_date=None, basis_label="", region=None) -> dict:
         "stamp": [
             f"As of {asof:%d %b %Y}",
             basis_label or f"Live to {asof:%d %b %Y}",
-            f"{len(sy)} stores  |  {n_open} trading",
-            "Takeover-anchored — all stores comparable",
+            f"{len(sy)} stores  |  {len(closed_labels)} closed  |  {n_open} trading",
+            f"Like to like = {len(lfl)} stores, takeover-anchored",
         ],
+        # The portfolio pack's six, definition for definition — see the block
+        # above. Bills & basket loses its tile and is not replaced (Manav,
+        # 13 Aug: "the displaced tile is not needed"); concentration keeps its
+        # figures in the box under the first table, where the portfolio page
+        # puts them.
         "tiles": [
             {"label": "Year to date", "value": f"Rs {_cr(y_ty)} Cr",
-             "sub": f"LY Rs {_cr(y_ly)} Cr", "rows": [],
-             "key": ("Growth", _pct(_growth(y_ty, y_ly)))},
+             "sub": f"LY Rs {_cr(y_ly)} Cr",
+             "rows": [("Overall", _pct(_growth(y_ty, y_ly)))],
+             "key": ("Like to like",
+                     _pct(_growth(yl["cur"].sum(), yl["prior"].sum())))},
             {"label": "Month to date", "value": f"Rs {_cr(m_ty)} Cr",
-             "sub": f"LY Rs {_cr(m_ly)} Cr", "rows": [],
-             "key": ("Growth", _pct(_growth(m_ty, m_ly)))},
-            {"label": f"Day {asof:%d %b}",
-             "value": f"Rs {_cr(cur[cur['date'] == asof][amt].sum())} Cr",
-             "sub": "same date last year", "rows": [],
-             "key": ("Growth", _pct(_growth(
-                 cur[cur["date"] == asof][amt].sum(),
-                 pri[pri["date"] == asof - pd.DateOffset(years=1)][amt].sum())))},
-            {"label": "How  ·  bills & basket", "value": "Fewer, bigger",
-             "sub": "", "small_value": True,
-             "rows": [("Bills", _pct(ytd["growth"]["bills"])),
-                      ("Units", _pct(ytd["growth"]["units"]))],
-             "key": ("Ticket", _pct(ytd["growth"]["atv"]))},
-            {"label": "Breadth",
-             "value": f"{int((sy['shortfall'] > 0).sum())} up  "
-                      f"{int((sy['shortfall'] < 0).sum())} dn",
-             "sub": f"year to date, of {len(sy)}", "rows": [],
-             "key": ("Total still", _pct(_growth(y_ty, y_ly)))},
-            {"label": "Concentration",
-             "value": f"{(top5['cur'].sum() / tot * 100) if tot else 0:,.1f}%",
-             "sub": "top 5 stores", "rows": [],
-             "key": (str(top1["store"])[:14] if top1 is not None else "—",
-                     f"{(top1['cur'] / tot * 100) if (top1 is not None and tot) else 0:,.1f}%")},
+             "sub": f"LY Rs {_cr(m_ly)} Cr",
+             "rows": [("Overall", _pct(_growth(m_ty, m_ly)))],
+             "key": ("Like to like",
+                     _pct(_growth(ml["cur"].sum(), ml["prior"].sum())))},
+            {"label": f"Day {asof:%d %b}", "value": f"Rs {_cr(day_all)} Cr",
+             "sub": f"Like to like Rs {_cr(d_ty)} Cr",
+             "rows": [("vs same date", _pct(_growth(d_ty, d_date)))],
+             "key": ("vs same weekday", _pct(_growth(d_ty, d_wday)))},
+            {"label": "Projected year", "value": f"Rs {_cr(proj)} Cr",
+             "sub": f"last full year Rs {_cr(ly_full)} Cr",
+             "rows": [("Run-rate", "x365 op-days")],
+             "key": ("Implied", _pct(_growth(proj, ly_full)))},
+            {"label": "Breadth  LTL",
+             "value": (f"{int((ml['shortfall'] > 0).sum())} up  "
+                       f"{int((ml['shortfall'] < 0).sum())} dn") if len(ml) else "—",
+             "sub": (f"this month, of {len(ml)}" if len(ml)
+                     else "no comparable stores"),
+             "rows": [("Year to date",
+                       f"{int((yl['shortfall'] > 0).sum())} up" if len(yl) else "—")],
+             "key": ("", f"{int((yl['shortfall'] < 0).sum())} down" if len(yl) else "")},
+            {"label": "Estate", "value": f"{n_open} open",
+             "sub": f"{len(closed_labels)} closed, excluded",
+             "rows": [("Carpet area", f"{area:,.0f} sq ft" if area else "—")],
+             "key": ("Throughput / sq ft",
+                     f"Rs {throughput:,.0f}" if throughput else "—")},
         ],
         "traj": {**traj, "note": "Rs crore by month"},
         "tables": [
@@ -554,7 +660,15 @@ def vfl_metrics(df, asof, gen_date=None, basis_label="", region=None) -> dict:
             {"title": "Declined", "sub": "by rupees",
              "cols": ["Store", "Moved", "G/D"], "rows": mover_rows(False)},
         ],
-        "concentration": None,
+        # Concentration lost its tile to the portfolio's six and keeps its
+        # figures in the box under the first table — the same box, in the same
+        # place, that the portfolio page has always drawn.
+        "concentration": {
+            "share": (top5["cur"].sum() / tot * 100) if tot else 0.0,
+            "top10": (sy.nlargest(10, "cur")["cur"].sum() / tot * 100) if tot else 0.0,
+            "top1_name": str(top1["store"]) if top1 is not None else "—",
+            "top1_share": (top1["cur"] / tot * 100) if (top1 is not None and tot) else 0.0,
+        },
     }
 
 
@@ -580,6 +694,21 @@ def _f(size):
     return _ft(max(8, int(round(size * _K))))
 
 
+def _lh(font) -> int:
+    """A line's real height for this font — ascender plus descender.
+
+    Line spacing used to be a set of fixed step sizes (44 after the big value,
+    24 after the sub, 22 a row) chosen when the page drew at natural size. They
+    do not survive `_K`: the type scales up to 1.75x and the steps scale with it,
+    but a font's ascender and descender do not grow at the same rate as a number
+    someone picked by eye. At 1.664x the gap between "9 up 11 dn" and the line
+    under it had closed to nothing and the p descended into it. Stepping by what
+    the font actually measures cannot drift that way.
+    """
+    a, d = font.getmetrics()
+    return a + d
+
+
 def _neg(text: str) -> bool:
     return str(text).strip().startswith("-")
 
@@ -603,6 +732,30 @@ def _cell(d, box, text, font, fill=None, align="l", pad=None, color=None):
     d.text((tx, ty), str(text), font=font, fill=color or _ink(text))
 
 
+def _fit(d, text, fonts, avail):
+    """The first of `fonts` that fits `text` into `avail`, else the smallest."""
+    for f in fonts:
+        if d.textlength(str(text), font=f) <= avail:
+            return f
+    return fonts[-1]
+
+
+def _kv(d, x0, x1, y, k, v, font, small, pad):
+    """A label left, its figure right — stepped down a size if they would meet.
+
+    "Throughput / sq ft" against "Rs 9,429" is the tightest pair in the row, and
+    it clears only because of how wide the page happens to be. A tile is not
+    guaranteed any particular width, so the row checks rather than assumes.
+    """
+    vw = d.textlength(str(v), font=font)
+    if d.textlength(str(k), font=font) + vw > (x1 - x0) - pad * 2 - _p(8):
+        font = small
+        vw = d.textlength(str(v), font=font)
+    d.text((x0 + pad, y), str(k), font=font, fill=MUTED_INK)
+    d.text((x1 - pad - vw, y), str(v), font=font, fill=_ink(v))
+    return _lh(font)
+
+
 def _tiles(d, x, y, w, h, tiles):
     n = len(tiles)
     gap = _p(10)
@@ -610,35 +763,65 @@ def _tiles(d, x, y, w, h, tiles):
     lab, labb = _f(19)
     _, big = _f(37)
     sml, smlb = _f(18)
-    hh = _p(30)
+    tiny, tinyb = _f(16)
+    hh = _lh(labb) + _p(9)        # the label's own height, not a guessed 30
     for i, t in enumerate(tiles):
         x0 = int(round(x + i * (tw + gap)))
         x1 = int(round(x0 + tw))
         d.rectangle([x0, y, x1, y + h], outline=GRID, width=2)
         d.rectangle([x0, y, x1, y + hh], fill=HDR_BG)
         d.rectangle([x0, y, x1, y + hh], outline=GRID, width=2)
-        d.text((x0 + _p(7), y + _p(6)), t["label"].upper(), font=labb, fill=INK)
-        vy = y + hh + _p(8)
-        vfont = smlb if t.get("small_value") else big
+        d.text((x0 + _p(7), y + _p(5)), t["label"].upper(), font=labb, fill=INK)
+        vy = y + hh + _p(6)
+        # The headline and its sub line step down rather than run into the tile
+        # beside them — a tile is only ever as wide as the page divided six ways.
+        avail = (x1 - x0) - _p(14)
+        vfont = (smlb if t.get("small_value")
+                 else _fit(d, t["value"], [big, _f(30)[1], _f(24)[1]], avail))
         d.text((x0 + _p(7), vy), t["value"], font=vfont, fill=INK)
-        vy += _p(26) if t.get("small_value") else _p(44)
+        vy += _lh(vfont) + _p(3)
         if t.get("sub"):
-            d.text((x0 + _p(7), vy), t["sub"], font=sml, fill=MUTED_INK)
-            vy += _p(24)
+            sfont = _fit(d, t["sub"], [sml, tiny, _f(14)[0]], avail)
+            d.text((x0 + _p(7), vy), t["sub"], font=sfont, fill=MUTED_INK)
+            vy += _lh(sml) + _p(3)
         rows = list(t.get("rows", []))
         key = t.get("key")
         for k, v in rows:
-            d.text((x0 + _p(7), vy), k, font=sml, fill=MUTED_INK)
-            vw = d.textlength(str(v), font=sml)
-            d.text((x1 - _p(7) - vw, vy), str(v), font=sml, fill=_ink(v))
-            vy += _p(22)
+            vy += _kv(d, x0, x1, vy, k, v, sml, tiny, _p(7)) + _p(3)
         if key:
             d.line([x0 + _p(7), vy + _p(2), x1 - _p(7), vy + _p(2)],
                    fill=(150, 150, 150), width=1)
-            vy += _p(7)
-            d.text((x0 + _p(7), vy), key[0], font=smlb, fill=INK)
-            vw = d.textlength(str(key[1]), font=smlb)
-            d.text((x1 - _p(7) - vw, vy), str(key[1]), font=smlb, fill=_ink(key[1]))
+            vy += _p(6)
+            kw_ = d.textlength(str(key[1]), font=smlb)
+            kf = smlb if (d.textlength(str(key[0]), font=smlb) + kw_
+                          <= (x1 - x0) - _p(14) - _p(8)) else tinyb
+            kw_ = d.textlength(str(key[1]), font=kf)
+            d.text((x0 + _p(7), vy), key[0], font=kf, fill=INK)
+            d.text((x1 - _p(7) - kw_, vy), str(key[1]), font=kf, fill=_ink(key[1]))
+
+
+def _bar_value(d, bx0, bw, top, base, text, font, small, on_dark):
+    """Print a bar's value INSIDE the bar, or just above it when it cannot fit.
+
+    Manav, 13 Aug: the figure belongs in the bar, not on top of it. Inside, it
+    reads as part of the bar and the plot gets back the band that floating
+    labels used to reserve. It only works while the label actually fits, so the
+    label steps down one size, and a bar still too short to hold it keeps its
+    figure just above — a number half outside its own bar is worse than a
+    number above it.
+    """
+    vw = d.textlength(text, font=font)
+    if vw > bw - _p(8):
+        font = small
+        vw = d.textlength(text, font=font)
+    asc, dsc = font.getmetrics()
+    lh = asc + dsc
+    tx = bx0 + (bw - vw) / 2
+    if base - top >= lh + _p(9) and vw <= bw - _p(4):
+        d.text((tx, top + _p(5)), text, font=font,
+               fill=WHITE if on_dark else INK)
+    else:
+        d.text((tx, top - lh - _p(3)), text, font=font, fill=FAINT_INK)
 
 
 def _trajectory(d, x, y, w, h, tr):
@@ -650,37 +833,55 @@ def _trajectory(d, x, y, w, h, tr):
     """
     sml, smlb = _f(18)
     lab, labb = _f(19)
+    tiny, tinyb = _f(16)
+    _, gfont = _f(21)
     d.rectangle([x, y, x + w, y + h], outline=GRID, width=2)
 
-    d.text((x + _p(9), y + _p(7)), tr.get("note", ""), font=sml, fill=MUTED_INK)
+    # Title row, set like the tables below it — a bold uppercase name with its
+    # basis as a muted qualifier beside it ("REGION overall", "GAINED by
+    # rupees") — so the boxes on the page read as one family, not three
+    # treatments. The basis is the note the metrics already carry.
+    d.text((x + _p(9), y + _p(7)), "TRAJECTORY", font=labb, fill=INK)
+    ttw = d.textlength("TRAJECTORY", font=labb)
+    d.text((x + _p(9) + ttw + _p(8), y + _p(9)), str(tr.get("note", "")),
+           font=sml, fill=FAINT_INK)
     lx = x + w - _p(9)
     for text, col in (("Last year", BAR_LY), ("This year", BAR_TY)):
         tw = d.textlength(text, font=sml)
-        d.text((lx - tw, y + _p(7)), text, font=sml, fill=MUTED_INK)
-        sq = _p(13)
-        d.rectangle([lx - tw - _p(8) - sq, y + _p(8),
-                     lx - tw - _p(8), y + _p(8) + sq], fill=col, outline=GRID)
-        lx -= tw + sq + _p(24)
+        d.text((lx - tw, y + _p(8)), text, font=sml, fill=MUTED_INK)
+        sq = _p(14)
+        d.rectangle([lx - tw - _p(9) - sq, y + _p(9),
+                     lx - tw - _p(9), y + _p(9) + sq], fill=col, outline=GRID)
+        lx -= tw + sq + _p(26)
+    hdr_b = y + _p(34)
+    d.line([x + _p(2), hdr_b, x + w - _p(2), hdr_b], fill=GRID, width=1)
 
-    # Fixed rows, so nothing can collide: growth % gets its own band, and the
-    # plot top is held far enough below it to clear a full-height bar's value
-    # label. An earlier version anchored both to the same y and April printed
-    # "4.7*1.6%" — the tallest bar's value ran straight through its growth label.
-    gd_y = y + _p(38)
-    axis_h = _p(30)
-    base = y + h - axis_h
-    # The city's growth, when there is any, takes a second line under ours, so
-    # the plot has to start below BOTH — otherwise the bars' value labels run
-    # through it, which is the same collision the fixed bands were introduced
-    # to prevent.
+    # Fixed rows, so nothing can collide: the growth figures get their own band,
+    # ruled and tinted so they read as a strip belonging to the months below
+    # rather than as numbers floating over the plot. An earlier version anchored
+    # growth and a bar's value to the same y and April printed "4.7*1.6%".
     has_city = any(v is not None for v in (tr.get("city") or []))
-    plot_top = y + _p(92 if has_city else 64)
-    plot_h = base - plot_top - _p(22)
+    gd_y = hdr_b + _p(6)
+    band_b = gd_y + (_p(52) if has_city else _p(28))
+    # Room for the month name UNDER the axis, measured rather than assumed — at
+    # 30 the names crossed the box's own bottom border.
+    axis_h = _p(6) + _lh(labb) + _p(6)
+    base = y + h - axis_h
+    # Values now sit inside their bars, so the plot no longer has to reserve a
+    # band above the tallest one — it starts just under the growth strip and
+    # keeps the full height for the bars.
+    plot_top = band_b + _p(10)
+    plot_h = base - plot_top
     n = len(tr["months"])
     if n == 0:
         return
+    d.rectangle([x + _p(2), hdr_b + 1, x + w - _p(2), band_b], fill=BAND_BG)
     peak = max(list(tr["ty"]) + list(tr["ly"]) + [1.0])
     gw = w / n
+    for i in range(1, n):                  # month dividers, inside the strip
+        dx = int(round(x + i * gw))
+        d.line([dx, hdr_b + 1, dx, band_b], fill=BAND_RULE, width=1)
+    d.line([x + _p(2), band_b, x + w - _p(2), band_b], fill=GRID, width=1)
     for i, mon in enumerate(tr["months"]):
         cx = x + i * gw + gw / 2
         ty_v, ly_v = tr["ty"][i], tr["ly"][i]
@@ -699,20 +900,25 @@ def _trajectory(d, x, y, w, h, tr):
                     d.line([bx0 + 1, min(yy + step, base), min(bx0 + step, bx1 - 1), yy],
                            fill=WHITE, width=1)
                     yy += step
-            vs = f"{val / 1e7:,.2f}"
-            vw = d.textlength(vs, font=sml)
-            d.text((bx0 + (bw - vw) / 2, base - bh - _p(20)), vs, font=sml,
-                   fill=FAINT_INK)
+            _bar_value(d, bx0, bw, base - bh, base, f"{val / 1e7:,.2f}",
+                       smlb, tinyb, on_dark=(j == 0))
         gs = _pct(gd)
-        gw_ = d.textlength(gs, font=smlb)
-        d.text((cx - gw_ / 2, gd_y), gs, font=smlb, fill=_ink(gs))
-        # The city's growth for the same month, where it exists. Muted, so ours
-        # stays the figure being read and this is the context beneath it.
+        gw_ = d.textlength(gs, font=gfont)
+        d.text((cx - gw_ / 2, gd_y), gs, font=gfont, fill=_ink(gs))
+        # The city's growth for the same month, where it exists. Set in two
+        # tones — a light label, a firmer figure — and kept muted, so ours stays
+        # the figure being read and this is the context beneath it.
         city = (tr.get("city") or [None] * n)[i]
         if city is not None:
-            cs = f"CITY {city:+,.1f}%"
-            cw_ = d.textlength(cs, font=sml)
-            d.text((cx - cw_ / 2, gd_y + _p(22)), cs, font=sml, fill=FAINT_INK)
+            # An explicit gap, not a trailing space: the space's advance left
+            # the y of "City" touching the sign of the figure beside it.
+            cl, cv = "City", f"{city:+,.1f}%"
+            clw = d.textlength(cl, font=tiny) + _p(6)
+            cvw = d.textlength(cv, font=tinyb)
+            c0 = cx - (clw + cvw) / 2
+            cy = gd_y + _p(28)
+            d.text((c0, cy), cl, font=tiny, fill=CITY_LAB)
+            d.text((c0 + clw, cy), cv, font=tinyb, fill=FAINT_INK)
         ms = mon if not part else f"{mon}  ({tr['part_days']} days)"
         mw = d.textlength(ms, font=labb if not part else lab)
         d.text((cx - mw / 2, base + _p(6)), ms,
@@ -755,19 +961,25 @@ def _concentration(d, x, y, w, conc):
     sml, smlb = _f(18)
     lab, labb = _f(19)
     _, big = _f(30)
-    h = _p(136)
+    h = _p(BOX_H)
     d.rectangle([x, y, x + w, y + h], outline=GRID, width=2)
     d.text((x + _p(8), y + _p(8)), "CONCENTRATION", font=labb, fill=INK)
-    d.text((x + _p(8), y + _p(30)), f"{conc['share']:,.1f}%", font=big, fill=INK)
-    d.text((x + _p(8), y + _p(68)),
+    vy = y + _p(30)
+    d.text((x + _p(8), vy), f"{conc['share']:,.1f}%", font=big, fill=INK)
+    vy += _lh(big) + _p(3)
+    d.text((x + _p(8), vy),
            f"of turnover, top 5   top 10 = {conc['top10']:,.1f}%",
            font=sml, fill=MUTED_INK)
-    d.text((x + _p(8), y + _p(90)),
+    vy += _lh(sml) + _p(3)
+    d.text((x + _p(8), vy),
            f"{conc['top1_name'][:20]} alone {conc['top1_share']:,.1f}%",
            font=smlb, fill=INK)
+    # The share bar hangs from the BOTTOM of the box rather than following the
+    # text, so the box fills its height whatever the text above it needs — and
+    # sits level with the bills & basket box beside it.
     bx0, bx1 = x + _p(8), x + w - _p(8)
-    by = y + _p(114)
-    bh = _p(12)
+    bh = _p(14)
+    by = y + h - _p(10) - bh
     s1 = conc["top1_share"] / 100.0
     s5 = conc["share"] / 100.0
     d.rectangle([bx0, by, bx1, by + bh], fill=BAR_LY)
@@ -777,22 +989,36 @@ def _concentration(d, x, y, w, conc):
     return h
 
 
+# Height of the under-table box. Sized for the concentration box's own content
+# now that every line steps by what its font measures, with its share bar hung
+# from the bottom edge.
+BOX_H = 148
+
+
+def _boxes_of(m) -> dict:
+    """Which under-table box sits under which column."""
+    return {0: ("conc", m["concentration"])} if m.get("concentration") else {}
+
+
 def _plan(m):
     """Band heights at the current scale, and the total they need."""
     row_h, head_h = _p(34), _p(32)
     gap = _p(16)
-    tiles_h, traj_h = _p(178), _p(360)
+    # The tile band holds label strip + value + sub + a row + the ruled key, each
+    # now stepping by its font's real height; 178 was sized for the old fixed
+    # steps and the key row would sit on the frame.
+    tiles_h, traj_h = _p(192), _p(360)
     strip_h = max(_p(44), _p(21) * len(m["stamp"]))
     body_rows = max(len(t["rows"]) for t in m["tables"])
     body_h = _p(26) + head_h + body_rows * row_h
-    if m.get("concentration"):
-        # Concentration is drawn BELOW the first table, so the band has to hold
-        # both — not whichever is taller. Taking the max worked only while that
-        # table was three region rows; at nine store rows the box fell off the
-        # page entirely.
-        first_rows = len(m["tables"][0]["rows"])
-        body_h = max(body_h,
-                     _p(26) + head_h + first_rows * row_h + _p(12) + _p(136))
+    # A box is drawn BELOW its table, so the band has to hold both — not
+    # whichever is taller. Taking the max worked only while the first table was
+    # three region rows; at nine store rows the box fell off the page entirely.
+    for i in _boxes_of(m):
+        if i < len(m["tables"]):
+            body_h = max(body_h,
+                         _p(26) + head_h + len(m["tables"][i]["rows"]) * row_h
+                         + _p(12) + _p(BOX_H))
     total = strip_h + _p(8) + gap + tiles_h + gap + traj_h + gap + body_h
     return dict(row_h=row_h, head_h=head_h, gap=gap, tiles_h=tiles_h,
                 traj_h=traj_h, strip_h=strip_h, body_h=body_h, total=total)
@@ -847,9 +1073,11 @@ def content(m, width, max_height=None) -> Image.Image:
     ncol = len(m["tables"])
     cgap = _p(14)
     cw = (w - cgap * (ncol - 1)) / ncol
+    boxes = _boxes_of(m)
     for i, t in enumerate(m["tables"]):
         cx = int(round(x + i * (cw + cgap)))
         end = _table(d, cx, y, int(cw), t, row_h, head_h)
-        if i == 0 and m.get("concentration"):
-            _concentration(d, cx, end + _p(12), int(cw), m["concentration"])
+        kind, spec = boxes.get(i, (None, None))
+        if kind == "conc":
+            _concentration(d, cx, end + _p(12), int(cw), spec)
     return img
