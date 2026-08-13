@@ -777,7 +777,22 @@ def closed_map() -> dict:
 
     A closed store stops accruing elapsed days, so its year-to-date figures must
     be projected over the period it actually traded rather than to today.
+
+    ★ THE STORE MASTER IS THE AUTHORITY (13 Aug). It carries CLOSURE DATE, and
+    Manav maintains it; the committed `gd_store_attrs.csv` is a snapshot that
+    only changes when someone edits the repo. It knew three closures while the
+    master knew thirteen, so ten shut stores were still being counted as open
+    everywhere. The snapshot stays as the fallback for when the sheet cannot be
+    reached — a missing map would mean "nothing has ever closed", which is a
+    wrong answer rather than a missing one.
     """
+    try:
+        import master_lookup
+        live = master_lookup.closed()
+        if live:
+            return dict(live)
+    except Exception:
+        pass                          # fall through to the committed snapshot
     try:
         a = pd.read_csv(_DOO_PATH)
     except Exception:

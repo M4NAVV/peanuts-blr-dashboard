@@ -250,12 +250,21 @@ def _ty_end(df: pd.DataFrame, asof: pd.Timestamp) -> pd.Series:
 
 
 def closed_map() -> dict:
-    """store code -> closure date, from the curated store attributes.
+    """store code -> closure date, from the store master.
 
     The source sheet keeps zero-rows for a shut store indefinitely, so closure
     cannot be read off the sales data without also catching stores that merely
-    paused trading. Only an explicit date counts.
+    paused trading. Only an explicit date counts — and the master's own CLOSURE
+    DATE is that date (13 Aug; see `loader.closed_map`). The committed
+    attributes file remains the fallback.
     """
+    try:
+        import master_lookup
+        live = master_lookup.closed()
+        if live:
+            return dict(live)
+    except Exception:
+        pass
     try:
         a = pd.read_csv(_ATTRS_PATH)
     except Exception:

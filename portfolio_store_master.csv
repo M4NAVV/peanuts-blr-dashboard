@@ -7,11 +7,11 @@ code,brand,location,city,region,takeover_date,is_vfl
 18,FREEDOM FASHION,Cosmos Mall,SILIGURI,East & NE,2025-04-01,False
 22,MADAME,Cosmos Mall,SILIGURI,East & NE,2025-04-01,False
 23,MADAME,City Centre,SILIGURI,East & NE,2025-04-01,False
-24,MADAME,Roodraksh Mall,GUWAHATI,East & NE,2025-04-01,False
+24,MADAME,"City Centre,Ght",GUWAHATI,East & NE,2025-04-01,False
 25,BINGE,Cosmos Mall,SILIGURI,East & NE,2025-04-01,False
 26,BINGE,City Centre,SILIGURI,East & NE,2025-04-01,False
 27,BINGE,Roodraksh Mall,GUWAHATI,East & NE,2025-04-01,False
-33,LONGHORNS,City Centre,SILIGURI,East & NE,2025-04-01,False
+33,LONGHORNS,Cosmos Mall,SILIGURI,East & NE,2025-04-01,False
 35,CASUALS,Hill Cart Road,SILIGURI,East & NE,2025-04-01,False
 37,COLORPLUS,City Centre,SILIGURI,East & NE,2025-04-01,False
 40,COLORPLUS,Mani Square,KOLKATA,East & NE,2025-04-01,False
@@ -48,7 +48,7 @@ code,brand,location,city,region,takeover_date,is_vfl
 98,TURTLE,City Centre,SILIGURI,East & NE,2025-04-01,False
 99,NUMERO UNO,Rajarhat Cc2,KOLKATA,East & NE,2025-04-01,False
 100,NUMERO UNO,Galaxy Mall,ASANSOL,East & NE,2025-04-01,False
-101,MANYAVAR & MOHEY,Fairfiled,KOLKATA,East & NE,2025-04-01,True
+101,MANYAVAR & MOHEY,Rajarhat Fairfield,KOLKATA,East & NE,2025-04-01,True
 102,MANYAVAR,Vega Circle Mall,SILIGURI,East & NE,2025-04-01,True
 104,TURTLE,West Point,GANGTOK,East & NE,2025-04-01,False
 105,MANYAVAR & MOHEY,Silchar,SILCHAR,East & NE,2025-04-01,True

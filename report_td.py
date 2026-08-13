@@ -1060,16 +1060,38 @@ def build_east_ltol(pf_df, asof, basis_label="") -> tuple[str, bytes]:
 # what the KPIs are computed FROM (ABS = qty/bills, ABV = sale/bills,
 # ASP = sale/qty, CONVERSION = bills/footfall), so they belong beside them,
 # where a reader can check the ratio against its own inputs.
-SMS_COLS = [
-    ("STORE NAME", "l"), ("MTD TARGET", "r"), ("MTD ACHIVED", "r"),
-    ("MTD ACHIVED %", "r"), ("YTD TARGET", "r"),
-    ("YTD ACHIVED FROM {TK}", "r"), ("YTD ACHIVED %", "r"),
-    ("DAY TARGET", "r"), ("TOTAL SYSTEM SALE", "r"),
-    ("MANYAVAR SYSTEM SALE", "r"), ("MOHEY SYSTEM SALE", "r"),
-    ("TWAMEV SYSTEM SALE", "r"), ("MANUAL SALE", "r"), ("DAY ACHIVED", "r"),
-]
-KPI_COLS = [("STORE NAME", "l"), ("BILL", "r"), ("QTY", "r"), ("FOOTFALL", "r"),
+# ★ THREE SHAPES OF THE SAME SHEET (Manav, 13 Aug: East in the same format as
+# South, with a store sheet and a city sheet in one file).
+#   vfl    — South: every store is a VFL store, so the day's sale splits into
+#            MANYAVAR / MOHEY / TWAMEV, which is what the tab types.
+#   mixed  — East & NE: 42 open stores across 16 brands, only 13 of them VFL.
+#            The three brand-line columns would be blank for two stores in
+#            three, so they give way to one BRAND column beside the name.
+#   city   — the same money columns, grouped by Manav's own cluster map.
+def _sms_cols(mode):
+    head = {"vfl": [("STORE NAME", "l")],
+            "mixed": [("STORE NAME", "l"), ("BRAND", "l")],
+            "city": [("CITY", "l")]}[mode]
+    money = [("MTD TARGET", "r"), ("MTD ACHIVED", "r"), ("MTD ACHIVED %", "r"),
+             ("YTD TARGET", "r"), ("YTD ACHIVED FROM {TK}", "r"),
+             ("YTD ACHIVED %", "r"), ("DAY TARGET", "r"),
+             ("TOTAL SYSTEM SALE", "r")]
+    split = [("MANYAVAR SYSTEM SALE", "r"), ("MOHEY SYSTEM SALE", "r"),
+             ("TWAMEV SYSTEM SALE", "r")] if mode == "vfl" else []
+    return head + money + split + [("MANUAL SALE", "r"), ("DAY ACHIVED", "r")]
+
+
+SMS_COLS = _sms_cols("vfl")          # South's, kept under its old name
+KPI_COLS = [("BILL", "r"), ("QTY", "r"), ("FOOTFALL", "r"),
             ("ABS", "r"), ("ABV", "r"), ("ASP", "r"), ("CONVERSION", "r")]
+
+
+def _ordinal(n: int) -> str:
+    """1ST, 2ND, 3RD, 19TH — the header said "01TH APR" for East, because the
+    suffix was a literal TH that South's 19th never contradicted."""
+    if 11 <= n % 100 <= 13:
+        return f"{n:02d}TH"
+    return f"{n:02d}" + {1: "ST", 2: "ND", 3: "RD"}.get(n % 10, "TH")
 
 
 def _line_bucket(name: str) -> str:
@@ -1084,9 +1106,16 @@ def _line_bucket(name: str) -> str:
 
 
 def south_night_sms(pf_df, region="South", targets=None) -> dict:
-    """The night SMS for one region, as of the night fill's own day."""
+    """The night SMS for one region, as of the night fill's own day.
+
+    Region-generic despite the name (South was the first). A region whose stores
+    are not all VFL reports a BRAND column in place of the brand-line split, and
+    a region spanning more than one of Manav's clusters also gets a city sheet —
+    both decided from the data, so a third region needs no code.
+    """
     import night_fill
     import portfolio_loader as PL
+    import loader as L
     import targets as TG
     t = night_fill.load()
     if t is None:
@@ -1100,8 +1129,15 @@ def south_night_sms(pf_df, region="South", targets=None) -> dict:
     master = PL.store_master().dropna(subset=["code"]).copy()
     master["code"] = master["code"].astype(int)
     south = master[master["region"] == region]
+    # A closed store is not a store that took nothing tonight. East carries
+    # three; South none, which is why this never showed before.
+    shut = L.closed_map()
+    south = south[~south["code"].map(
+        lambda c: c in shut and pd.to_datetime(shut[c]) <= day)]
     codes = sorted(south["code"])
     loc = dict(zip(south["code"], south["location"]))
+    brand_of = dict(zip(south["code"], south.get("brand", pd.Series(dtype=str))))
+    city_of = dict(zip(south["code"], south["city"]))
     tk = pd.to_datetime(south["takeover_date"]).min()
     fy = day.year if day.month >= 4 else day.year - 1
     ytd_from = max(pd.Timestamp(fy, 4, 1), tk) if pd.notna(tk) else pd.Timestamp(fy, 4, 1)
@@ -1120,10 +1156,43 @@ def south_night_sms(pf_df, region="South", targets=None) -> dict:
     col = lambda c, k: (float(t[t["code"] == c][k].sum())
                         if k in t.columns else None)
 
+    # ★ THE CITY COMES FROM THE NIGHT FILL — Manav's own column, kept beside the
+    # figures, so the report follows his naming without a map of ours. A store
+    # with no row tonight still has to land in the right group, so it borrows
+    # what its neighbours use: same location first, then same city. Falling
+    # straight back to the master's city printed a second "KOLKATA" beside his
+    # "KOLKATTA". `cluster` (his mall/state grouping) stands behind CITY for a
+    # tab that has not been given the column yet.
+    cluster_of = {}
+    for c in codes:
+        mine_ = t[t["code"] == c]
+        got = [str(x).strip() for x in mine_.get("city", pd.Series(dtype=str)).tolist()
+               if str(x).strip()]
+        if not got:
+            got = [str(x).strip() for x in mine_.get("cluster", pd.Series(dtype=str)).tolist()
+                   if str(x).strip()]
+        if got:
+            cluster_of[c] = got[0].upper()
+    by_loc, by_city = {}, {}
+    for c, cl in cluster_of.items():
+        by_loc.setdefault(str(loc.get(c, "")).upper(), cl)
+        by_city.setdefault(str(city_of.get(c, "")).upper(), cl)
+
+    def _cluster(c):
+        return (cluster_of.get(c)
+                or by_loc.get(str(loc.get(c, "")).upper())
+                or by_city.get(str(city_of.get(c, "")).upper())
+                or str(city_of.get(c, "") or "").upper() or "UNMAPPED")
+
     rows = []
     for c in codes:
         tgt = (targets or {}).get(c, {})
-        sysS = float(t[t["code"] == c]["value"].sum())
+        mine = t[t["code"] == c]
+        # A store the night fill has no row for did not file; its day is BLANK,
+        # not zero. Ten open East stores are in that position tonight, and a
+        # zero would read as "sold nothing" — the same silence-is-not-data
+        # mistake that once hid a store's whole month.
+        sysS = float(mine["value"].sum()) if len(mine) else None
         man = col(c, "manual")
         # The day target is the night fill's, unless a caller passed one.
         day_t = tgt.get("day")
@@ -1134,17 +1203,43 @@ def south_night_sms(pf_df, region="South", targets=None) -> dict:
         m_ach, y_ach = float(mtd.get(c, 0.0)), float(ytd.get(c, 0.0))
         rows.append({
             "code": c, "name": str(loc.get(c, c)).upper(),
+            "brand": str(brand_of.get(c, "") or "").upper(),
+            "city": _cluster(c),
             "mtd_target": tgt.get("mtd"), "mtd": m_ach,
             "ytd_target": tgt.get("ytd"), "ytd": y_ach,
             "day_target": day_t,
             "system": sysS, "manyavar": g(c, "manyavar"), "mohey": g(c, "mohey"),
             "twamev": g(c, "twamev"), "manual": man,
-            "achieved": sysS + (man or 0.0),
+            "achieved": None if (sysS is None and man is None)
+                        else (sysS or 0.0) + (man or 0.0),
             "bills": col(c, "bills"), "qty": col(c, "qty"),
             "footfall": col(c, "footfall"),
         })
+    vfl = bool(south["is_vfl"].all()) if "is_vfl" in south.columns else False
     return {"day": day, "region": region, "rows": rows,
-            "ytd_from": ytd_from, "has_targets": bool(targets)}
+            "ytd_from": ytd_from, "has_targets": bool(targets),
+            "mode": "vfl" if vfl else "mixed",
+            "filed": sum(1 for r in rows if r["system"] is not None)}
+
+
+def _city_rows(rows):
+    """Store rows folded into Manav's clusters, biggest day first."""
+    keys = ("mtd", "ytd", "system", "manyavar", "mohey", "twamev", "manual",
+            "achieved", "bills", "qty", "footfall", "mtd_target", "ytd_target",
+            "day_target")
+    out = {}
+    for r in rows:
+        city = r["city"]
+        d = out.setdefault(city, {"name": city, "stores": 0})
+        d["stores"] += 1
+        for k in keys:
+            v = r[k]
+            if v is not None:
+                d[k] = (d.get(k) or 0.0) + v
+    for d in out.values():
+        for k in keys:
+            d.setdefault(k, None)
+    return sorted(out.values(), key=lambda d: -(d["ytd"] or 0))
 
 
 def _sms_totals(rows):
@@ -1158,36 +1253,42 @@ def _sms_totals(rows):
     return out
 
 
-def render_night_sms(sheet) -> Image.Image:
-    day, rows = sheet["day"], sheet["rows"]
-    tk = f"{sheet['ytd_from']:%d}TH {sheet['ytd_from']:%b}".upper()
-    header = [h.replace("{TK}", tk) for h, _ in SMS_COLS]
-    aligns = [a for _, a in SMS_COLS]
+def render_night_sms(sheet, by="store") -> Image.Image:
+    """One sheet — `by="store"` or `by="city"` — as the table plus its KPI grid."""
+    day = sheet["day"]
+    mode = "city" if by == "city" else sheet.get("mode", "vfl")
+    rows = _city_rows(sheet["rows"]) if by == "city" else sheet["rows"]
+    cols = _sms_cols(mode)
+    tk = f"{_ordinal(sheet['ytd_from'].day)} {sheet['ytd_from']:%b}".upper()
+    header = [h.replace("{TK}", tk) for h, _ in cols]
+    aligns = [a for _, a in cols]
     T = _sms_totals(rows)
+    region = sheet["region"].upper()
 
     def pct(a, b):
         return f"{a / b * 100:,.1f}" if (a and b) else ""
 
-    grid = []
-    for r in rows:
-        vals = [r["name"], _money(r["mtd_target"]), _money(r["mtd"]),
-                pct(r["mtd"], r["mtd_target"]), _money(r["ytd_target"]),
-                _money(r["ytd"]), pct(r["ytd"], r["ytd_target"]),
-                _money(r["day_target"]), _money(r["system"]),
-                _money(r["manyavar"]), _money(r["mohey"]), _money(r["twamev"]),
-                _money(r["manual"]), _money(r["achieved"])]
-        grid.append(([cell(v, align=aligns[i]) for i, v in enumerate(vals)], ROW_H))
-    tot = ["G. TOTAL", _money(T["mtd_target"]), _money(T["mtd"]),
-           pct(T["mtd"], T["mtd_target"]), _money(T["ytd_target"]),
-           _money(T["ytd"]), pct(T["ytd"], T["ytd_target"]),
-           _money(T["day_target"]), _money(T["system"]), _money(T["manyavar"]),
-           _money(T["mohey"]), _money(T["twamev"]), _money(T["manual"]),
-           _money(T["achieved"])]
+    def line(r, total=False):
+        head = ["G. TOTAL"] if total else [r["name"]]
+        if mode == "mixed":
+            head.append("" if total else r.get("brand", ""))
+        split = ([_money(r["manyavar"]), _money(r["mohey"]), _money(r["twamev"])]
+                 if mode == "vfl" else [])
+        return head + [
+            _money(r["mtd_target"]), _money(r["mtd"]),
+            pct(r["mtd"], r["mtd_target"]), _money(r["ytd_target"]),
+            _money(r["ytd"]), pct(r["ytd"], r["ytd_target"]),
+            _money(r["day_target"]), _money(r["system"])] + split + [
+            _money(r["manual"]), _money(r["achieved"])]
+
+    grid = [([cell(v, align=aligns[i]) for i, v in enumerate(line(r))], ROW_H)
+            for r in rows]
     grid.append(([cell(v, align=aligns[i], fill=TOTAL_BG, bold=True)
-                  for i, v in enumerate(tot)], ROW_H))
+                  for i, v in enumerate(line(T, total=True))], ROW_H))
+    what = "CITY WISE" if by == "city" else (
+        "ALL MANYAVAR STORE" if mode == "vfl" else "ALL STORE")
     main = _draw_grid(header, grid,
-                      title=f"{sheet['region'].upper()} — ALL MANYAVAR STORE "
-                            f"TOTAL SMS  ·  {day:%d %b %Y}")
+                      title=f"{region} — {what} TOTAL SMS  ·  {day:%d %b %Y}")
 
     def kpis(r):
         """The three counts, then the four ratios drawn from them."""
@@ -1196,13 +1297,29 @@ def render_night_sms(sheet) -> Image.Image:
                 f"{q / b:,.2f}" if b else "", f"{s / b:,.0f}" if b else "",
                 f"{s / q:,.0f}" if q else "", f"{b / f_ * 100:,.1f}" if f_ else ""]
 
+    # ★ The KPI grid needs bills, quantity and footfall, which the night fill
+    # carries for South and not (yet) for East. Rather than print 42 rows of
+    # blanks — which reads as a broken report — say which columns are empty and
+    # for how many stores. It appears the day they are typed, with no change
+    # here, exactly as the target columns did.
+    if not any(r["bills"] or r["qty"] or r["footfall"] for r in rows):
+        note = _draw_grid(
+            [],
+            [([cell(f"No bill, quantity or footfall typed in the night fill for "
+                    f"{sheet['region']} — this table fills itself the day those "
+                    f"three columns are entered, as the target columns did.",
+                    align="l")], ROW_H)],
+            title=f"{region} — DAILY KPI REPORT")
+        return _stack([main, note], _px(28))
+
+    first = {"city": "CITY", "mixed": "STORE NAME", "vfl": "STORE NAME"}[mode]
     kg = [([cell(r["name"], align="l")]
            + [cell(v, align="r") for v in kpis(r)], ROW_H) for r in rows]
     kg.append(([cell("G. TOTAL", align="l", fill=TOTAL_BG, bold=True)]
                + [cell(v, align="r", fill=TOTAL_BG, bold=True) for v in kpis(T)],
                ROW_H))
-    kpi = _draw_grid([h for h, _ in KPI_COLS], kg,
-                     title=f"{sheet['region'].upper()} — DAILY KPI REPORT")
+    kpi = _draw_grid([first] + [h for h, _ in KPI_COLS], kg,
+                     title=f"{region} — DAILY KPI REPORT")
     return _stack([main, kpi], _px(28))
 
 
@@ -1220,11 +1337,27 @@ def _stack(images, gap):
 
 def build_night_sms(pf_df, region="South", targets=None,
                     basis_label="") -> tuple[str, bytes]:
+    """One PDF for the region: the store sheet, and the city sheet behind it.
+
+    The city sheet appears only where there is more than one cluster to group
+    into — East has fifteen, South is all Bengaluru and would print its own
+    total twice.
+    """
     with _LOCK:
         sheet = south_night_sms(pf_df, region=region, targets=targets)
-        img = render_night_sms(sheet)
         day = sheet["day"]
-        pdf = _pdf_from([(f"{region} · Night sale SMS · {day:%d %b %Y}", img)],
+        pages = [("store", "Store wise")]
+        if len({r["city"] for r in sheet["rows"]}) > 1:
+            pages.append(("city", "City wise"))
+        # The sheet name appears only when there is more than one to tell apart.
+        contents = [
+            (f"{region} · Night sale SMS · "
+             + (f"{what} · " if len(pages) > 1 else "")
+             + f"{day:%d %b %Y}",
+             render_night_sms(sheet, by=by))
+            for by, what in pages
+        ]
+        pdf = _pdf_from(contents,
                         f"As of {day:%d %b %Y}"
                         + (f" · {basis_label}" if basis_label else ""))
     return (f"{region.upper()} NIGHT SALE SMS {day:%d-%m-%Y}.pdf", pdf)

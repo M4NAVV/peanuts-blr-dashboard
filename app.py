@@ -1004,28 +1004,27 @@ def render_portfolio():
             "mw_east": "East & NE month-wise total sale  ·  overall, then the "
                        "Mohey Manyavar stores",
             "night_sms": "South night sale SMS  ·  tonight's figures + daily KPI",
+            "night_sms_east": "East & NE night sale SMS  ·  store wise, then "
+                              "city wise, in one file",
         }
         chosen = [k for k, label in available.items()
                   if st.checkbox(label, value=True, key=f"td_{k}")]
-        if "night_sms" in chosen:
+        if "night_sms" in chosen or "night_sms_east" in chosen:
             st.caption("ℹ️ Night SMS: target columns are **blank until targets "
                        "exist**, and manual sale is blank until the night fill "
                        "has that column. Everything else is live.")
+        if "night_sms_east" in chosen:
+            # East is multi-brand, so the brand-line split South reports would
+            # be empty for two stores in three; and the counts behind the KPIs
+            # are only typed for South today.
+            st.caption("ℹ️ East SMS: **one BRAND column** in place of South's "
+                       "Manyavar/Mohey/Twamev split, and cities are **Manav's "
+                       "own cluster map** from the night fill. The KPI table "
+                       "fills itself once BILL, QTY and FOOTFALL are typed for "
+                       "East — today they are South-only.")
         if "east_ltol" in chosen:
             # Its like-to-like and new-store columns follow Manav's stated rules
             # (11-12 Aug), which the older workbook does not: it re-decides
-            # new/old every month, so a store can switch sides mid-year.
-            st.caption("ℹ️ East L-to-L: new/old is fixed for the year against "
-                       "1 April of the previous year, so **June and July read a "
-                       "few points higher** than the old workbook, which decided "
-                       "it month by month.")
-        if "night_sms" in chosen:
-            st.caption("ℹ️ Night SMS: target columns are **blank until targets "
-                       "exist**, and manual sale is blank until the night fill "
-                       "has that column. Everything else is live.")
-        if "east_ltol" in chosen:
-            # Its like-to-like and new-store columns follow Manav's stated rules
-            # (11-12 Aug), which the older workbook does not: that one re-decides
             # new/old every month, so a store can switch sides mid-year.
             st.caption("ℹ️ East L-to-L: new/old is fixed for the year against "
                        "1 April of the previous year, so **June and July read a "
@@ -1064,6 +1063,9 @@ def render_portfolio():
                         # Reads the night fill directly — it is the only source
                         # for the day's figures at the hour this goes out.
                         built.append(RTD.build_night_sms(pf_all, basis_label=basis))
+                    if "night_sms_east" in chosen:
+                        built.append(RTD.build_night_sms(
+                            pf_all, region="East & NE", basis_label=basis))
                     name, payload, mime = RTD.bundle(built)
                     st.session_state["td_out"] = (name, payload, mime)
                 except Exception as e:                    # surface, don't crash tab

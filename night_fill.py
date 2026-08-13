@@ -122,6 +122,42 @@ def _find(cols, names):
     return None
 
 
+def _num(s: pd.Series) -> pd.Series:
+    """Numbers as a spreadsheet exports them — "8,616.00", "₹ 1,200", " 45 ".
+
+    ★ 13 Aug: the sale column arrived thousands-separated for the first time and
+    `pd.to_numeric` returned NaN for every store above ₹999. 63 rows of real
+    sale became 17 rows of zeros, nothing raised, and the night SMS would have
+    gone out reading a near-empty day. A cell's FORMAT is not its value.
+    """
+    return pd.to_numeric(
+        s.astype(str)
+         .str.replace(",", "", regex=False)
+         .str.replace("₹", "", regex=False)
+         .str.replace(" ", " ", regex=False)
+         .str.strip(),
+        errors="coerce")
+
+
+def _repeat(cols, name, nth=2):
+    """The `nth` column carrying `name`, however pandas renamed the duplicates.
+
+    The tab has TWO columns headed LOCATION: the store's own, then Manav's East
+    cluster map. A repeated header arrives suffixed (`LOCATION.1`), so matching
+    on the base name and counting is what survives — and it still works if the
+    sheet is exported with some other suffix, or the columns move.
+    """
+    want = name.strip().upper()
+    seen = 0
+    for c in cols:
+        base = str(c).strip().upper().split(".")[0]
+        if base == want:
+            seen += 1
+            if seen == nth:
+                return c
+    return None
+
+
 def _value_col(cols, day):
     """The column holding this year's sale, headed with the fiscal year.
 
@@ -204,7 +240,18 @@ def _load_one(url) -> pd.DataFrame | None:
             _LAST_PROBLEM = "no fiscal-year value column"
             return None
         t["date"] = day
-        t["value"] = pd.to_numeric(raw.loc[t.index, c_val], errors="coerce")
+        src = raw.loc[t.index, c_val]
+        t["value"] = _num(src)
+        # A cell that HOLDS something but does not parse is the dangerous case:
+        # it drops out silently and the day simply reads smaller. Losing a few
+        # is normal (a blank, a dash); losing most of them is the sheet's format
+        # changing under us, and that has to say so.
+        filled = src.astype(str).str.strip().replace({"nan": ""}).ne("")
+        lost = int((filled & t["value"].isna()).sum())
+        if filled.sum() and lost > filled.sum() * 0.2:
+            _LAST_PROBLEM = (f"{lost} of {int(filled.sum())} value cells did not "
+                             f"read as numbers (e.g. '{src[filled & t['value'].isna()].iloc[0]}')")
+            return None
         t = t[t["value"].notna()]
         if t.empty:
             _LAST_PROBLEM = "no numeric values"
@@ -218,6 +265,21 @@ def _load_one(url) -> pd.DataFrame | None:
         c_line = _find(cols, ("STORE NAME",))
         t["line"] = (raw.loc[t.index, c_line].astype(str).str.strip().str.upper()
                      if c_line is not None else "")
+        # ★ WHERE THE CITY COMES FROM. Manav added a CITY column on 13 Aug —
+        # "the night tinku fill has a city column so you can get the data from
+        # there" — and it is a true city (KOLKATTA · SILIGURI · GUWAHATI ·
+        # TRIPURA …). The tab's SECOND LOCATION column is a different thing: his
+        # cluster map, which groups by mall (Cosmos Mall, City Centre SLG) and
+        # by state (ODISHA, JHARKHAND). They disagree for 27 of 53 stores, so
+        # both are carried — `city` for the city sheet, `cluster` behind it.
+        c_city = _find(cols, ("CITY",))
+        if c_city is not None:
+            t["city"] = (raw.loc[t.index, c_city]
+                         .astype(str).str.strip().replace({"nan": ""}))
+        c_cluster = _find(cols, ("CLUSTER",)) or _repeat(cols, "LOCATION", 2)
+        if c_cluster is not None:
+            t["cluster"] = (raw.loc[t.index, c_cluster]
+                            .astype(str).str.strip().replace({"nan": ""}))
         # Per-store extras, carried when the sheet has them. Entered once per
         # store (on its MANYAVAR line), so they SUM correctly per store.
         for key, names in (("bills", ("BILL", "BILLS")), ("qty", ("QTY",)),
@@ -228,7 +290,7 @@ def _load_one(url) -> pd.DataFrame | None:
                            ("day_target", ("DAY TARGET", "TODAY TARGET"))):
             col = _find(cols, names)
             if col is not None:
-                t[key] = pd.to_numeric(raw.loc[t.index, col], errors="coerce")
+                t[key] = _num(raw.loc[t.index, col])
         return t
     except Exception as e:
         _LAST_PROBLEM = f"unexpected shape ({type(e).__name__})"

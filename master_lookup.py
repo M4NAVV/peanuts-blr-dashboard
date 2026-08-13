@@ -33,14 +33,43 @@ NON_STORE_CODES = {1001}
 _EXTRACT = os.path.join(os.path.dirname(__file__), "store_attrs.csv")
 
 
-def _master_url():
-    if os.environ.get(MASTER_URL_ENV):
-        return os.environ[MASTER_URL_ENV]
+# The master's own tab in the workbook the portfolio feed already names, so the
+# live master is read WITHOUT a secret of its own — the same derivation
+# targets.py, city_growth.py and night_fill.py use. `STORE_MASTER_URL` stays as
+# an override. This matters more than it looks: the secret was never set, so
+# every closure and opening date came from the committed extract, and Manav
+# dating ten closures in the sheet changed nothing on screen.
+_GID = "1723658342"
+_PORTFOLIO_ENV = "PORTFOLIO_CSV_URL"
+_LAST_PROBLEM = None
+
+
+def last_problem():
+    """Why the live master was not used, or None. Surfaced in the sidebar."""
+    return _LAST_PROBLEM
+
+
+def _secret(name):
+    if os.environ.get(name):
+        return os.environ[name]
     try:
         import streamlit as st
-        return st.secrets.get(MASTER_URL_ENV)
+        return st.secrets.get(name)
     except Exception:
         return None
+
+
+def _master_url():
+    explicit = _secret(MASTER_URL_ENV)
+    if explicit:
+        return explicit
+    import re
+    base = _secret(_PORTFOLIO_ENV)
+    if not base:
+        return None
+    m = re.search(r"/spreadsheets/d/([A-Za-z0-9_-]+)", str(base))
+    return (f"https://docs.google.com/spreadsheets/d/{m.group(1)}"
+            f"/export?format=csv&gid={_GID}") if m else None
 
 
 def carpet() -> dict:
@@ -67,16 +96,26 @@ def carpet() -> dict:
 
 
 def _read():
-    """The live master as a frame, or None when it is not configured."""
+    """The live master as a frame, or None — saying why, never silently."""
+    global _LAST_PROBLEM
     url = _master_url()
     if not url:
+        _LAST_PROBLEM = ("no master URL — neither $STORE_MASTER_URL nor "
+                         "$PORTFOLIO_CSV_URL is set")
         return None
     try:
         m = pd.read_csv(url, dtype=str)
         m.columns = [str(c).strip() for c in m.columns]
         m["_code"] = pd.to_numeric(m.get("STORE CODE"), errors="coerce")
-        return m[m["_code"].notna()]
-    except Exception:
+        m = m[m["_code"].notna()]
+        if m.empty:
+            _LAST_PROBLEM = ("the master tab has no STORE CODE column — found "
+                             + ", ".join(list(m.columns)[:6]))
+            return None
+        _LAST_PROBLEM = None
+        return m
+    except Exception as e:
+        _LAST_PROBLEM = f"could not read the master tab ({type(e).__name__})"
         return None
 
 
