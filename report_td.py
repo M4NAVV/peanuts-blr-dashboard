@@ -1054,6 +1054,12 @@ def build_east_ltol(pf_df, asof, basis_label="") -> tuple[str, bytes]:
 #
 # MANUAL SALE is read from the night fill when the tab has that column; DAY
 # ACHIEVED is system sale plus manual, so it equals system sale until then.
+#
+# ★ BILL, QTY and FOOTFALL sit in the KPI table, not this one (Manav, 13 Aug).
+# The top table is money — targets, sale and achievement. The three counts are
+# what the KPIs are computed FROM (ABS = qty/bills, ABV = sale/bills,
+# ASP = sale/qty, CONVERSION = bills/footfall), so they belong beside them,
+# where a reader can check the ratio against its own inputs.
 SMS_COLS = [
     ("STORE NAME", "l"), ("MTD TARGET", "r"), ("MTD ACHIVED", "r"),
     ("MTD ACHIVED %", "r"), ("YTD TARGET", "r"),
@@ -1061,10 +1067,9 @@ SMS_COLS = [
     ("DAY TARGET", "r"), ("TOTAL SYSTEM SALE", "r"),
     ("MANYAVAR SYSTEM SALE", "r"), ("MOHEY SYSTEM SALE", "r"),
     ("TWAMEV SYSTEM SALE", "r"), ("MANUAL SALE", "r"), ("DAY ACHIVED", "r"),
-    ("BILL", "r"), ("QTY", "r"), ("FOOTFALL", "r"),
 ]
-KPI_COLS = [("STORE NAME", "l"), ("ABS", "r"), ("ABV", "r"), ("ASP", "r"),
-            ("CONVERSION", "r")]
+KPI_COLS = [("STORE NAME", "l"), ("BILL", "r"), ("QTY", "r"), ("FOOTFALL", "r"),
+            ("ABS", "r"), ("ABV", "r"), ("ASP", "r"), ("CONVERSION", "r")]
 
 
 def _line_bucket(name: str) -> str:
@@ -1170,16 +1175,14 @@ def render_night_sms(sheet) -> Image.Image:
                 _money(r["ytd"]), pct(r["ytd"], r["ytd_target"]),
                 _money(r["day_target"]), _money(r["system"]),
                 _money(r["manyavar"]), _money(r["mohey"]), _money(r["twamev"]),
-                _money(r["manual"]), _money(r["achieved"]),
-                _money(r["bills"]), _money(r["qty"]), _money(r["footfall"])]
+                _money(r["manual"]), _money(r["achieved"])]
         grid.append(([cell(v, align=aligns[i]) for i, v in enumerate(vals)], ROW_H))
     tot = ["G. TOTAL", _money(T["mtd_target"]), _money(T["mtd"]),
            pct(T["mtd"], T["mtd_target"]), _money(T["ytd_target"]),
            _money(T["ytd"]), pct(T["ytd"], T["ytd_target"]),
            _money(T["day_target"]), _money(T["system"]), _money(T["manyavar"]),
            _money(T["mohey"]), _money(T["twamev"]), _money(T["manual"]),
-           _money(T["achieved"]), _money(T["bills"]), _money(T["qty"]),
-           _money(T["footfall"])]
+           _money(T["achieved"])]
     grid.append(([cell(v, align=aligns[i], fill=TOTAL_BG, bold=True)
                   for i, v in enumerate(tot)], ROW_H))
     main = _draw_grid(header, grid,
@@ -1187,8 +1190,10 @@ def render_night_sms(sheet) -> Image.Image:
                             f"TOTAL SMS  ·  {day:%d %b %Y}")
 
     def kpis(r):
+        """The three counts, then the four ratios drawn from them."""
         b, q, f_, s = r["bills"], r["qty"], r["footfall"], r["system"]
-        return [f"{q / b:,.2f}" if b else "", f"{s / b:,.0f}" if b else "",
+        return [_money(b), _money(q), _money(f_),
+                f"{q / b:,.2f}" if b else "", f"{s / b:,.0f}" if b else "",
                 f"{s / q:,.0f}" if q else "", f"{b / f_ * 100:,.1f}" if f_ else ""]
 
     kg = [([cell(r["name"], align="l")]
