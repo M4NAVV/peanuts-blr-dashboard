@@ -83,15 +83,11 @@ def _read_raw() -> pd.DataFrame:
     committed snapshot (CSV or the original xlsx)."""
     url = _sheet_url()
     if url:
-        try:
-            import requests
-            resp = requests.get(
-                url, headers={"Accept-Encoding": "gzip, deflate"}, timeout=120)
-            resp.raise_for_status()
-            return pd.read_csv(
-                io.BytesIO(resp.content), dtype=str, keep_default_na=False)
-        except Exception:
-            return pd.read_csv(url, dtype=str, keep_default_na=False)
+        # See `feed.read_csv`: same fast path, but the first failure's reason
+        # survives and a sign-in page is refused instead of being parsed.
+        import feed
+        return feed.read_csv(url, expect=(C_DATE, C_CODE, C_TOTAL),
+                             what="the portfolio sheet")
     snap = _snapshot_path()
     if snap:
         if snap.endswith(".xlsx"):

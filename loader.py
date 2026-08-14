@@ -88,21 +88,14 @@ def _read_raw() -> pd.DataFrame:
     without touching the cleaning logic."""
     url = _sheet_url()
     if url:
-        # Published Google Sheet -> CSV. Read as strings; cleaning handles types.
-        # Fetch with gzip: Google serves the export compressed, which roughly
-        # halves transfer time vs pandas' plain urllib read (~10s vs ~20s for
-        # our ~265k-row sheet). Fall back to a plain read on any error.
-        try:
-            import io
-            import requests
-
-            resp = requests.get(
-                url, headers={"Accept-Encoding": "gzip, deflate"}, timeout=120)
-            resp.raise_for_status()
-            return pd.read_csv(
-                io.BytesIO(resp.content), dtype=str, keep_default_na=False)
-        except Exception:
-            return pd.read_csv(url, dtype=str, keep_default_na=False)
+        # Published Google Sheet -> CSV, read as strings; cleaning handles types.
+        # `feed.read_csv` keeps the gzip fast path (Google serves the export
+        # compressed, roughly halving transfer time on a ~279k-row sheet) and
+        # the plain retry, but carries the first failure's REASON and refuses a
+        # sign-in page rather than parsing one into a one-column frame.
+        import feed
+        return feed.read_csv(url, expect=(COL_DATE, COL_AMOUNT),
+                             what="the VFL sales sheet")
     local = _local_excel()
     if local:
         return pd.read_excel(local, sheet_name=0, dtype=str)

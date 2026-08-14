@@ -445,6 +445,45 @@ def _load_portfolio_cached():
             df.attrs.get("provisional_date"))
 
 
+def _open_store_count() -> int | None:
+    """Stores the master says are trading — the estate the feed should carry."""
+    try:
+        import loader as _L
+        m = PL.store_master().dropna(subset=["code"])
+        shut = _L.closed_map()
+        today = pd.Timestamp.today().normalize()
+        return int(sum(1 for c in m["code"].astype(int)
+                       if not (c in shut and pd.Timestamp(shut[c]) <= today)))
+    except Exception:
+        return None
+
+
+def _gate(df, kind, *, date_col, store_col, value_col, expect_stores=None):
+    """Refuse to serve a feed that is not fit, and say why on screen.
+
+    The override exists because a check can be wrong, and a wrong check must
+    not take the dashboard away from the team. It is deliberate, it is visible,
+    and the numbers are labelled unvalidated while it is on.
+    """
+    import validation
+    rep = validation.validate(df, kind, date_col=date_col, store_col=store_col,
+                              value_col=value_col, expect_stores=expect_stores)
+    if rep.problems:
+        st.error("**This data does not look right, so it is not being shown.**")
+        for p in rep.problems:
+            st.markdown(f"- {p}")
+        st.caption(f"What arrived: {rep.summary()}"
+                   + (f" · last good load: {rep.baseline['rows']:,} rows through "
+                      f"{rep.baseline['max_date']}" if rep.baseline else ""))
+        if not st.checkbox("Show it anyway (numbers are unverified)",
+                           key=f"override_{kind}"):
+            st.stop()
+        st.warning("Showing unverified data — treat every figure as suspect.")
+    for w in rep.warnings:
+        st.warning(w)
+    return rep
+
+
 def _cr(x) -> str:
     return f"₹{(x or 0) / 1e7:,.2f} Cr"
 
@@ -456,7 +495,15 @@ _PF_TABS = ["📈 MW Data", "🧾 GD Sheet", "🏷️ Brand-wise GD", "🗺️ L
 
 
 def render_portfolio():
-    pf_all, pf_at, pf_provisional = _load_portfolio_cached()
+    try:
+        pf_all, pf_at, pf_provisional = _load_portfolio_cached()
+    except Exception as e:                      # the boundary — see `feed.py`
+        st.error(f"**The portfolio data could not be loaded.** {e}")
+        st.info("Nothing below would be trustworthy without it, so the page "
+                "stops here. Fix the source and press R to reload.")
+        st.stop()
+    _gate(pf_all, "portfolio", date_col="date", store_col="code",
+          value_col="sales", expect_stores=_open_store_count())
 
     # ---- Sidebar: portfolio brand + cascading sales-only filters ----
     st.sidebar.markdown(
@@ -1098,6 +1145,19 @@ except FileNotFoundError as e:
         "`SHEET_CSV_URL` in Streamlit secrets to a published Google Sheet."
     )
     st.stop()
+except Exception as e:
+    # Everything else that can go wrong with a sheet — revoked link, sharing
+    # changed, a sign-in page served instead of CSV. `feed.py` names the cause;
+    # this used to escape as a red traceback with a message about a connection
+    # reset, whatever had actually happened.
+    st.error(f"**The sales data could not be loaded.** {e}")
+    st.info("Every figure on this page comes from that sheet, so the page "
+            "stops here rather than showing part of one. Fix the source and "
+            "press R to reload.")
+    st.stop()
+
+_gate(df_all, "vfl", date_col="date", store_col=L.COL_STORE_LABEL,
+      value_col=L.COL_AMOUNT)
 
 fresh = L.data_freshness(df_all)
 
