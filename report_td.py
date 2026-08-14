@@ -380,6 +380,42 @@ def _paint(d, box, c, reg, bold, hbold, header=False):
         ty += lh
 
 
+# ── The month's summary, under both L-to-L sheets ───────────────────────────
+# ★ REDONE 14 Aug. This used to be the workbook's own footer reproduced cell for
+# cell: labels in one row, their figures in the row above or below, spread over
+# the eleven columns the DAY table needs, with blanks between. Every number was
+# right and almost none could be read — "AVG. PER DAY PER STORE AUG 2025-26" sat
+# beneath a figure belonging to the line before it.
+#
+# Same figures, none added or dropped. Two things changed: the ones that
+# summarise a COLUMN (average per day, the trend) stay in the day grid where
+# they line up under the column they describe, and everything else becomes
+# label→value pairs, two to a row, under headings that say what the block is
+# for — where the month stands, where it lands, what is left to beat last year.
+def _foot_grid(sections, total_w, highlight=()):
+    """`sections` is [(heading, [(label, value), …]), …]. Values already
+    formatted; `highlight` names the labels whose figure gets the total fill."""
+    rows = []
+    for heading, pairs in sections:
+        rows.append(([cell(heading, align="l", fill=HDR_BG, bold=True, span=4)],
+                     ROW_H))
+        for i in range(0, len(pairs), 2):
+            chunk = list(pairs[i:i + 2])
+            if len(chunk) == 1:
+                chunk.append(("", ""))
+            out = []
+            for lbl, val in chunk:
+                hit = lbl in highlight
+                out.append(cell(lbl, align="l", bold=hit))
+                out.append(cell(val, align="r", bold=bool(val),
+                                fill=TOTAL_BG if hit else None))
+            rows.append((out, ROW_H))
+    # The labels earn the width; the figures need only enough to sit right.
+    w = [int(total_w * x) for x in (0.32, 0.18, 0.32, 0.18)]
+    w[-1] += total_w - sum(w)
+    return _draw_grid([], rows, widths=w, landscape=False)
+
+
 # ── South L-to-L ────────────────────────────────────────────────────────────
 def render_south(sheet) -> Image.Image:
     mon, y2 = sheet["month"], sheet["ty_year"]
@@ -406,65 +442,57 @@ def render_south(sheet) -> Image.Image:
             cells[10] = cell(vals[10], align="r", ink=NEG_INK)
         rows.append((cells, ROW_H))
 
-    f, ndays, n = sheet["foot"], sheet["ndays"], sheet["n_stores"]
+    # Column summaries stay in the day grid, under the columns they describe.
+    f = sheet["foot"]
+    ly_lbl, ty_lbl = f"{y2 - 1}-{str(y2)[2:]}", f"{y2}-{str(y2 + 1)[2:]}"
     blank = lambda: [cell() for _ in range(11)]
 
     c = blank()
+    for i in range(11):
+        c[i] = cell(fill=TOTAL_BG)
+    c[0] = cell("TOTAL", fill=TOTAL_BG, bold=True)
     c[2] = cell(_money(f["ly_total"]), align="r", fill=TOTAL_BG, bold=True)
     c[4] = cell(_money(f["ly_total"]), align="r", fill=TOTAL_BG, bold=True)
     c[7] = cell(_money(f["ty_total"]), align="r", fill=TOTAL_BG, bold=True)
-    for i in (0, 1, 3, 5, 6, 8, 9, 10):
-        c[i] = cell(fill=TOTAL_BG)
     rows.append((c, ROW_H))
 
     c = blank()
-    c[0] = cell(f"{y2 - 1}-{str(y2)[2:]}"); c[1] = cell(str(n))
+    c[0] = cell("AVG. PER DAY", fill=HDR_BG, bold=True, span=2)
     c[2] = cell(_money(f["ly_avg_per_day"]), align="r", bold=True)
-    c[4] = cell(f"AVG. PER DAY {mon} {y2}", fill=HDR_BG, span=3)
     c[7] = cell(_money(f["ty_avg_per_day"]), align="r", bold=True)
-    rows.append(([c[0], c[1], c[2], c[3], c[4], c[7], c[8], c[9], c[10]], ROW_H))
+    rows.append(([c[0], c[2], c[3], c[4], c[5], c[6], c[7], c[8], c[9], c[10]],
+                 ROW_H))
 
     c = blank()
-    c[0] = cell(f"{y2}-{str(y2 + 1)[2:]}"); c[1] = cell(str(n))
-    c[2] = cell(f"AVG. {mon} {y2 - 1}")
-    c[4] = cell(f"{ndays} DAYS TRENDING {mon} {y2}", fill=HDR_BG, span=3)
+    c[0] = cell(f"{sheet['ndays']} DAYS TRENDING", fill=HDR_BG, bold=True, span=2)
     c[7] = cell(_money(f["trending"]), align="r", bold=True)
-    rows.append(([c[0], c[1], c[2], c[3], c[4], c[7], c[8], c[9], c[10]], ROW_H))
-
-    c = blank()
-    c[0] = cell(_money(f["ly_avg_per_store"]), align="r")
-    c[2] = cell(_money(f["projection"]), align="r", bold=True)
-    c[3] = cell(_money(f["ly_day_avg_till_yesterday"]), align="r")
-    c[7] = cell(f"NO. OF DAYS REMAINING  {f['days_remaining']}", fill=HDR_BG, span=4)
-    rows.append(([c[0], c[1], c[2], c[3], c[4], c[5], c[6], c[7]], ROW_H))
-
-    c = blank()
-    c[0] = cell(f"AVG. PER DAY PER STORE {mon} {y2 - 1}-{str(y2)[2:]}",
-                fill=HDR_BG, span=2, wrap=True)
-    c[2] = cell(f"{mon} PROJECTIONS", fill=HDR_BG, wrap=True)
-    c[3] = cell(f"{mon} {y2 - 1} DAY AVG. TILL YESTERDAY", fill=HDR_BG, wrap=True)
-    c[7] = cell(_money(f["ly_minus_ty"]), align="r", bold=True)
-    c[8] = cell(_money(f["growth_10"]), align="r", bold=True)
-    c[9] = cell(_money(f["target_total"]), align="r", bold=True)
     rows.append(([c[0], c[2], c[3], c[4], c[5], c[6], c[7], c[8], c[9], c[10]],
-                 FOOT_LABEL_H))
+                 ROW_H))
 
-    c = blank()
-    c[0] = cell(_money(f["ty_avg_per_store"]), align="r", span=2)
-    c[2] = cell(str(n))
-    c[7] = cell("LY-TY TILL DATE ACHVD.", fill=HDR_BG, wrap=True)
-    c[8] = cell("10% GROWTH ON LY SALE", fill=HDR_BG, wrap=True)
-    c[9] = cell("TOTAL", fill=HDR_BG)
-    rows.append(([c[0], c[2], c[3], c[4], c[5], c[6], c[7], c[8], c[9], c[10]],
-                 FOOT_LABEL_H))
-
-    c = blank()
-    c[0] = cell(f"AVG. PER DAY PER STORE {mon} {y2}-{str(y2 + 1)[2:]}",
-                fill=HDR_BG, span=2, wrap=True)
-    c[2] = cell(f"{mon} {y2 - 1} NO. OF STORE", fill=HDR_BG, span=2, wrap=True)
-    rows.append(([c[0], c[2], c[4], c[5], c[6], c[7], c[8], c[9], c[10]],
-                 FOOT_LABEL_H))
-    return _draw_grid(header, rows)
+    day = _draw_grid(header, rows)
+    n, el = sheet["n_stores"], sheet["elapsed"]
+    sections = [
+        ("WHERE THE MONTH STANDS", [
+            (f"AVG. PER DAY PER STORE {ly_lbl}", _money(f["ly_avg_per_store"])),
+            (f"AVG. PER DAY PER STORE {ty_lbl}", _money(f["ty_avg_per_store"])),
+            (f"NO. OF STORES {mon} {y2 - 1}", str(n)),
+            (f"NO. OF STORES {mon} {y2}", str(n)),
+        ]),
+        (f"WHERE {mon} {y2} LANDS", [
+            (f"{mon} PROJECTIONS", _money(f["projection"])),
+            ("NO. OF DAYS REMAINING", str(f["days_remaining"])),
+            (f"{mon} {y2 - 1} DAY AVG. TILL YESTERDAY",
+             _money(f["ly_day_avg_till_yesterday"])),
+            (f"DAYS COUNTED SO FAR", str(el)),
+        ]),
+        (f"TO FINISH ABOVE {mon} {y2 - 1}", [
+            ("LY-TY TILL DATE ACHVD.", _money(f["ly_minus_ty"])),
+            ("10% GROWTH ON LY SALE", _money(f["growth_10"])),
+            ("TOTAL", _money(f["target_total"])),
+        ]),
+    ]
+    foot = _foot_grid(sections, day.width, highlight={"TOTAL"})
+    return _stack([day, foot], _px(22))
 
 
 # ── Month-wise total sale ───────────────────────────────────────────────────
@@ -968,8 +996,8 @@ def render_east(sheet) -> Image.Image:
         rows.append((cs, ROW_H))
 
     f = sheet["foot"]
-    nd = sheet["ndays"]
     ncmp, ntr = sheet["n_ly_month"], sheet["n_ty_month"]
+    nd, el = sheet["ndays"], sheet["elapsed"]
     Y = lambda a, b: f"{a}-{str(b)[2:]}"
 
     rows.append((_row({i: cell(v, align="r", fill=TOTAL_BG, bold=True)
@@ -980,60 +1008,55 @@ def render_east(sheet) -> Image.Image:
                                     (9, _money(f["j_total"])),
                                     (10, _money(f["k_total"])),
                                     (14, _money(f["o_total"])))}
+                      | {0: cell("TOTAL", fill=TOTAL_BG, bold=True)}
                       | {i: cell(fill=TOTAL_BG) for i in
-                         (0, 1, 3, 5, 6, 11, 12, 13, 15, 16, 17)}, n), ROW_H))
+                         (1, 3, 5, 6, 11, 12, 13, 15, 16, 17)}, n), ROW_H))
 
-    rows.append((_row({0: cell(Y(fy - 1, fy)), 1: cell(str(ncmp)),
+    # These two summarise COLUMNS, so they stay under the columns they describe.
+    rows.append((_row({0: cell("AVG. PER DAY", fill=HDR_BG, bold=True, span=2),
                        2: cell(_money(f["ly_avg_per_day"]), align="r", bold=True),
-                       4: cell(f"AVG. PER DAY {mon} {y2}", fill=HDR_BG, span=3),
                        7: cell(_money(f["ty_avg_per_day"]), align="r", bold=True),
                        8: cell(_money(f["i_avg"]), align="r"),
                        9: cell(_money(f["j_avg"]), align="r"),
                        10: cell(_money(f["k_avg"]), align="r")}, n), ROW_H))
 
-    rows.append((_row({0: cell(Y(fy, fy + 1)), 1: cell(str(ntr)),
-                       2: cell(f"AVG. {mon} {y2 - 1}"),
-                       4: cell(f"{nd} DAYS TRENDING {mon} {y2}", fill=HDR_BG, span=3),
+    rows.append((_row({0: cell(f"{nd} DAYS TRENDING", fill=HDR_BG, bold=True,
+                               span=2),
                        7: cell(_money(f["trending"]), align="r", bold=True),
                        8: cell(_money(f["i_trend"]), align="r"),
                        9: cell(_money(f["j_trend"]), align="r"),
                        10: cell(_money(f["k_trend"]), align="r")}, n), ROW_H))
 
-    rows.append((_row({0: cell(_money(f["ly_avg_per_store"]), align="r"),
-                       2: cell(_money(f["projection"]), align="r", bold=True),
-                       3: cell(_money(f["ly_day_avg_till_yesterday"]), align="r"),
-                       7: cell(f"NO. OF DAYS REMAINING  {f['days_remaining']}",
-                               fill=HDR_BG, span=4)}, n), ROW_H))
-
-    rows.append((_row({0: cell(f"AVG. PER DAY PER STORE {mon} {Y(fy - 1, fy)}",
-                               fill=HDR_BG, span=2, wrap=True),
-                       2: cell(f"{mon} PROJECTIONS", fill=HDR_BG, wrap=True),
-                       3: cell(f"{mon} {y2 - 1} DAY AVG. TILL YESTERDAY",
-                               fill=HDR_BG, wrap=True),
-                       7: cell(_money(f["shortfall"]), align="r", bold=True),
-                       8: cell(_money(f["growth_10"]), align="r", bold=True),
-                       9: cell(_money(f["target_total"]), align="r", bold=True),
-                       10: cell(_money(f["new_target"]), align="r", bold=True),
-                       11: cell(_money(f["grand_target"]), align="r", bold=True),
-                       12: cell(_money(f["avg_req_daily"]), align="r", bold=True)},
-                      n), FOOT_LABEL_H))
-
-    rows.append((_row({0: cell(_money(f["ty_avg_per_store"]), align="r", span=2),
-                       2: cell(str(ntr)),
-                       7: cell("LY-TY TILL DATE ACHVD.", fill=HDR_BG, wrap=True),
-                       8: cell("10% GROWTH ON LY SALE", fill=HDR_BG, wrap=True),
-                       9: cell("TOTAL", fill=HDR_BG, wrap=True),
-                       10: cell(f"NEW STORE @ {NEW_STORE_DAILY_TARGET:,}/DAY",
-                                fill=HDR_BG, wrap=True),
-                       11: cell("TOTAL WITH NEW STORE", fill=HDR_BG, wrap=True),
-                       12: cell("AVG. REQ DAILY", fill=HDR_BG, wrap=True)},
-                      n), FOOT_LABEL_H))
-
-    rows.append((_row({0: cell(f"AVG. PER DAY PER STORE {mon} {Y(fy, fy + 1)}",
-                               fill=HDR_BG, span=2, wrap=True),
-                       2: cell(f"{mon} {y2 - 1} NO. OF STORE", fill=HDR_BG,
-                               span=2, wrap=True)}, n), FOOT_LABEL_H))
-    return _draw_grid(header, rows)
+    day = _draw_grid(header, rows)
+    sections = [
+        ("WHERE THE MONTH STANDS", [
+            (f"AVG. PER DAY PER STORE {Y(fy - 1, fy)}",
+             _money(f["ly_avg_per_store"])),
+            (f"AVG. PER DAY PER STORE {Y(fy, fy + 1)}",
+             _money(f["ty_avg_per_store"])),
+            (f"NO. OF STORES {mon} {y2 - 1}", str(ncmp)),
+            (f"NO. OF STORES {mon} {y2}", str(ntr)),
+        ]),
+        (f"WHERE {mon} {y2} LANDS", [
+            (f"{mon} PROJECTIONS", _money(f["projection"])),
+            ("NO. OF DAYS REMAINING", str(f["days_remaining"])),
+            (f"{mon} {y2 - 1} DAY AVG. TILL YESTERDAY",
+             _money(f["ly_day_avg_till_yesterday"])),
+            ("DAYS COUNTED SO FAR", str(el)),
+        ]),
+        (f"TO FINISH ABOVE {mon} {y2 - 1}", [
+            ("LY-TY TILL DATE ACHVD.", _money(f["shortfall"])),
+            ("10% GROWTH ON LY SALE", _money(f["growth_10"])),
+            ("TOTAL", _money(f["target_total"])),
+            (f"NEW STORE @ {NEW_STORE_DAILY_TARGET:,}/DAY",
+             _money(f["new_target"])),
+            ("TOTAL WITH NEW STORE", _money(f["grand_target"])),
+            ("AVG. REQ DAILY", _money(f["avg_req_daily"])),
+        ]),
+    ]
+    foot = _foot_grid(sections, day.width,
+                      highlight={"TOTAL", "TOTAL WITH NEW STORE"})
+    return _stack([day, foot], _px(22))
 
 
 def build_east_ltol(pf_df, asof, basis_label="") -> tuple[str, bytes]:
