@@ -1311,8 +1311,10 @@ if _vfl_prov is not None:
     # It carries sales, brand line, gender and units but no bill-level detail,
     # so say so rather than let a coarse day pass for a settled one.
     st.sidebar.warning(
-        f"**{_vfl_prov:%d %b}** is provisional — from the night fill, so it has "
-        f"no division, category or bill detail yet.")
+        f"**{_vfl_prov:%d %b}** is provisional — from the night fill. Its "
+        f"**sales and units are counted**; it carries no bill numbers, so "
+        f"**bills and average ticket stop at the day before** and the division, "
+        f"category and salesperson breakdowns do not have it yet.")
 if st.sidebar.button("🔄 Refresh data now"):
     _load_cached.clear()
     _load_portfolio_cached.clear()
@@ -2324,6 +2326,14 @@ if nav == "📊 Executive":
                            ytd_r["growth"]["bills"], hero=True), unsafe_allow_html=True)
     h[3].markdown(kpi_card("YTD Avg Bill", inr(ytd_r["cur"]["atv"]),
                            ytd_r["growth"]["atv"], hero=True), unsafe_allow_html=True)
+    # Sales count the night fill's day; bills cannot, because it carries no bill
+    # numbers. Two of these four cards therefore stop a day earlier, and a
+    # reader comparing them has to be told which.
+    if ytd_r.get("bills_to") is not None:
+        st.caption(
+            f"⚠️ Sales include **{ytd_r['cur_window'][1]:%d %b}** from the night "
+            f"fill. Bills and average bill stop at **{ytd_r['bills_to']:%d %b}** "
+            f"— a night fill carries takings, not bill numbers.")
     st.markdown("---")
 
     exec_window_row("MTD — Month to date", mtd_r)

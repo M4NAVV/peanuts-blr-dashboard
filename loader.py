@@ -863,31 +863,57 @@ def report_frames(df: pd.DataFrame, kind: str, asof=None, anchor_takeover: bool 
 
 
 def _frame_metrics(f: pd.DataFrame) -> dict:
+    """Sales and units off every row; bills and ticket off the SETTLED ones.
+
+    ★ 14 Aug. A night fill carries a day's takings faithfully and carries no
+    bill numbers at all, so the two halves of this block have to be drawn from
+    different sets: sales and units include the provisional day, bills and the
+    average ticket stop at the last settled one. Dividing the fuller numerator
+    by the thinner denominator is the same mismatched-halves error that made a
+    city read 380% conversion — and it is why this whole block used to drop the
+    provisional day, which cost the dashboard a day it actually had.
+    """
+    settled = (f[~f["_provisional"].astype(bool)]
+               if "_provisional" in f.columns else f)
     sales = f[COL_AMOUNT].sum()
-    bills = f[COL_BILL].nunique()
     units = f[COL_QTY].sum()
-    return {"sales": sales, "bills": int(bills), "units": int(units),
-            "atv": sales / bills if bills else 0.0}
+    bills = int(settled[COL_BILL].nunique())
+    s_sales = settled[COL_AMOUNT].sum()
+    return {"sales": sales, "bills": bills, "units": int(units),
+            "atv": s_sales / bills if bills else 0.0,
+            # True when the sales above include a day the bills do not.
+            "part_settled": bool(len(settled) != len(f))}
 
 
 def window_yoy_takeover(df: pd.DataFrame, kind: str, asof=None) -> dict:
     """YoY for MTD/YTD using per-store takeover-anchored windows (for exec cards).
 
-    Provisional rows are left out of this one. It reports bills and average bill
-    value alongside sales, and a night fill carries no bill numbers — including
-    its sales but not its bills would divide today's takings by yesterday's
-    bills and overstate the ticket. Better that the whole block reads as of the
-    last settled day than that one number inside it lies.
+    ★ 14 Aug: THE NIGHT FILL'S DAY IS COUNTED HERE NOW (Manav: the fill works on
+    the PDFs, "so can we apply the same principle to the dash data"). It used to
+    be dropped whole, because a fill carries no bill numbers and dividing its
+    sales by yesterday's bills overstates the ticket. Dropping it also cost the
+    dashboard a day of real money it was holding — the VFL month read Rs 2.78 Cr
+    against the Rs 2.93 Cr it had. `_frame_metrics` now splits the difference the
+    honest way: sales and units count the provisional day, bills and the average
+    ticket stop at the last settled one, and `part_settled` says so.
     """
-    if "_provisional" in df.columns:
-        df = df[~df["_provisional"].astype(bool)]
     cur, prior = report_frames(df, kind, asof=asof)
     c, p = _frame_metrics(cur), _frame_metrics(prior)
-    growth = {k: ((c[k] - p[k]) / p[k] * 100 if p[k] else None) for k in c}
+    # `part_settled` is a flag, not a figure — and a bool is an int in Python,
+    # so it would otherwise arrive here as a growth rate of its own.
+    growth = {k: ((c[k] - p[k]) / p[k] * 100 if p[k] else None)
+              for k in c if isinstance(c[k], (int, float))
+              and not isinstance(c[k], bool)}
     def _rng(f):
         return (f["date"].min(), f["date"].max()) if len(f) else (None, None)
+    def _settled_end(f):
+        s = (f[~f["_provisional"].astype(bool)] if "_provisional" in f.columns
+             else f)
+        return s["date"].max() if len(s) else None
     return {"cur": c, "prior": p, "growth": growth,
-            "cur_window": _rng(cur), "prior_window": _rng(prior)}
+            "cur_window": _rng(cur), "prior_window": _rng(prior),
+            # Where the bills stop, when that is not where the sales stop.
+            "bills_to": _settled_end(cur) if c.get("part_settled") else None}
 
 
 def _store_window_sales(df, start, end) -> pd.Series:
