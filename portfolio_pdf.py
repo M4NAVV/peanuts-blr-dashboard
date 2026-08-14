@@ -30,7 +30,7 @@ from PIL import Image, ImageDraw
 from imaging import _fonts, _LOCK
 from portfolio_loader import (
     gd_sheet_report, brand_wise_gd_report, loc_wise_gd_report, average_report,
-    mw_data, _MW_BLOCKS, _MW_STD, _MW_REG,
+    mw_data, mw_layout, _MW_STD, _MW_REG,
 )
 
 # --- palette (RGB) --------------------------------------------------------- #
@@ -367,8 +367,8 @@ def _add_sheet(contents, section, disp, rt, *, money, pct, sign, money_dp,
 # --------------------------------------------------------------------------- #
 def _mw_image(mw, *, blocks=None, font_px=28, header_px=25, gap=None,
               block_gap=None):
-    """Render MW Data as one image. `blocks` selects which rows of `_MW_BLOCKS`
-    to draw (default: all), so the grid can be split across pages — the recent
+    """Render MW Data as one image. `blocks` selects which rows of the grid's
+    own layout to draw (default: all), so it can be split across pages — recent
     years get a page to themselves rather than being squeezed in with a decade
     of history."""
     gap = _px(30) if gap is None else gap
@@ -479,7 +479,7 @@ def _mw_image(mw, *, blocks=None, font_px=28, header_px=25, gap=None,
             x0 += gw + gap
         return img
 
-    rows = _MW_BLOCKS if blocks is None else blocks
+    rows = mw_layout(mw) if blocks is None else blocks
     imgs = [render_block(b) for b in rows]
     W = max(b.width for b in imgs)
     H = sum(b.height for b in imgs) + block_gap * (len(imgs) - 1)
@@ -695,7 +695,8 @@ def build(pf, pf_all, asof, basis_label="", vfl_df=None):
         tbl_w = max(c.width for _, c in contents)
         tbl_h = max(c.height for _, c in contents)
         _mw = mw_data(pf_all)
-        _recent, _older = _MW_BLOCKS[0], _MW_BLOCKS[1:]
+        _layout = mw_layout(_mw)
+        _recent, _older = _layout[0], _layout[1:]
         _cur, _prior = [_recent[-1]], _recent[:-1]
         mw_pages = [(f"MW Data — Monthly Contribution · {_recent[0]} – {_recent[-1]}",
                      _fit_mw(_mw, [_cur, _prior] if _prior else [_cur], tbl_w, tbl_h))]

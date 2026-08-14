@@ -1,18 +1,19 @@
 name: Keep app warm
 
-# Pings the live Streamlit app on a schedule so the Community Cloud container
-# never goes to sleep for inactivity — visitors then hit a warm app with its
-# data cache already populated (no cold boot, no ~10s reload from scratch).
+# Pings the live app on a schedule so its container never sleeps for
+# inactivity — visitors then hit a warm app with its data cache populated
+# rather than a cold boot.
 #
-# NOTE: this is fully effective only when the app is PUBLIC. While the app is
-# private, an unauthenticated ping is bounced (HTTP 303) at the login gateway
-# before it reaches the container, so it can't keep the container warm.
-# Flip Streamlit → Settings → Sharing → Public to activate this (that also lets
-# the team open the app).
+# ★ RETARGETED 14 Aug 2026. This pointed at peanuts-blr.streamlit.app, the
+# retired Streamlit Community Cloud app, and had been pinging a dead host every
+# five minutes since the move to Hugging Face. It now pings the Space that is
+# actually live, and every fifteen minutes rather than every five: the Space
+# does not sleep on the same short timer, and three quarters of the Actions
+# minutes were buying nothing.
 
 on:
   schedule:
-    - cron: "*/5 * * * *"   # every 5 minutes (GitHub may delay under load)
+    - cron: "*/15 * * * *"   # every 15 minutes (GitHub may delay under load)
   workflow_dispatch:         # allows a manual run from the Actions tab
 
 jobs:
@@ -22,13 +23,11 @@ jobs:
       - name: Ping the app
         run: |
           UA="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36"
-          URL="https://peanuts-blr.streamlit.app"
+          URL="https://manavv4-peanuts-dashboard.hf.space"
           JAR="$(mktemp)"
-          # Streamlit Community Cloud public apps run an anonymous-session
-          # handshake (redirects that set a cookie) before serving the app; a
-          # plain request loops on it. Carry a cookie jar so we complete the
-          # handshake like a real browser and actually reach the container —
-          # THAT is what registers as activity and keeps it awake.
+          # Carry a cookie jar and follow redirects like a real browser, so the
+          # request actually reaches the container rather than stopping at a
+          # session handshake — reaching it is what registers as activity.
           for path in "/" "/_stcore/health"; do
             code=$(curl -s -A "$UA" -c "$JAR" -b "$JAR" -L --max-redirs 30 \
               --max-time 60 -o /dev/null -w "%{http_code}" "$URL$path" || echo "000")

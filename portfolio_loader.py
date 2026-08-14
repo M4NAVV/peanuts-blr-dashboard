@@ -730,9 +730,50 @@ def gd_sheet_report(df: pd.DataFrame, asof=None):
 # MW_DATA — monthly contribution grid (workbook's MW_DATA sheet). FY25-26 and
 # FY26-27 are computed live; FY24-25 and older come from mw_data_historical.csv.
 # --------------------------------------------------------------------------- #
-_MW_BLOCKS = [["2024-25", "2025-26", "2026-27"],
-              ["2023-24", "2022-23", "2021-22"],
-              ["2020-21", "2019-20", "2018-19", "2017-18"]]
+# ★ THE GRID'S YEARS ARE DERIVED, NOT WRITTEN DOWN.
+# This was a literal list ending at 2026-27, and `mw_data` chose each year's
+# treatment by name (`if fy == "2026-27"`). On 1 Apr 2027 the new fiscal year
+# would simply not have appeared — no error, no gap, a whole year of trade
+# rendering nowhere while the old top row kept its current-year styling. Proved
+# by simulation before the fix: a frame carrying Rs 37.68 Cr of FY27-28 sales
+# produced the same ten years as today.
+#
+# The shape is the workbook's and is preserved exactly: ten years in rows of
+# three, three and four, the top row ASCENDING so the current year sits last.
+_MW_ROWS = (3, 3, 4)
+
+
+def _fy_label(start_year: int) -> str:
+    return f"{start_year}-{str(start_year + 1)[2:]}"
+
+
+def _fy_of(ts) -> int:
+    ts = pd.Timestamp(ts)
+    return ts.year if ts.month >= 4 else ts.year - 1
+
+
+def mw_blocks(asof=None) -> list[list[str]]:
+    """The grid's fiscal years, laid out as the workbook lays them out."""
+    cur = _fy_of(asof if asof is not None else pd.Timestamp.today())
+    years = [cur - i for i in range(sum(_MW_ROWS))]      # newest first
+    top, mid = _MW_ROWS[0], _MW_ROWS[0] + _MW_ROWS[1]
+    return [[_fy_label(y) for y in reversed(years[:top])],
+            [_fy_label(y) for y in years[top:mid]],
+            [_fy_label(y) for y in years[mid:]]]
+
+
+def mw_layout(mw: dict) -> list[list[str]]:
+    """The rows of a grid that was already built — its own years, in its own
+    order — so the tab, the PDF and the figures can never disagree about which
+    years were drawn."""
+    fys = list(mw)
+    out, i = [], 0
+    for n in _MW_ROWS:
+        if i >= len(fys):
+            break
+        out.append(fys[i:i + n])
+        i += n
+    return out
 
 
 def _fy_periods(start_year):
@@ -758,15 +799,22 @@ def mw_data(df: pd.DataFrame, asof=None) -> dict:
         return (x / tot * 100) if tot else 0.0
 
     out = {}
-    for block in _MW_BLOCKS:
+    # Which years the feed can actually answer for, and which one is current.
+    # Both were literals; a year is now "live" if the feed reaches back to its
+    # 1 April, and "current" if the as-of date falls inside it — so the FY that
+    # gets the region split moves with the calendar instead of staying 2026-27
+    # forever.
+    feed_from = df["date"].min() if len(df) else pd.NaT
+    cur_fy = _fy_label(_fy_of(asof))
+
+    for block in mw_blocks(asof):
         for fy in block:
-            start_year = 2000 + int(fy[:2]) if len(fy) == 5 else int(fy[:4])
-            start_year = int("20" + fy[:2]) if len(fy) == 5 else start_year
             start_year = int(fy.split("-")[0])
             pers = _fy_periods(start_year)
             labels = [p.strftime("%b-%y") for p in pers]
+            live = pd.notna(feed_from) and feed_from <= pd.Timestamp(start_year, 4, 1)
 
-            if fy == "2026-27":  # region split, live
+            if live and fy == cur_fy:  # region split, live
                 ene = [float(monthly.loc[p, "East & NE"]) if p in monthly.index else 0.0 for p in pers]
                 sth = [float(monthly.loc[p, "South"]) if p in monthly.index else 0.0 for p in pers]
                 tot = [e + s for e, s in zip(ene, sth)]
@@ -781,7 +829,7 @@ def mw_data(df: pd.DataFrame, asof=None) -> dict:
                            "grand": {"total": g_tot, "ene": g_ene, "south": g_sth,
                                      "ene_contrib": _pct(g_ene, g_tot),
                                      "south_contrib": _pct(g_sth, g_tot)}}
-            elif fy == "2025-26":  # std split (all PRPL), live
+            elif live:             # std split (all PRPL), live
                 tot = [float(monthly.loc[p].sum()) if p in monthly.index else 0.0 for p in pers]
                 g = sum(tot)
                 months = [{"month": labels[i], "total": tot[i], "prpl": tot[i],
@@ -883,7 +931,7 @@ def mw_data_html(mw: dict) -> str:
                 f'sans-serif;font-size:11px;margin:0 0 26px;">'
                 f'<thead><tr>{title}</tr><tr>{sub}</tr></thead><tbody>{body}</tbody></table>')
 
-    inner = "".join(block(b) for b in _MW_BLOCKS)
+    inner = "".join(block(b) for b in mw_layout(mw))
     return f'<div style="overflow-x:auto;max-width:100%;">{inner}</div>'
 
 
