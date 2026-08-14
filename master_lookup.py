@@ -1,4 +1,4 @@
-"""Store-attribute lookups for the Report T.D. vertical.
+"""Store-attribute lookups for the Report TD vertical.
 
 Only the columns the reports need. The full store master is a whole operations
 sheet — GST numbers, phone numbers, addresses, store mail IDs — and THIS REPO IS

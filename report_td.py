@@ -1,5 +1,5 @@
 """
-REPORT T.D. — a separate reporting vertical.
+REPORT TD — a separate reporting vertical.
 
 Reproduces Manav's operational workbooks (the "L TO L" sheets, month-wise
 totals, night SMS formats) as proper reports. Separate from the Portfolio and
@@ -31,7 +31,7 @@ So it follows the same rules as every other report we ship:
   * rasterised once at final size and never resampled.
 
 Page furniture comes from `portfolio_pdf._compose` — shared deliberately, so a
-Report T.D. page and a pack page are recognisably the same document family. Only
+Report TD page and a pack page are recognisably the same document family. Only
 the table inside it is this module's own.
 
 ★ WHERE THE FIGURES DIVERGE FROM THE WORKBOOK, DELIBERATELY
@@ -61,7 +61,7 @@ import portfolio_pdf as PP
 from portfolio_pdf import (_ft, _px, _fmt_in, _compose, save_pages, PAGE_PT_W,
                            HDR_BG, TOTAL_BG, NEG_INK, GRID, GREEN, INK, WHITE)
 
-FOOTER_RIGHT = "Peanuts Retail · Report T.D."
+FOOTER_RIGHT = "Peanuts Retail · Report TD"
 
 # Column widths in the source workbook's own units, so the proportions are its
 # proportions; only the scale is ours.

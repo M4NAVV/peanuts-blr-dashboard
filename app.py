@@ -491,7 +491,7 @@ def _cr(x) -> str:
 _PF_TABS = ["📈 MW Data", "🧾 GD Sheet", "🏷️ Brand-wise GD", "🗺️ Loc-wise GD",
             "📐 Average", "📊 Executive", "📋 MTD / YTD Report", "📉 Degrowth",
             "🎯 Day Targets", "🥧 Contribution", "🏙️ City-wise G/D", "🏬 Stores",
-            "📅 Monthly", "📄 Report PDF", "📑 REPORT T.D."]
+            "📅 Monthly", "📄 Report PDF", "📑 REPORT TD"]
 
 
 def render_portfolio():
@@ -597,7 +597,7 @@ def render_portfolio():
     st.sidebar.caption(f"Portfolio data loaded {pf_at:%d %b %Y, %I:%M %p} IST")
     if st.sidebar.button("🔄 Refresh portfolio data"):
         _load_portfolio_cached.clear()
-        # Report T.D. reads the VFL feed from this mode (South's last year lives
+        # Report TD reads the VFL feed from this mode (South's last year lives
         # only there), so refreshing here has to clear that cache too — it is
         # the only refresh control this mode offers, and a button that silently
         # leaves half the data stale is worse than no button.
@@ -1017,13 +1017,13 @@ def render_portfolio():
                 file_name=st.session_state.get("pf_pdf_name", "portfolio.pdf"),
                 mime="application/pdf", use_container_width=True)
 
-    elif nav == "📑 REPORT T.D.":
+    elif nav == "📑 REPORT TD":
         # A SEPARATE REPORTING VERTICAL. These reproduce the operational
         # workbooks (L-to-L, month-wise totals, night SMS) and deliberately look
         # like those Excel files rather than like the report packs above, which
         # keep the growth-degrowth palette. Nothing here touches those.
         import report_td as RTD
-        st.subheader("📑 Report T.D.")
+        st.subheader("📑 Report TD")
         st.caption(
             "Reproductions of the operational workbooks, in their own format. "
             "Pick one to download it as a PDF, or several to get them as a ZIP. "
