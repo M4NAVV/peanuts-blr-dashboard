@@ -77,18 +77,81 @@ SOUTH_COLS = [
     ("GROTH / D GROTH", 12.3, "r"),
 ]
 
-PX_PER_UNIT = 22            # workbook width unit -> px
-FONT_PX, HDR_FONT_PX = 30, 25
-ROW_H = _px(46)
-HDR_H = _px(126)
-PAD_X = _px(12)
+# ★ HOW MANY PIXELS THIS VERTICAL DRAWS WITH (14 Aug).
+# `save_pages` writes a page at its NATIVE pixel size and derives the DPI from
+# the pixel width — more pixels on the same 842pt paper means a higher DPI, not
+# a bigger sheet. The pack's sheets come out ~3,800px wide and print at 327 ppi;
+# Report TD's narrower tables were landing at 2,532px and 217 ppi, two thirds of
+# the resolution, which is why its type looked soft beside a GD sheet.
+# Everything below is multiplied by this, so the layout is untouched and only
+# the pixel density changes.
+SCALE = 1.5
+
+PX_PER_UNIT = int(22 * SCALE)   # workbook width unit -> px
+FONT_PX, HDR_FONT_PX = int(30 * SCALE), int(25 * SCALE)
+ROW_H = _px(int(46 * SCALE))
+HDR_H = _px(int(126 * SCALE))
+PAD_X = _px(int(12 * SCALE))
 
 # Footer rows: (height, wraps?). The last three carry labels that wrap onto two
 # lines; at 30px type two lines need ~80px, so they are given 92 rather than the
 # workbook's own heights — 70 clipped "AVG. PER DAY PER STORE AUG 2026-27" in
 # half, and a label cut off mid-phrase is worse than a slightly taller row.
-FOOT_LABEL_H = _px(96)   # the wrapping label rows; two lines of 30px type
+FOOT_LABEL_H = _px(int(96 * SCALE))   # the wrapping label rows; two lines of 30px type
 # Merged spans are now carried on the cells themselves (see render_south).
+
+
+# ★ TWO TYPE SIZES, BECAUSE THESE REPORTS ARE READ IN TWO PLACES (Manav,
+# 14 Aug). The night SMS goes to a WhatsApp group and is read on a phone, where
+# the pack's 7pt would be unreadable. The L-to-L and month-wise sheets are desk
+# reports, read beside a GD sheet, and at 10pt they looked enlarged next to one.
+# Only the TYPE changes; the rows, padding and grid keep their scale, so a desk
+# sheet gets the pack's density without losing the pixels that make it sharp.
+import contextlib
+
+
+@contextlib.contextmanager
+def _type(font_px, hdr_px):
+    global FONT_PX, HDR_FONT_PX
+    was = FONT_PX, HDR_FONT_PX
+    FONT_PX, HDR_FONT_PX = font_px, hdr_px
+    try:
+        yield
+    finally:
+        FONT_PX, HDR_FONT_PX = was
+
+
+DESK_FONT, DESK_HDR = 31, 27       # tuned to land on the pack's ~7pt — see below
+# ★ A FLOOR ON THE TABLE'S WIDTH, for the same reason the night SMS needed one.
+# The grid widens a table until it is landscape-shaped, and that widening is a
+# function of HEIGHT — so a SHORT sheet never widens at all. Month-wise is 17
+# rows, so it came out 2,163px and printed at 12pt and 185 ppi while the L-to-L
+# beside it printed at 7pt. A floor gives every desk sheet the pack's width
+# whatever its height, which fixes the type size and the resolution together.
+MIN_TABLE_W = 0                    # only the desk reports set one
+DESK_MIN_W = 3800
+
+
+# The rows come down with the type. Left at the phone size they were a quarter
+# taller than the pack's for type the same size, which reads as airy rather than
+# dense — the other half of what made a Report TD page look unlike a GD sheet.
+DESK_ROW_F = 0.78
+
+
+@contextlib.contextmanager
+def desk():
+    """The density of a pack sheet, for the reports read at a desk."""
+    global MIN_TABLE_W, ROW_H, HDR_H, FOOT_LABEL_H
+    was = MIN_TABLE_W, ROW_H, HDR_H, FOOT_LABEL_H
+    MIN_TABLE_W = _px(DESK_MIN_W)
+    ROW_H = int(ROW_H * DESK_ROW_F)
+    HDR_H = int(HDR_H * DESK_ROW_F)
+    FOOT_LABEL_H = int(FOOT_LABEL_H * DESK_ROW_F)
+    try:
+        with _type(DESK_FONT, DESK_HDR):
+            yield
+    finally:
+        MIN_TABLE_W, ROW_H, HDR_H, FOOT_LABEL_H = was
 
 
 def _money(v) -> str:
@@ -325,8 +388,8 @@ def _draw_grid(header, rows, *, title=None, hdr_h=None, landscape=True,
     # table, and the page came out portrait. The workbook prints A4 landscape and
     # so does every pack we ship, so the surplus is handed back to the columns in
     # proportion: same type size, more room around it.
-    if landscape:
-        want = height * (PAGE_PT_W / 595.0)
+    if landscape or MIN_TABLE_W:
+        want = max(height * (PAGE_PT_W / 595.0) if landscape else 0, MIN_TABLE_W)
         if total_w < want:
             k = want / total_w
             widths = [int(round(w * k)) for w in widths]
@@ -594,7 +657,7 @@ def build_south_ltol(vfl_df, asof, basis_label="") -> tuple[str, bytes]:
     burying it last means paging past four closed months to reach it.
     """
     asof = pd.Timestamp(asof)
-    with _LOCK:
+    with _LOCK, desk():
         months = list(reversed(south_months(vfl_df, asof)))
         contents = [(f"South L-to-L · {m['month']} {m['ty_year']}", render_south(m))
                     for m in months]
@@ -643,7 +706,7 @@ def build_month_wise(pf_df, vfl_df, asof, basis_label="") -> tuple[str, bytes]:
         d["code"] = d["code"].astype(int)
         return d
 
-    with _LOCK:
+    with _LOCK, desk():
         east_all = month_wise(pf_df, asof, scope=pf_scope, carpet=carpet,
                               store_col="code", amount_col="sales", code_col="code")
         east_vfl = month_wise(vfl_df, asof, scope=vfl("East & NE"), carpet=carpet,
@@ -1062,7 +1125,7 @@ def render_east(sheet) -> Image.Image:
 def build_east_ltol(pf_df, asof, basis_label="") -> tuple[str, bytes]:
     """East & NE L-to-L, current month first."""
     asof = pd.Timestamp(asof)
-    with _LOCK:
+    with _LOCK, desk():
         months = list(reversed(east_months(pf_df, asof)))
         contents = [(f"East & NE L-to-L · {m['month']} {m['ty_year']}",
                      render_east(m)) for m in months]
