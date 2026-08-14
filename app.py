@@ -1047,9 +1047,8 @@ def render_portfolio():
                           "earlier month of the year",
             "east_ltol": "East & NE L-to-L sheet  ·  current month first, then "
                          "each earlier month of the year",
-            "mw_south": "South month-wise total sale  ·  25-26 vs 26-27",
-            "mw_east": "East & NE month-wise total sale  ·  overall, then the "
-                       "Mohey Manyavar stores",
+            "mw": "Month-wise total sale  ·  25-26 vs 26-27, East & NE overall "
+                  "then its Mohey Manyavar stores, then South — one file",
             "night_sms": "Night sale SMS  ·  every store, city by city, with "
                          "city subtotals + the daily KPI table",
         }
@@ -1074,13 +1073,13 @@ def render_portfolio():
                        "1 April of the previous year, so **June and July read a "
                        "few points higher** than the old workbook, which decided "
                        "it month by month.")
-        if "mw_east" in chosen:
-            # Its last-year store COUNT (and so the last-year store average and
+        if "mw" in chosen:
+            # The last-year store COUNT (and so the last-year store average and
             # carpet area) comes from a comparable-store list kept by hand, which
             # no data we hold reproduces. The sales columns are exact both years.
-            st.caption("⚠️ East month-wise: last-year **store counts, store "
-                       "averages and carpet area** are computed from the data and "
-                       "will differ from the workbook, which uses a hand-kept "
+            st.caption("⚠️ Month-wise: last-year **store counts, store averages "
+                       "and carpet area** are computed from the data and will "
+                       "differ from the workbook, which uses a hand-kept "
                        "comparable-store list. All sales figures match.")
 
         if st.button("🧾 Generate", key="td_gen", type="primary",
@@ -1098,11 +1097,11 @@ def render_portfolio():
                         built.append(RTD.build_south_ltol(vdf, v_asof, basis))
                     if "east_ltol" in chosen:
                         built.append(RTD.build_east_ltol(pf_all, v_asof, basis))
-                    if "mw_south" in chosen:
-                        built.append(RTD.build_month_wise_south(vdf, v_asof, basis))
-                    if "mw_east" in chosen:
+                    if "mw" in chosen:
+                        # One file: East & NE overall, its Mohey Manyavar
+                        # stores, then South.
                         built.append(
-                            RTD.build_month_wise_east(pf_all, vdf, v_asof, basis))
+                            RTD.build_month_wise(pf_all, vdf, v_asof, basis))
                     if "night_sms" in chosen:
                         # Reads the night fill directly — it is the only source
                         # for the day's figures at the hour this goes out.

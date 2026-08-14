@@ -597,28 +597,18 @@ def _scopes():
     return L, master, vfl
 
 
-def build_month_wise_south(vfl_df, asof, basis_label="") -> tuple[str, bytes]:
-    L, master, vfl = _scopes()
-    asof = pd.Timestamp(asof)
-    tk = pd.to_datetime(master.set_index("region").loc["South", "takeover_date"]).min()
-    with _LOCK:
-        sheet = month_wise(vfl_df, asof, scope=vfl("South", tk),
-                           carpet=_carpet_map(), store_col=L.COL_STORE_LABEL,
-                           amount_col=L.COL_AMOUNT, code_col="_code")
-        img = render_monthwise(
-            sheet, "MOHEY MANYAVAR STORES — SOUTH · MONTH-WISE SALE DETAIL")
-        pdf = _pdf_from([("South · Month-wise total sale", img)],
-                        _label(asof, basis_label))
-    fy = _fy(asof)
-    return (f"SOUTH STORE {fy - 1}-{str(fy)[2:]} VS {fy}-{str(fy + 1)[2:]} "
-            f"MONTH WISE TOTAL SALE REPORT.pdf"), pdf
+def build_month_wise(pf_df, vfl_df, asof, basis_label="") -> tuple[str, bytes]:
+    """Both regions' month-wise sale detail in ONE file (Manav, 14 Aug).
 
-
-def build_month_wise_east(pf_df, vfl_df, asof, basis_label="") -> tuple[str, bytes]:
-    """Both sheets of the East workbook: OVERALL, then the VFL stores."""
+    East & NE overall, then its Mohey Manyavar stores, then South — the same
+    order the night SMS reads in, larger half first. They were two PDFs that
+    were always sent together and always compared against each other, and
+    nobody wanting the estate should have to open two files to add up a month.
+    """
     L, master, vfl = _scopes()
     asof = pd.Timestamp(asof)
     carpet = _carpet_map()
+    tk = pd.to_datetime(master.set_index("region").loc["South", "takeover_date"]).min()
 
     def pf_scope(df):
         d = df[df["region"] == "East & NE"].copy()
@@ -626,22 +616,29 @@ def build_month_wise_east(pf_df, vfl_df, asof, basis_label="") -> tuple[str, byt
         return d
 
     with _LOCK:
-        all_sheet = month_wise(pf_df, asof, scope=pf_scope, carpet=carpet,
-                               store_col="code", amount_col="sales", code_col="code")
-        vfl_sheet = month_wise(vfl_df, asof, scope=vfl("East & NE"), carpet=carpet,
-                               store_col=L.COL_STORE_LABEL,
-                               amount_col=L.COL_AMOUNT, code_col="_code")
+        east_all = month_wise(pf_df, asof, scope=pf_scope, carpet=carpet,
+                              store_col="code", amount_col="sales", code_col="code")
+        east_vfl = month_wise(vfl_df, asof, scope=vfl("East & NE"), carpet=carpet,
+                              store_col=L.COL_STORE_LABEL,
+                              amount_col=L.COL_AMOUNT, code_col="_code")
+        south = month_wise(vfl_df, asof, scope=vfl("South", tk), carpet=carpet,
+                           store_col=L.COL_STORE_LABEL,
+                           amount_col=L.COL_AMOUNT, code_col="_code")
         contents = [
             ("East & NE · Overall",
-             render_monthwise(all_sheet, "OVERALL STORES — MONTH-WISE SALE DETAIL")),
+             render_monthwise(east_all, "OVERALL STORES — MONTH-WISE SALE DETAIL")),
             ("East & NE · Mohey Manyavar stores",
-             render_monthwise(vfl_sheet,
+             render_monthwise(east_vfl,
                               "MOHEY MANYAVAR STORES — MONTH-WISE SALE DETAIL")),
+            ("South · Mohey Manyavar stores",
+             render_monthwise(south,
+                              "MOHEY MANYAVAR STORES — SOUTH · MONTH-WISE SALE DETAIL")),
         ]
         pdf = _pdf_from(contents, _label(asof, basis_label))
     fy = _fy(asof)
     return (f"{fy - 1}-{str(fy)[2:]} VS {fy}-{str(fy + 1)[2:]} "
             f"MONTH WISE TOTAL SALE REPORT.pdf"), pdf
+
 
 
 def bundle(reports: list[tuple[str, bytes]]) -> tuple[str, bytes, str]:
