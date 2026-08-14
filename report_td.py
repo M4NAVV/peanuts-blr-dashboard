@@ -1153,8 +1153,19 @@ def south_night_sms(pf_df, region="South", targets=None) -> dict:
     t = t[t["code"].isin(codes)].copy()
     t["bucket"] = t["line"].map(_line_bucket)
     g = lambda c, b: float(t[(t["code"] == c) & (t["bucket"] == b)]["value"].sum())
-    col = lambda c, k: (float(t[t["code"] == c][k].sum())
-                        if k in t.columns else None)
+
+    def col(c, k):
+        """A per-store extra, or None when nothing was typed for it.
+
+        `min_count=1` is the whole point: summing an empty column returns 0.0,
+        and a store nobody entered a footfall for then reports "0 footfall"
+        rather than a blank. East is typed unevenly today — bills on 39 rows,
+        footfall on 23 — so sixteen stores would have claimed nobody walked in.
+        """
+        if k not in t.columns:
+            return None
+        v = t[t["code"] == c][k].sum(min_count=1)
+        return None if pd.isna(v) else float(v)
 
     # ★ THE CITY COMES FROM THE NIGHT FILL — Manav's own column, kept beside the
     # figures, so the report follows his naming without a map of ours. A store
@@ -1222,6 +1233,31 @@ def south_night_sms(pf_df, region="South", targets=None) -> dict:
             "filed": sum(1 for r in rows if r["system"] is not None)}
 
 
+def _kpi_agg(rows):
+    """Ratios over the stores that have BOTH sides typed, and only those.
+
+    ★ A ratio cannot be aggregated by summing its parts independently. Footfall
+    is typed for some East stores and not others, so Siliguri divided all 21
+    stores' bills by the footfall of the four that had one and reported a 380%
+    conversion. Each ratio now takes its numerator and denominator from the same
+    stores; where nothing pairs up, it stays blank rather than inventing a
+    number out of mismatched halves.
+    """
+    def pair(num_k, den_k):
+        n = d = 0.0
+        seen = False
+        for r in rows:
+            a, b = r.get(num_k), r.get(den_k)
+            if a is not None and b:
+                n += a
+                d += b
+                seen = True
+        return (n, d) if seen else (None, None)
+
+    return {"abs": pair("qty", "bills"), "abv": pair("system", "bills"),
+            "asp": pair("system", "qty"), "conv": pair("bills", "footfall")}
+
+
 def _city_rows(rows):
     """Store rows folded into Manav's clusters, biggest day first."""
     keys = ("mtd", "ytd", "system", "manyavar", "mohey", "twamev", "manual",
@@ -1236,9 +1272,10 @@ def _city_rows(rows):
             v = r[k]
             if v is not None:
                 d[k] = (d.get(k) or 0.0) + v
-    for d in out.values():
+    for city, d in out.items():
         for k in keys:
             d.setdefault(k, None)
+        d["_kpi"] = _kpi_agg([r for r in rows if r["city"] == city])
     return sorted(out.values(), key=lambda d: -(d["ytd"] or 0))
 
 
@@ -1250,6 +1287,9 @@ def _sms_totals(rows):
     for k in keys:
         vals = [r[k] for r in rows if r[k] is not None]
         out[k] = sum(vals) if vals else None
+    # The grand total is an aggregate like any city row, so its ratios come
+    # from the stores that have both sides, not from these summed columns.
+    out["_kpi"] = _kpi_agg(rows)
     return out
 
 
@@ -1263,6 +1303,11 @@ def render_night_sms(sheet, by="store") -> Image.Image:
     header = [h.replace("{TK}", tk) for h, _ in cols]
     aligns = [a for _, a in cols]
     T = _sms_totals(rows)
+    # On the city sheet `rows` are themselves aggregates, so pairing their
+    # columns repeats the very error `_kpi_agg` exists to prevent — Siliguri's
+    # 76 bills would pair with the 20 footfall of the four stores that recorded
+    # one. The stores are the atomic truth on both sheets.
+    T["_kpi"] = _kpi_agg(sheet["rows"])
     region = sheet["region"].upper()
 
     def pct(a, b):
@@ -1291,11 +1336,25 @@ def render_night_sms(sheet, by="store") -> Image.Image:
                       title=f"{region} — {what} TOTAL SMS  ·  {day:%d %b %Y}")
 
     def kpis(r):
-        """The three counts, then the four ratios drawn from them."""
+        """The three counts, then the four ratios drawn from them.
+
+        An aggregate row carries `_kpi`: its ratios computed store by store
+        rather than off its own summed columns — see `_kpi_agg`.
+        """
         b, q, f_, s = r["bills"], r["qty"], r["footfall"], r["system"]
-        return [_money(b), _money(q), _money(f_),
-                f"{q / b:,.2f}" if b else "", f"{s / b:,.0f}" if b else "",
-                f"{s / q:,.0f}" if q else "", f"{b / f_ * 100:,.1f}" if f_ else ""]
+        counts = [_money(b), _money(q), _money(f_)]
+        k = r.get("_kpi")
+        if k:
+            def rat(key, mult=1.0, dp=2):
+                n, d = k[key]
+                return f"{n / d * mult:,.{dp}f}" if (n is not None and d) else ""
+            return counts + [rat("abs"), rat("abv", dp=0), rat("asp", dp=0),
+                             rat("conv", 100.0, 1)]
+        return counts + [
+            f"{q / b:,.2f}" if (q is not None and b) else "",
+            f"{s / b:,.0f}" if (s is not None and b) else "",
+            f"{s / q:,.0f}" if (s is not None and q) else "",
+            f"{b / f_ * 100:,.1f}" if (b is not None and f_) else ""]
 
     # ★ The KPI grid needs bills, quantity and footfall, which the night fill
     # carries for South and not (yet) for East. Rather than print 42 rows of
