@@ -59,7 +59,7 @@ from PIL import Image, ImageDraw
 from imaging import _LOCK
 import portfolio_pdf as PP
 from portfolio_pdf import (_ft, _px, _fmt_in, _compose, save_pages, PAGE_PT_W,
-                           HDR_BG, TOTAL_BG, NEG_INK, GRID, INK, WHITE)
+                           HDR_BG, TOTAL_BG, NEG_INK, GRID, GREEN, INK, WHITE)
 
 FOOTER_RIGHT = "Peanuts Retail · Report T.D."
 
@@ -222,6 +222,18 @@ def _wrap_lines(d, text, font, avail):
     return lines or [""]
 
 
+def measure_for(header, rows, ncols, cap=None):
+    """Column widths for a set of rows, so several grids can share them."""
+    scratch = ImageDraw.Draw(Image.new("RGB", (1, 1)))
+    reg, _ = _ft(FONT_PX)
+    _, bold = _ft(FONT_PX)
+    _, hbold = _ft(HDR_FONT_PX)
+    w = _measure(scratch, header, rows, reg, bold, hbold, ncols)
+    if cap:
+        w = [min(x, c) if c else x for x, c in zip(w, cap)]
+    return w
+
+
 def _measure(d, header, rows, reg, bold, hbold, ncols):
     w = [0.0] * ncols
     for i, h in enumerate(header or []):
@@ -258,14 +270,22 @@ def _measure(d, header, rows, reg, bold, hbold, ncols):
     return w
 
 
-def _draw_grid(header, rows, *, title=None, hdr_h=None, landscape=True):
-    """rows: list of (cells, height). Returns a cropped image."""
+def _draw_grid(header, rows, *, title=None, hdr_h=None, landscape=True,
+               widths=None):
+    """rows: list of (cells, height). Returns a cropped image.
+
+    `widths` pins the column widths instead of measuring them off these rows,
+    so two tables of the same shape come out the SAME WIDTH — East & NE ran
+    wider than South simply because its store names are longer, and two tables
+    on one page that do not line up read as two documents.
+    """
     scratch = ImageDraw.Draw(Image.new("RGB", (1, 1)))
     reg, _ = _ft(FONT_PX)
     _, bold = _ft(FONT_PX)
     _, hbold = _ft(HDR_FONT_PX)
     ncols = sum(c["span"] for c in rows[0][0]) if rows else len(header or [])
-    widths = _measure(scratch, header, [r for r, _ in rows], reg, bold, hbold, ncols)
+    widths = (list(widths) if widths is not None else
+              _measure(scratch, header, [r for r, _ in rows], reg, bold, hbold, ncols))
     xs = [0]
     for w in widths:
         xs.append(xs[-1] + w)
@@ -1060,30 +1080,39 @@ def build_east_ltol(pf_df, asof, basis_label="") -> tuple[str, bytes]:
 # what the KPIs are computed FROM (ABS = qty/bills, ABV = sale/bills,
 # ASP = sale/qty, CONVERSION = bills/footfall), so they belong beside them,
 # where a reader can check the ratio against its own inputs.
-# ★ THREE SHAPES OF THE SAME SHEET (Manav, 13 Aug: East in the same format as
-# South, with a store sheet and a city sheet in one file).
-#   vfl    — South: every store is a VFL store, so the day's sale splits into
-#            MANYAVAR / MOHEY / TWAMEV, which is what the tab types.
-#   mixed  — East & NE: 42 open stores across 16 brands, only 13 of them VFL.
-#            The three brand-line columns would be blank for two stores in
-#            three, so they give way to one BRAND column beside the name.
-#   city   — the same money columns, grouped by Manav's own cluster map.
-def _sms_cols(mode):
-    head = {"vfl": [("STORE NAME", "l")],
+# ★ ONE REPORT FOR THE WHOLE ESTATE (Manav, 14 Aug). South and East used to be
+# two files; they are now one, every store in every city, grouped BY CITY with a
+# subtotal per city — so the city figures are read off the same table as the
+# stores rather than a second sheet repeating them.
+#
+# The brand-line split stays. Only the 8 VFL stores fill it, but they fill it
+# with real money (Grand Kamraj alone splits Manyavar 2.38 L / Mohey 1.59 L /
+# Twamev 42k), and BRAND now names the format for all 50, which is what the
+# other 42 need.
+#
+# ★ DAY ACHIVED MOVED TO THE KPI TABLE, to the right of CONVERSION (Manav,
+# 14 Aug), so the money table ends on what was sold and the KPI table ends on
+# what that came to.
+def _sms_cols(mode="all"):
+    head = {"all": [("CITY", "l"), ("LOCATION", "l"), ("BRAND", "l")],
+            "vfl": [("STORE NAME", "l")],
             "mixed": [("STORE NAME", "l"), ("BRAND", "l")],
             "city": [("CITY", "l")]}[mode]
     money = [("MTD TARGET", "r"), ("MTD ACHIVED", "r"), ("MTD ACHIVED %", "r"),
-             ("YTD TARGET", "r"), ("YTD ACHIVED FROM {TK}", "r"),
+             ("YTD TARGET", "r"), ("YTD ACHIVED", "r"),
              ("YTD ACHIVED %", "r"), ("DAY TARGET", "r"),
              ("TOTAL SYSTEM SALE", "r")]
     split = [("MANYAVAR SYSTEM SALE", "r"), ("MOHEY SYSTEM SALE", "r"),
-             ("TWAMEV SYSTEM SALE", "r")] if mode == "vfl" else []
-    return head + money + split + [("MANUAL SALE", "r"), ("DAY ACHIVED", "r")]
+             ("TWAMEV SYSTEM SALE", "r")] if mode in ("vfl", "all") else []
+    return head + money + split + [("MANUAL SALE", "r")]
 
 
-SMS_COLS = _sms_cols("vfl")          # South's, kept under its old name
+SMS_COLS = _sms_cols("all")
+# DAY ACHIVED closes the KPI row: bills, units and footfall, the four rates they
+# make, and then the day's takings the rates describe.
 KPI_COLS = [("BILL", "r"), ("QTY", "r"), ("FOOTFALL", "r"),
-            ("ABS", "r"), ("ABV", "r"), ("ASP", "r"), ("CONVERSION", "r")]
+            ("ABS", "r"), ("ABV", "r"), ("ASP", "r"), ("CONVERSION", "r"),
+            ("DAY ACHIVED", "r")]
 
 
 def _ordinal(n: int) -> str:
@@ -1105,13 +1134,14 @@ def _line_bucket(name: str) -> str:
     return "other"
 
 
-def south_night_sms(pf_df, region="South", targets=None) -> dict:
-    """The night SMS for one region, as of the night fill's own day.
+def south_night_sms(pf_df, region=None, targets=None) -> dict:
+    """The night SMS, as of the night fill's own day.
 
-    Region-generic despite the name (South was the first). A region whose stores
-    are not all VFL reports a BRAND column in place of the brand-line split, and
-    a region spanning more than one of Manav's clusters also gets a city sheet —
-    both decided from the data, so a third region needs no code.
+    `region=None` (the default since 14 Aug) reports the WHOLE estate in one
+    sheet, grouped by city. Passing a region still scopes it, which is what the
+    tests and any one-region call want, but the report Manav sends is the merged
+    one — South and East were two files saying the same things about different
+    halves of the same night.
     """
     import night_fill
     import portfolio_loader as PL
@@ -1128,7 +1158,7 @@ def south_night_sms(pf_df, region="South", targets=None) -> dict:
 
     master = PL.store_master().dropna(subset=["code"]).copy()
     master["code"] = master["code"].astype(int)
-    south = master[master["region"] == region]
+    south = master if region is None else master[master["region"] == region]
     # A closed store is not a store that took nothing tonight. East carries
     # three; South none, which is why this never showed before.
     shut = L.closed_map()
@@ -1136,23 +1166,46 @@ def south_night_sms(pf_df, region="South", targets=None) -> dict:
         lambda c: c in shut and pd.to_datetime(shut[c]) <= day)]
     codes = sorted(south["code"])
     loc = dict(zip(south["code"], south["location"]))
+    region_of = dict(zip(south["code"], south["region"]))
     brand_of = dict(zip(south["code"], south.get("brand", pd.Series(dtype=str))))
     city_of = dict(zip(south["code"], south["city"]))
-    tk = pd.to_datetime(south["takeover_date"]).min()
     fy = day.year if day.month >= 4 else day.year - 1
-    ytd_from = max(pd.Timestamp(fy, 4, 1), tk) if pd.notna(tk) else pd.Timestamp(fy, 4, 1)
+    fy_start = pd.Timestamp(fy, 4, 1)
     mtd_from = day.replace(day=1)
+    # ★ EACH STORE KEEPS ITS OWN YEAR START. One anchor for the region worked
+    # while the report was one region: South ran from its 19 April takeover,
+    # East from 1 April. Merged, the earliest takeover would have restated
+    # South's year from 1 April and quietly added a fortnight it did not trade
+    # under us. Takeover-anchored is what every other figure in this pack is.
+    tk_of = {int(c): pd.to_datetime(t_, errors="coerce")
+             for c, t_ in zip(south["code"], south["takeover_date"])}
+    ytd_from_of = {c: (max(fy_start, tk) if pd.notna(tk) else fy_start)
+                   for c, tk in tk_of.items()}
+    anchors = sorted({d for d in ytd_from_of.values()})
 
-    p = pf_df[pf_df["region"] == region].copy()
+    p = pf_df if region is None else pf_df[pf_df["region"] == region]
+    p = p.copy()
     p["code"] = pd.to_numeric(p["code"], errors="coerce").astype("Int64")
     mtd = (p[(p["date"] >= mtd_from) & (p["date"] <= day)]
            .groupby("code")["sales"].sum())
-    ytd = (p[(p["date"] >= ytd_from) & (p["date"] <= day)]
-           .groupby("code")["sales"].sum())
+    _ytd_rows = p[(p["date"] <= day)]
+    _from = _ytd_rows["code"].map(lambda c: ytd_from_of.get(int(c), fy_start)
+                                  if pd.notna(c) else fy_start)
+    ytd = _ytd_rows[_ytd_rows["date"] >= _from].groupby("code")["sales"].sum()
+    ytd_from = min(anchors) if anchors else fy_start
 
     t = t[t["code"].isin(codes)].copy()
     t["bucket"] = t["line"].map(_line_bucket)
-    g = lambda c, b: float(t[(t["code"] == c) & (t["bucket"] == b)]["value"].sum())
+    def g(c, b):
+        """A brand line's share of the store's night, or None for a store that
+        has no brand lines. The tab splits VFL stores by line and gives every
+        other store a single row, so a Turtle or Colorplus store has no Mohey to
+        report — and a zero there would say it sold none, not that the question
+        does not apply."""
+        mine = t[t["code"] == c]
+        if not mine["bucket"].isin(("manyavar", "mohey", "twamev")).any():
+            return None
+        return float(mine[mine["bucket"] == b]["value"].sum())
 
     def col(c, k):
         """A per-store extra, or None when nothing was typed for it.
@@ -1215,6 +1268,7 @@ def south_night_sms(pf_df, region="South", targets=None) -> dict:
         rows.append({
             "code": c, "name": str(loc.get(c, c)).upper(),
             "brand": str(brand_of.get(c, "") or "").upper(),
+            "region": str(region_of.get(c, "") or ""),
             "city": _cluster(c),
             "mtd_target": tgt.get("mtd"), "mtd": m_ach,
             "ytd_target": tgt.get("ytd"), "ytd": y_ach,
@@ -1226,10 +1280,14 @@ def south_night_sms(pf_df, region="South", targets=None) -> dict:
             "bills": col(c, "bills"), "qty": col(c, "qty"),
             "footfall": col(c, "footfall"),
         })
+    # The whole estate gets the merged shape — a CITY column in front, BRAND for
+    # every store, and the VFL brand-line split kept for the eight that fill it.
+    # A single region keeps the shape it had, which is what the tests exercise.
     vfl = bool(south["is_vfl"].all()) if "is_vfl" in south.columns else False
-    return {"day": day, "region": region, "rows": rows,
+    mode = "all" if region is None else ("vfl" if vfl else "mixed")
+    return {"day": day, "region": region or "Peanuts Retail", "rows": rows,
             "ytd_from": ytd_from, "has_targets": bool(targets),
-            "mode": "vfl" if vfl else "mixed",
+            "mode": mode,
             "filed": sum(1 for r in rows if r["system"] is not None)}
 
 
@@ -1293,93 +1351,272 @@ def _sms_totals(rows):
     return out
 
 
+# ★ THE ROW'S INK CARRIES THE VERDICT (Manav, 14 Aug). Green for a store that
+# made its day, red for one that took less than its region's floor — the whole
+# line, not a fill, so the tables keep their white ground and the colour reads
+# as a judgement on the store rather than a highlight on the paper.
+#
+# The floors are his: Rs 10,000 a day in East & NE, Rs 50,000 in South, where a
+# single store is worth several of the smaller ones.
+DAY_FLOOR = {"East & NE": 10_000, "South": 50_000}
+# A location total sits between a store and its city, so it is shaded one step
+# lighter than the city's band rather than competing with it.
+LOC_BG = (237, 246, 249)
+
+
+def _cells(values, aligns, fill, bold, ink=INK):
+    """Row cells, where a value may be `(text, span)` to merge columns."""
+    out, i = [], 0
+    for v in values:
+        text, span = v if isinstance(v, tuple) else (v, 1)
+        out.append(cell(text, align=aligns[min(i, len(aligns) - 1)], fill=fill,
+                        bold=bold, span=span, ink=ink))
+        i += span
+    return out
+
+
+def _made_target(r) -> bool:
+    """Beat a target that exists. A store nobody set one for is never green:
+    that is not the same as missing it."""
+    t, a = r.get("day_target"), r.get("achieved")
+    return bool(t) and a is not None and a >= t
+
+
+def _below_floor(r) -> bool:
+    """Took less than its region asks of a store in a day.
+
+    A store with NO figure is not below the floor — it has not filed, which is
+    a different thing, and red would accuse it of a bad night it may not have
+    had.
+    """
+    a = r.get("achieved")
+    floor = DAY_FLOOR.get(str(r.get("region", "")))
+    return floor is not None and a is not None and a < floor
+
+
+def _row_ink(r):
+    """Red beats green: a store can make a small target and still have taken
+    less than the floor, and the floor is the more urgent fact."""
+    if _below_floor(r):
+        return NEG_INK
+    if _made_target(r):
+        return GREEN
+    return INK
+
+
+def _by_city(rows):
+    """Store rows arranged city by city, each city closing with its subtotal.
+
+    Cities lead with the biggest day, which is how the city sheet ordered them
+    before it was folded into this one; a store with no day figure still sits
+    under its city, because the month and the year to date are its own.
+    """
+    order = {}
+    for c in _city_rows(rows):
+        order[c["name"]] = c
+    out = []
+    # A subtotal that repeats the single row above it is noise, so each level
+    # earns its row: a location totals only when it holds more than one store
+    # (City Centre carries ten brands, Malda carries one), and a city totals
+    # only when it holds more than one store. A region of one city — South is
+    # all Bengaluru — leaves the city total to the grand total below it.
+    one_city = len(order) == 1
+    for city, agg in order.items():
+        members = [r for r in rows if r["city"] == city]
+        locs = {}
+        for r in members:
+            locs.setdefault(str(r["name"]), []).append(r)
+        for loc in sorted(locs, key=lambda l: -sum(x["system"] or 0 for x in locs[l])):
+            part = sorted(locs[loc], key=lambda r: -(r["system"] or 0))
+            out.extend(("store", r) for r in part)
+            if len(part) > 1:
+                lt = _sms_totals(part)
+                lt["_kpi"] = _kpi_agg(part)
+                out.append(("loctotal", {**lt, "name": f"{loc} TOTAL",
+                                         "city": city, "brand": ""}))
+        # ★ EVERY CITY CLOSES WITH ITS OWN TOTAL, even a city of one store
+        # (Manav, 14 Aug: "agartala and shilchar are their own locations, no
+        # relation to gangtok"). Suppressing the single-store totals left
+        # Agartala and Silchar as bare rows above Gangtok's, and the GANGTOK
+        # TOTAL beneath them read as if it closed all three. A row that repeats
+        # the one above it is a small price for a boundary that cannot be
+        # misread. A region of ONE city still leaves it to the grand total.
+        if not one_city:
+            out.append(("subtotal", {**agg, "name": f"{city} TOTAL"}))
+    return out
+
+
+# The regions stay apart (Manav, 14 Aug): "north and east will be a separate
+# table and south will be a separate table". East & NE leads because it is the
+# larger half; each region carries its own grand total, and there is no combined
+# row — the point of splitting them is that they are not added up here.
+_REGION_ORDER = ("East & NE", "South")
+
+
+def _regions_in(rows):
+    seen = [r["region"] for r in rows if r.get("region")]
+    ordered = [x for x in _REGION_ORDER if x in seen]
+    return ordered + sorted({x for x in seen if x not in _REGION_ORDER})
+
+
 def render_night_sms(sheet, by="store") -> Image.Image:
-    """One sheet — `by="store"` or `by="city"` — as the table plus its KPI grid."""
+    """The night's sheets: a money table per region, then a KPI table per
+    region, each running city by city with a subtotal under every city."""
     day = sheet["day"]
-    mode = "city" if by == "city" else sheet.get("mode", "vfl")
-    rows = _city_rows(sheet["rows"]) if by == "city" else sheet["rows"]
+    mode = "city" if by == "city" else sheet.get("mode", "all")
     cols = _sms_cols(mode)
     tk = f"{_ordinal(sheet['ytd_from'].day)} {sheet['ytd_from']:%b}".upper()
     header = [h.replace("{TK}", tk) for h, _ in cols]
     aligns = [a for _, a in cols]
-    T = _sms_totals(rows)
-    # On the city sheet `rows` are themselves aggregates, so pairing their
-    # columns repeats the very error `_kpi_agg` exists to prevent — Siliguri's
-    # 76 bills would pair with the 20 footfall of the four stores that recorded
-    # one. The stores are the atomic truth on both sheets.
-    T["_kpi"] = _kpi_agg(sheet["rows"])
-    region = sheet["region"].upper()
+    regions = _regions_in(sheet["rows"]) or [sheet["region"]]
 
     def pct(a, b):
         return f"{a / b * 100:,.1f}" if (a and b) else ""
 
-    def line(r, total=False):
-        head = ["G. TOTAL"] if total else [r["name"]]
-        if mode == "mixed":
-            head.append("" if total else r.get("brand", ""))
+    def line(r, kind):
+        """A row of the money table. `DAY ACHIVED` is not here any more — it
+        closes the KPI table instead (Manav, 14 Aug)."""
+        if mode == "all":
+            if kind == "grand":                 # the totals row carries no name
+                head = [("G. TOTAL", 3)]
+            elif kind == "subtotal":
+                head = [(r["name"], 3)]
+            elif kind == "loctotal":
+                # The label spans LOCATION and BRAND — a location total has no
+                # brand of its own, and "CITY CENTRE TOTAL" needs the room.
+                head = [r["city"], (r["name"], 2)]
+            else:
+                # The city repeats on every row rather than printing once per
+                # group: Manav's standing preference on these sheets, and it
+                # survives a reader copying rows out of the middle.
+                head = [r["city"], r["name"], r.get("brand", "")]
+        elif mode == "mixed":
+            head = ["G. TOTAL", ""] if kind == "grand" else [r["name"], r.get("brand", "")]
+        else:
+            head = ["G. TOTAL"] if kind == "grand" else [r["name"]]
         split = ([_money(r["manyavar"]), _money(r["mohey"]), _money(r["twamev"])]
-                 if mode == "vfl" else [])
+                 if mode in ("vfl", "all") else [])
         return head + [
             _money(r["mtd_target"]), _money(r["mtd"]),
             pct(r["mtd"], r["mtd_target"]), _money(r["ytd_target"]),
             _money(r["ytd"]), pct(r["ytd"], r["ytd_target"]),
             _money(r["day_target"]), _money(r["system"])] + split + [
-            _money(r["manual"]), _money(r["achieved"])]
-
-    grid = [([cell(v, align=aligns[i]) for i, v in enumerate(line(r))], ROW_H)
-            for r in rows]
-    grid.append(([cell(v, align=aligns[i], fill=TOTAL_BG, bold=True)
-                  for i, v in enumerate(line(T, total=True))], ROW_H))
-    what = "CITY WISE" if by == "city" else (
-        "ALL MANYAVAR STORE" if mode == "vfl" else "ALL STORE")
-    main = _draw_grid(header, grid,
-                      title=f"{region} — {what} TOTAL SMS  ·  {day:%d %b %Y}")
+            _money(r["manual"])]
 
     def kpis(r):
-        """The three counts, then the four ratios drawn from them.
+        """The three counts, the four rates they make, then the day's takings.
 
-        An aggregate row carries `_kpi`: its ratios computed store by store
+        An aggregate row carries `_kpi`: its rates computed store by store
         rather than off its own summed columns — see `_kpi_agg`.
         """
-        b, q, f_, s = r["bills"], r["qty"], r["footfall"], r["system"]
+        b, q, f_, s_ = r["bills"], r["qty"], r["footfall"], r["system"]
         counts = [_money(b), _money(q), _money(f_)]
         k = r.get("_kpi")
         if k:
             def rat(key, mult=1.0, dp=2):
                 n, d = k[key]
                 return f"{n / d * mult:,.{dp}f}" if (n is not None and d) else ""
-            return counts + [rat("abs"), rat("abv", dp=0), rat("asp", dp=0),
-                             rat("conv", 100.0, 1)]
-        return counts + [
-            f"{q / b:,.2f}" if (q is not None and b) else "",
-            f"{s / b:,.0f}" if (s is not None and b) else "",
-            f"{s / q:,.0f}" if (s is not None and q) else "",
-            f"{b / f_ * 100:,.1f}" if (b is not None and f_) else ""]
+            rates = [rat("abs"), rat("abv", dp=0), rat("asp", dp=0),
+                     rat("conv", 100.0, 1)]
+        else:
+            rates = [
+                f"{q / b:,.2f}" if (q is not None and b) else "",
+                f"{s_ / b:,.0f}" if (s_ is not None and b) else "",
+                f"{s_ / q:,.0f}" if (s_ is not None and q) else "",
+                f"{b / f_ * 100:,.1f}" if (b is not None and f_) else ""]
+        return counts + rates + [_money(r["achieved"])]
 
-    # ★ The KPI grid needs bills, quantity and footfall, which the night fill
-    # carries for South and not (yet) for East. Rather than print 42 rows of
-    # blanks — which reads as a broken report — say which columns are empty and
-    # for how many stores. It appears the day they are typed, with no change
-    # here, exactly as the target columns did.
-    if not any(r["bills"] or r["qty"] or r["footfall"] for r in rows):
-        note = _draw_grid(
-            [],
-            [([cell(f"No bill, quantity or footfall typed in the night fill for "
-                    f"{sheet['region']} — this table fills itself the day those "
-                    f"three columns are entered, as the target columns did.",
-                    align="l")], ROW_H)],
-            title=f"{region} — DAILY KPI REPORT")
-        return _stack([main, note], _px(28))
+    def money_rows(rows):
+        """The grid's cells, so widths can be measured across both regions
+        before either is drawn."""
+        body = _by_city(rows)
+        T = _sms_totals(rows)
+        T["_kpi"] = _kpi_agg(rows)
+        grid = []
+        for kind, r in body:
+            fill = (HDR_BG if kind == "subtotal"
+                    else LOC_BG if kind == "loctotal" else None)
+            grid.append((_cells(line(r, kind), aligns, fill,
+                                kind in ("subtotal", "loctotal"),
+                                ink=_row_ink(r) if kind == "store" else INK),
+                         ROW_H))
+        grid.append((_cells(line(T, "grand"), aligns, TOTAL_BG, True), ROW_H))
+        return grid
 
-    first = {"city": "CITY", "mixed": "STORE NAME", "vfl": "STORE NAME"}[mode]
-    kg = [([cell(r["name"], align="l")]
-           + [cell(v, align="r") for v in kpis(r)], ROW_H) for r in rows]
-    kg.append(([cell("G. TOTAL", align="l", fill=TOTAL_BG, bold=True)]
-               + [cell(v, align="r", fill=TOTAL_BG, bold=True) for v in kpis(T)],
-               ROW_H))
-    kpi = _draw_grid([first] + [h for h, _ in KPI_COLS], kg,
-                     title=f"{region} — DAILY KPI REPORT")
-    return _stack([main, kpi], _px(28))
+    def kpi_rows(rows):
+        """The same shape, plus BRAND after the location (Manav, 14 Aug)."""
+        body = _by_city(rows)
+        T = _sms_totals(rows)
+        T["_kpi"] = _kpi_agg(rows)
+        if not any(r["bills"] or r["qty"] or r["footfall"] for r in rows):
+            return None
+        kg = []
+        for kind, r in body:
+            fill = (HDR_BG if kind == "subtotal"
+                    else LOC_BG if kind == "loctotal" else None)
+            bold = kind in ("subtotal", "loctotal")
+            ink = INK if kind != "store" else _row_ink(r)
+            head = ([(r["name"], 3)] if kind == "subtotal"
+                    else [r["city"], (r["name"], 2)] if kind == "loctotal"
+                    else [r["city"], r["name"], r.get("brand", "")])
+            kg.append((_cells(head, ["l"] * 3, fill, bold, ink=ink)
+                       + [cell(v, align="r", fill=fill, bold=bold, ink=ink)
+                          for v in kpis(r)], ROW_H))
+        kg.append((_cells([("G. TOTAL", 3)], ["l"] * 3, TOTAL_BG, True)
+                   + [cell(v, align="r", fill=TOTAL_BG, bold=True) for v in kpis(T)],
+                   ROW_H))
+        return kg
+
+    by_region = {n: [r for r in sheet["rows"] if r.get("region") == n]
+                 for n in regions}
+    if len(regions) == 1 and not by_region.get(regions[0]):
+        by_region = {regions[0]: sheet["rows"]}
+    by_region = {n: rs for n, rs in by_region.items() if rs}
+
+    kh = ["CITY", "LOCATION", "BRAND"] + [h for h, _ in KPI_COLS]
+    m_rows = {n: money_rows(rs) for n, rs in by_region.items()}
+    k_rows = {n: kpi_rows(rs) for n, rs in by_region.items()}
+
+    # ★ ONE WIDTH FOR EVERY TABLE (Manav, 14 Aug), measured across BOTH regions
+    # so they line up down the page and the wider one no longer runs off it.
+    # No caps: with the landscape stretch off (below), every column already
+    # gets the MINIMUM width its longest value needs and no more, which is the
+    # narrow shape Manav asked for. Capping on top of that only clipped
+    # "BENGALURU" and "COMMERCIAL STREET" into ellipses.
+    m_w = measure_for(header, [r for grid in m_rows.values() for r, _ in grid],
+                      len(header))
+    k_w = measure_for(kh, [r for grid in k_rows.values() if grid
+                           for r, _ in grid], len(kh))
+    # The KPI table carries four fewer columns, so its minimum width is narrower
+    # than the money table's. Widen it to match rather than leaving the page with
+    # two right edges — every table then starts and ends on the same lines.
+    if sum(k_w) < sum(m_w):
+        k = sum(m_w) / sum(k_w)
+        k_w = [int(round(x * k)) for x in k_w]
+
+    # ★ `landscape=False` matters here. The grid normally hands surplus width
+    # back to the columns until the table is landscape-shaped, and that surplus
+    # is a function of HEIGHT — so East & NE's 60 rows stretched it half again
+    # as wide as South's 8, which is exactly the mismatch Manav saw. Pinned
+    # widths with the stretch off give every table the same, narrower shape.
+    parts = []
+    for n in by_region:                        # east first, then south
+        parts.append(_draw_grid(header, m_rows[n], widths=m_w, landscape=False,
+                                title=f"{n.upper()} — ALL STORE TOTAL SMS  ·  "
+                                      f"{day:%d %b %Y}"))
+        if k_rows[n]:
+            parts.append(_draw_grid(kh, k_rows[n], widths=k_w, landscape=False,
+                                    title=f"{n.upper()} — DAILY KPI REPORT"))
+        else:
+            parts.append(_draw_grid(
+                [],
+                [([cell(f"No bill, quantity or footfall typed in the night fill "
+                        f"for {n} — this table fills itself the day those three "
+                        f"columns are entered, as the target columns did.",
+                        align="l")], ROW_H)],
+                title=f"{n.upper()} — DAILY KPI REPORT"))
+    return _stack(parts, _px(30))
+
 
 
 def _stack(images, gap):
@@ -1394,29 +1631,24 @@ def _stack(images, gap):
     return out
 
 
-def build_night_sms(pf_df, region="South", targets=None,
+def build_night_sms(pf_df, region=None, targets=None,
                     basis_label="") -> tuple[str, bytes]:
-    """One PDF for the region: the store sheet, and the city sheet behind it.
+    """One comprehensive PDF: every store, in every city, in one sheet.
 
-    The city sheet appears only where there is more than one cluster to group
-    into — East has fifteen, South is all Bengaluru and would print its own
-    total twice.
+    South and East were two files until 14 Aug. They asked the same questions of
+    the same night, and anyone wanting the estate had to add two grand totals
+    together. Now the money table runs city by city with a subtotal under each
+    and the KPI table repeats that shape — so a city figure is read off the same
+    page as the stores that make it, and there is no separate city sheet to keep
+    in step.
     """
     with _LOCK:
         sheet = south_night_sms(pf_df, region=region, targets=targets)
         day = sheet["day"]
-        pages = [("store", "Store wise")]
-        if len({r["city"] for r in sheet["rows"]}) > 1:
-            pages.append(("city", "City wise"))
-        # The sheet name appears only when there is more than one to tell apart.
-        contents = [
-            (f"{region} · Night sale SMS · "
-             + (f"{what} · " if len(pages) > 1 else "")
-             + f"{day:%d %b %Y}",
-             render_night_sms(sheet, by=by))
-            for by, what in pages
-        ]
+        contents = [(f"{sheet['region']} · Night sale SMS · {day:%d %b %Y}",
+                     render_night_sms(sheet))]
         pdf = _pdf_from(contents,
                         f"As of {day:%d %b %Y}"
                         + (f" · {basis_label}" if basis_label else ""))
-    return (f"{region.upper()} NIGHT SALE SMS {day:%d-%m-%Y}.pdf", pdf)
+    tag = "NIGHT SALE SMS" if region is None else f"{region.upper()} NIGHT SALE SMS"
+    return (f"{tag} {day:%d-%m-%Y}.pdf", pdf)

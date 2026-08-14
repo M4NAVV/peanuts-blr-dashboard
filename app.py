@@ -1050,25 +1050,22 @@ def render_portfolio():
             "mw_south": "South month-wise total sale  ·  25-26 vs 26-27",
             "mw_east": "East & NE month-wise total sale  ·  overall, then the "
                        "Mohey Manyavar stores",
-            "night_sms": "South night sale SMS  ·  tonight's figures + daily KPI",
-            "night_sms_east": "East & NE night sale SMS  ·  store wise, then "
-                              "city wise, in one file",
+            "night_sms": "Night sale SMS  ·  every store, city by city, with "
+                         "city subtotals + the daily KPI table",
         }
         chosen = [k for k, label in available.items()
                   if st.checkbox(label, value=True, key=f"td_{k}")]
-        if "night_sms" in chosen or "night_sms_east" in chosen:
+        if "night_sms" in chosen:
             st.caption("ℹ️ Night SMS: target columns are **blank until targets "
                        "exist**, and manual sale is blank until the night fill "
                        "has that column. Everything else is live.")
-        if "night_sms_east" in chosen:
-            # East is multi-brand, so the brand-line split South reports would
-            # be empty for two stores in three; and the counts behind the KPIs
-            # are only typed for South today.
-            st.caption("ℹ️ East SMS: **one BRAND column** in place of South's "
-                       "Manyavar/Mohey/Twamev split, and cities are **Manav's "
-                       "own cluster map** from the night fill. The KPI table "
-                       "fills itself once BILL, QTY and FOOTFALL are typed for "
-                       "East — today they are South-only.")
+            st.caption("ℹ️ One file for the whole estate: **city and location "
+                       "subtotals** in both tables, cities from the night "
+                       "fill's own CITY column, and the brand-line split kept "
+                       "for the VFL stores that fill it. Each store's year runs "
+                       "from its own takeover date. A store that made its day "
+                       "target prints **green**, one under its region's floor "
+                       "(Rs 10,000 East & NE, Rs 50,000 South) prints **red**.")
         if "east_ltol" in chosen:
             # Its like-to-like and new-store columns follow Manav's stated rules
             # (11-12 Aug), which the older workbook does not: it re-decides
@@ -1110,9 +1107,6 @@ def render_portfolio():
                         # Reads the night fill directly — it is the only source
                         # for the day's figures at the hour this goes out.
                         built.append(RTD.build_night_sms(pf_all, basis_label=basis))
-                    if "night_sms_east" in chosen:
-                        built.append(RTD.build_night_sms(
-                            pf_all, region="East & NE", basis_label=basis))
                     name, payload, mime = RTD.bundle(built)
                     st.session_state["td_out"] = (name, payload, mime)
                 except Exception as e:                    # surface, don't crash tab
