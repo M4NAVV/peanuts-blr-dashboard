@@ -23,36 +23,41 @@ for their own store should find it.
 
 ★ THE LIKE TO LIKE RULE (Manav, 9 Aug). The portfolio headline is computed two
 ways and both are printed. Total growth reads +115% because the eight South
-stores have no last year at all; like to like reads +2.4%, and the month reads
--2.0% against a total of +137%. A page that printed only the first number would
-be a misread waiting to happen, and the gap between the two is itself the
-finding.
+stores have no last year at all; like to like reads +1.7%, and the month +0.1%
+against a total of +138%. A page that printed only the first number would be a
+misread waiting to happen, and the gap between the two is itself the finding.
 
-★★ WHAT "COMPARABLE" MEANS — MANAV'S RULE, NOT A PROXY FOR IT (14 Aug).
-A store is like to like when it was ALREADY TRADING BEFORE LAST YEAR BEGAN, i.e.
-its DOO is earlier than the 1 April that opened the prior fiscal year. That is
-Manav's own rule of 11 Aug — *"store opens mid-year: NA till 31-03-2027, PY from
-01-04-2027"* — and it is the same test the Growth-Degrowth sheet applies when it
-tags a store OLD, so page 1's like to like tile and page 5's OLD subtotal are the
-SAME set by construction and print the SAME percentage.
+★★ LIKE TO LIKE IS A WINDOW PER STORE, NOT A LIST OF STORES (Manav, 14 Aug).
+His rule, verbatim: *"L2L comparison is CONSIDERED only from the date the store
+has data last year (eg Silchar L2L starts only from the date sales are captured
+in LY). Similarly for closed stores L2L stops from the day it closes this year.
+Same will apply to both the parts, VFL and overall."*
 
-  This replaces a weaker test: `prior > 0`, "traded at all last year". Silchar
-  (opened 1 Jun 2025) passed it, so a store whose last year covered 2.5 months of
-  the window was compared against 4.5 months of this one. Its +113.8% was mostly
-  two extra months of existing. That one store put the portfolio tile at +5.0%
-  where the GD sheet said +2.4%, and Dibrugarh escaped only because the window
-  starts before it opened — luck, not a guard.
+  So a store is not in or out — it contributes the SPAN over which it has both
+  years, and the same span is applied to each. Silchar, which opened on 1 June
+  last year, counts from June in both years instead of counting wholly (which
+  compared 4.5 months against 2.5 and read +113.8%) or not at all. Roodraksh,
+  shut on 31 July, counts to 31 July in both. `l2l_bounds` computes the spans,
+  `l2l_frames` cuts a pair of window frames to them, `l2l_store_table` sums per
+  store; the tiles, the trajectory, breadth, brands and movers all read those.
 
-  A CLOSED store STAYS in the set. Manav's closure rule is "out of last year from
-  the month AFTER it closed", and `portfolio_loader._window_frames` already caps
-  a shut store's last year to its closure month — store 2 is compared April
-  against April. Dropping it as well would apply that correction twice. The VFL
-  side is the exception and says why at its own `lfl`.
+  ★ THE PROPERTY THAT MAKES IT THE RIGHT RULE: every rupee of LAST year is still
+  compared — like to like's last-year total comes out at the whole estate's
+  last-year turnover to the rupee. Only THIS year's sales with no counterpart are
+  held out. Both earlier definitions threw away real last-year trade.
 
-★ ONE LIKE TO LIKE SET, DEFINED ONCE. An early draft mixed a 44-store set (from
-the YTD window) with a 41-store set (from the MTD window) and printed -7.3% and
--10.1% for the same month — closed stores' last-year sales were leaking into one
-of them. `_lfl_codes` is now the single definition every figure on the page uses.
+  ⚠ IT THEREFORE NO LONGER EQUALS THE GD SHEET'S OLD SUBTOTAL, and should not.
+  That sheet classifies each store NEW or OLD and totals whole stores; this asks
+  a different and better question. The two sat at +1.7% and +2.5% the day this
+  shipped. The stamp says which is which.
+
+★ ONE DEFINITION, BOTH FEEDS. An early draft mixed a 44-store set (from the YTD
+window) with a 41-store set (from the MTD window) and printed -7.3% and -10.1%
+for the same month. Portfolio and VFL now call the same three functions, keyed by
+code and by store label respectively — and because the spans are read from the
+DATA, neither needs a DOO column, which is what lets South be comparable on the
+VFL feed (where its previous operator's history lives) and not on the portfolio
+feed (where it does not) with no special case for either.
 
 ★ PART MONTHS ARE MARKED. August is eight days here. An unmarked short bar beside
 four full months reads as a collapse, so the current month is hatched and its day
@@ -234,29 +239,95 @@ def _closed_codes(pf, asof) -> set:
             if c in shut and pd.to_datetime(shut[c]) <= pd.Timestamp(asof)}
 
 
-def _comparable(doo, asof) -> bool:
-    """Was this store already trading before LAST year began? (Manav, 11 Aug.)
+def l2l_bounds(raw, key, amt, shut, asof):
+    """Each store's LIKE TO LIKE span, in THIS year's dates. (Manav, 14 Aug.)
 
-    Routed through the Growth-Degrowth sheet's OWN tag function so the two can
-    never diverge: `_newold_from_doo` returns a `…FY` tag for a store older than
-    the prior fiscal year, `…PY` for one that opened during it, `…NA` for one
-    that opened this year. Only `FY` is comparable. An unknown DOO is treated as
-    old, exactly as the sheet treats it.
+    His rule, verbatim: *"L2L comparison is CONSIDERED only from the date the
+    store has data last year (eg Silchar L2L starts only from the date sales are
+    captured in LY). Similarly for closed stores L2L stops from the day it closes
+    this year. Same will apply to both the parts, VFL and overall."*
+
+    So like to like is not a list of stores, it is a WINDOW PER STORE, and the
+    same window is applied to both years. A store that opened last June counts
+    from June in both; a store that shut in July counts up to July in both.
+    Nothing is thrown away wholesale — Silchar contributes the three months it
+    can be compared over instead of contributing all of them or none.
+
+    ★ THE PROPERTY THIS BUYS, AND IT IS THE POINT: EVERY RUPEE OF LAST YEAR IS
+    STILL COMPARED. Last year's like to like total comes out at the whole
+    estate's last-year turnover to the rupee (Rs 17.61 Cr today); only THIS
+    year's sales that have no counterpart are held out. The old rule dropped
+    both sides of a store and lost real last-year trade with it.
+
+    `start` is the store's first ACTUAL SALE mapped forward a year — "the date
+    sales are captured", his words, not the date a row appears. The difference is
+    one store today: Mani Square Colorplus is in the sheet from 1 Apr 2025 but at
+    zero for 36 days, first selling on 7 May. It is an old store, yet it has no
+    last-year April to compare this April against, and counting one is exactly
+    the distortion this rule exists to stop. Switch to first ROW here if that is
+    ever the wrong call.
+
+    Mapping forward a year also makes this self-correcting on either feed: a
+    store trading since 2012 has its first sale at the feed's own left edge, so
+    `start` lands on or before the window and clips nothing. South clips to
+    nothing in the portfolio feed (first sale = the takeover) and to the full
+    window in the VFL feed (which keeps the previous operator's history) —
+    without either loader knowing which feed it is.
     """
-    import portfolio_loader as PL
-    return str(PL._newold_from_doo(doo, pd.Timestamp(asof))).endswith("FY")
+    first = raw[raw[amt] > 0].groupby(key)["date"].min()
+    asof = pd.Timestamp(asof)
+    start, end = {}, {}
+    for k, f in first.items():
+        if pd.isna(f):
+            continue
+        start[k] = pd.Timestamp(f) + pd.DateOffset(years=1)
+        cl = pd.to_datetime(shut.get(k), errors="coerce")
+        end[k] = min(asof, cl) if pd.notna(cl) else asof
+    return start, end
 
 
-def _lfl_codes(pf, asof) -> set:
-    """The one like to like set: every store the GD sheet tags OLD.
+def l2l_frames(cur, pri, bounds, key):
+    """(current, prior) restricted to each store's like to like span.
 
-    Not "traded last year" — trading for PART of last year is precisely what
-    makes a store incomparable. See the rule at the top of this module.
+    The prior frame is shifted by exactly a year, so both sides cover the same
+    calendar span for that store and the comparison is symmetric by
+    construction rather than by two separate filters agreeing.
     """
-    import portfolio_loader as PL
-    attrs = PL.gd_store_attrs_dyn(pf, asof)
-    return {int(r["code"]) for _, r in attrs.iterrows()
-            if _comparable(r["doo"], asof)}
+    start, end = bounds
+    yr = pd.DateOffset(years=1)
+
+    def cut(fr, shift):
+        if fr.empty:
+            return fr
+        s = fr[key].map(start)
+        e = fr[key].map(end)
+        if shift:
+            s, e = s - yr, e - yr
+        return fr[s.notna() & (fr["date"] >= s) & (fr["date"] <= e)]
+
+    return cut(cur, False), cut(pri, True)
+
+
+def l2l_store_table(cur, pri, bounds, ident, key, amt):
+    """Per-store like to like TY/LY, carrying `ident`'s identity columns.
+
+    Stores with no comparable span at all (Dibrugarh: its last year begins after
+    this window ends) fall out here, which is how "no last year" states itself
+    rather than arriving as a zero.
+    """
+    c, p = l2l_frames(cur, pri, bounds, key)
+    ty = c.groupby(key)[amt].sum().rename("cur")
+    ly = p.groupby(key)[amt].sum().rename("prior")
+    t = pd.concat([ty, ly], axis=1).fillna(0.0).reset_index()
+    t = t[t["prior"] > 0]                       # nothing to be like to like with
+    keep = [c for c in ident.columns if c not in ("cur", "prior",
+                                                  "growth", "shortfall")]
+    out = ident[keep].merge(t, on=key, how="inner")
+    out["shortfall"] = out["cur"] - out["prior"]
+    out["growth"] = out.apply(
+        lambda r: ((r["cur"] - r["prior"]) / r["prior"] * 100)
+        if r["prior"] else None, axis=1)
+    return out
 
 
 def _monthly(cur, pri, asof, value_col, month_col="date", n=TRAJ_MONTHS):
@@ -299,11 +370,19 @@ def portfolio_metrics(pf, asof, basis_label="", region=None) -> dict:
     if region:
         pf = pf[pf["region"] == region]
     closed = _closed_codes(pf, asof)
-    lfl = _lfl_codes(pf, asof)
 
     y = PL.store_yoy(pf, kind="YTD", asof=asof)
     m = PL.store_yoy(pf, kind="MTD", asof=asof)
-    yl, ml = y[y["code"].isin(lfl)], m[m["code"].isin(lfl)]
+
+    # LIKE TO LIKE = each store over the span it has BOTH years (see `l2l_bounds`
+    # for Manav's rule). The windows come off the report's own frames, so the
+    # anchoring and closure handling below them is untouched.
+    bounds = l2l_bounds(pf, "code", "sales", PL.closed_map(), asof)
+    ycur, ypri = PL._window_frames(pf, "YTD", asof)
+    mcur, mpri = PL._window_frames(pf, "MTD", asof)
+    yl = l2l_store_table(ycur, ypri, bounds, y, "code", "sales")
+    ml = l2l_store_table(mcur, mpri, bounds, m, "code", "sales")
+    lfl = set(int(c) for c in yl["code"])
 
     ytd_all, ytd_ly = y["cur"].sum(), y["prior"].sum()
     mtd_all, mtd_ly = m["cur"].sum(), m["prior"].sum()
@@ -314,14 +393,16 @@ def portfolio_metrics(pf, asof, basis_label="", region=None) -> dict:
     # Same WEEKDAY is the honest comparison — a single date a year ago lands on a
     # different day of the week and its year-on-year is mostly noise.
     #
-    # A CLOSED store is dropped from the day pair even though it stays in the
-    # year and month figures. Those come off `_window_frames`, which caps its
-    # last year at its closure month; these read the raw frame, where a store
-    # shut in July still has a live sales row for 15 Aug LAST year against a
-    # guaranteed zero today. Same rule — "out of last year from the month after
-    # it closed" — applied where the windows cannot apply it.
+    # A store counts on the day only if TODAY falls inside its own like to like
+    # span — which is the same rule as everywhere else on this page, asked of one
+    # date. It drops a store shut in July (its span ended there, and it would
+    # otherwise put a live 15-Aug LAST year against a guaranteed zero today) and
+    # it keeps Silchar, whose span opened in June and covers today on both sides.
+    _b_start, _b_end = bounds
+    _day_set = {c for c in lfl
+                if _b_start.get(c) is not None and _b_start[c] <= asof <= _b_end[c]}
     day_all = pf[pf["date"] == asof]["sales"].sum()
-    dl = pf[pf["code"].isin(lfl - closed)]
+    dl = pf[pf["code"].isin(_day_set)]
     d_ty = dl[dl["date"] == asof]["sales"].sum()
     d_date = dl[dl["date"] == asof - pd.DateOffset(years=1)]["sales"].sum()
     d_wday = dl[dl["date"] == asof - pd.Timedelta(days=364)]["sales"].sum()
@@ -349,12 +430,16 @@ def portfolio_metrics(pf, asof, basis_label="", region=None) -> dict:
     # looks broken rather than one that says "no comparison exists". Fall back to
     # every store: the current-year shape is real and worth seeing, and the
     # absent last-year bars state the situation themselves.
-    cur, pri = PL._window_frames(pf, "YTD", asof)
-    _tset = lfl if lfl else set(y["code"])
-    traj = _monthly(cur[cur["code"].isin(_tset)], pri[pri["code"].isin(_tset)],
-                    asof, "sales")
-    traj_note = ("Like to like, Rs crore by month" if lfl
-                 else "Overall, Rs crore by month — no last year to compare")
+    # Each bar is built from the same per-store spans, so a store joins the
+    # months it is comparable in and sits out the ones it is not: Silchar is
+    # absent from April and May and present from June, on both sides of the bar.
+    if lfl:
+        _c, _p = l2l_frames(ycur, ypri, bounds, "code")
+        traj_note = "Like to like, Rs crore by month"
+    else:
+        _c, _p = ycur, ypri
+        traj_note = "Overall, Rs crore by month — no last year to compare"
+    traj = _monthly(_c, _p, asof, "sales")
 
     tot = y["cur"].sum()
     top5 = y.nlargest(5, "cur")
@@ -427,7 +512,7 @@ def portfolio_metrics(pf, asof, basis_label="", region=None) -> dict:
             f"As of {asof:%d %b %Y}",
             basis_label or f"Live to {asof:%d %b %Y}",
             f"{len(y)} trading  |  {len(closed)} closed  |  {n_open} open",
-            f"Like to like = {len(lfl)} stores open before last year began",
+            f"Like to like = {len(lfl)} stores, each over its comparable span",
         ],
         "tiles": [
             {"label": "Year to date", "value": f"Rs {_cr(ytd_all)} Cr",
@@ -514,16 +599,18 @@ def vfl_metrics(df, asof, gen_date=None, basis_label="", region=None) -> dict:
 
     cur, pri = L.report_frames(df, "YTD", asof=asof)
     amt = L.COL_AMOUNT
-    traj = _monthly(cur, pri, asof, amt)
-    # The market's own movement, supplied by Manav rather than derived (see
-    # city_growth). Printed under ours so the page answers whether we are
-    # beating the city or losing share. Absent for a region with no rows yet,
-    # and absent for a month not yet filled — never zero.
-    try:
-        import city_growth
-        traj["city"] = city_growth.for_months(region, traj["months"], asof)
-    except Exception:
-        traj["city"] = [None] * len(traj["months"])
+    # Trajectory built LIKE TO LIKE, matching the portfolio page and the tiles
+    # above it. It used to count every store: Dibrugarh and Silchar have sales
+    # this year and none last, so East read +7.4% in April where comparable
+    # stores were at -7.5%, and May +5.3% against -8.5% — a sign flip in both.
+    # The spans are attached further down (`vb`), so this is filled in there —
+    # together with the city line, Manav's own market movement printed under
+    # ours so the page answers whether we are beating the city or losing share.
+    # ★ That comparison is the reason the band HAD to move onto like to like:
+    # a benchmark for the market is not something to hold our new stores up
+    # against. South is unaffected either way (all 8 comparable), so no city
+    # figure already published changes.
+    traj = None
 
     g_ty = cur.groupby(L.COL_MWC)[amt].sum()
     g_ly = pri.groupby(L.COL_MWC)[amt].sum()
@@ -551,10 +638,16 @@ def vfl_metrics(df, asof, gen_date=None, basis_label="", region=None) -> dict:
     sm = L.store_yoy(df, kind="MTD", asof=asof).copy()
     sm["shortfall"] = sm["cur"] - sm["prior"]
 
-    def mover_rows(best):
-        """EVERY store that moved that way, not a top-n."""
-        f = sy[sy["shortfall"] > 0].sort_values("shortfall", ascending=False) \
-            if best else sy[sy["shortfall"] < 0].sort_values("shortfall")
+    def mover_rows(frame, best):
+        """EVERY store that moved that way, not a top-n.
+
+        Reads the LIKE TO LIKE table, matching the portfolio page and Manav's
+        decision of 10 Aug ("movers by rupees, new stores excluded"). Off the
+        whole frame this column had Dibrugarh at +51.6 L against no last year at
+        all, and Silchar at +113.8% for months it had no counterpart for.
+        """
+        f = frame[frame["shortfall"] > 0].sort_values("shortfall", ascending=False) \
+            if best else frame[frame["shortfall"] < 0].sort_values("shortfall")
         if not len(f):
             return [["No last-year comparison", "—", "—"]]
         return [[str(r["store"])[:18], _rupee_move(r["shortfall"]), _pct(r["growth"])]
@@ -590,49 +683,57 @@ def vfl_metrics(df, asof, gen_date=None, basis_label="", region=None) -> dict:
     # figure means the same thing whichever pack it is read in — which is the
     # whole point of replicating them rather than approximating them.
     #
-    # LIKE TO LIKE, on the same rule as the portfolio's `_lfl_codes`: the store
-    # was already trading before last year began. VFL keeps South's pre-takeover
-    # history, so the set is nearly everything — 19 of 22 today, short Dibrugarh
-    # and Silchar (both opened inside last year, so their last year is a part
-    # year) and Roodraksh (shut 31 Jul). The split is still worth printing: it is
-    # what separates a real move from an estate change, and a page that only
-    # shows it when it is large teaches nobody.
+    # LIKE TO LIKE, on Manav's rule and the portfolio page's exact machinery —
+    # `l2l_bounds` / `l2l_store_table`, keyed by store label instead of code
+    # ("same will apply to both the parts, VFL and overall"). Each store counts
+    # over the span it has both years: Silchar from June, Roodraksh up to 31
+    # July, Dibrugarh not at all (its last year begins after this window ends).
     #
-    # ⚠ THE ONE DEVIATION FROM THE PORTFOLIO PAGE, AND IT IS DELIBERATE. There a
-    # closed store STAYS in the set, because `portfolio_loader._window_frames`
-    # caps its last year at its closure month. `loader.report_frames` has no such
-    # cap, so here a shut store's last year would run to as-of — Roodraksh would
-    # compare 4.5 months of last year against the 3.5 it traded this year and
-    # print a decline it did not have. It stays excluded until that cap exists on
-    # this feed; adding it would move every VFL report, not just this page.
-    # ★ AND COMPARABILITY IS ASKED OF THE DATA HERE, NOT OF A DOO COLUMN. The
-    # curated `doo` for the eight South stores is 2026-04-19 — our TAKEOVER date,
-    # not an opening — while this feed carries the previous operator's full
-    # history for them, which is the whole reason Manav pointed South's last year
-    # at it (11 Aug). Reading the attribute threw all eight out and left 11 of
-    # 22. So the test is the one the rule actually means: was the store ALREADY
-    # SELLING when its own last-year window opened? A fortnight of slack, because
-    # a store with no bill on day one is not a store that opened mid-year.
-    _fy = asof.year if asof.month >= 4 else asof.year - 1
-    _tk = L.takeover_map()
-    _first = df[df[amt] > 0].groupby(L.COL_STORE_LABEL)["date"].min()
+    # ★ THE CLOSURE CAP MATTERS MORE HERE THAN IT DOES THERE. `loader.report_frames`
+    # has no closure handling at all, so before this Roodraksh's last year ran to
+    # as-of against a this-year that stopped on 31 July — a decline it did not
+    # have. The rule's "stops from the day it closes" now supplies that cap on
+    # this feed, symmetrically, which is why a shut store can finally stay in.
+    #
+    # ★ AND IT NEEDS NO DOO COLUMN, WHICH IS WHAT MAKES IT WORK ON BOTH FEEDS.
+    # The curated `doo` for the eight South stores is 2026-04-19 — our TAKEOVER
+    # date, not an opening — while this feed carries the previous operator's full
+    # history for them, the whole reason South's last year points here. Reading
+    # that attribute threw all eight out. Reading the data keeps them, because
+    # their first sale here is the feed's own left edge.
+    shut_by_label = {s: shut[c] for s, c in code_of.items()
+                     if c in shut and s in _here}
+    vb = l2l_bounds(df, L.COL_STORE_LABEL, amt, shut_by_label, asof)
+    vy_cur, vy_pri = L.report_frames(df, "YTD", asof=asof)
+    vm_cur, vm_pri = L.report_frames(df, "MTD", asof=asof)
+    _key = L.COL_STORE_LABEL
+    yl = l2l_store_table(vy_cur, vy_pri, vb, sy, _key, amt)
+    ml = l2l_store_table(vm_cur, vm_pri, vb, sm, _key, amt)
+    lfl = set(yl[_key].astype(str))
 
-    def _vfl_comparable(store) -> bool:
-        t = pd.to_datetime(_tk.get(store), errors="coerce")
-        prior_start = (pd.Timestamp(_fy - 1, t.month, t.day) if pd.notna(t)
-                       else pd.Timestamp(_fy - 1, 4, 1))
-        f = _first.get(store)
-        return pd.notna(f) and f <= prior_start + pd.Timedelta(days=14)
-
-    lfl = {str(r["store"]) for _, r in sy.iterrows()
-           if str(r["store"]) not in closed_labels
-           and _vfl_comparable(str(r["store"]))}
-    yl, ml = sy[sy["store"].astype(str).isin(lfl)], sm[sm["store"].astype(str).isin(lfl)]
+    # The trajectory promised above, now that the spans exist.
+    if len(yl):
+        _c, _p = l2l_frames(cur, pri, vb, _key)
+        traj_note = "Like to like, Rs crore by month"
+    else:
+        _c, _p = cur, pri
+        traj_note = "Overall, Rs crore by month — no last year to compare"
+    traj = _monthly(_c, _p, asof, amt)
+    try:
+        import city_growth
+        traj["city"] = city_growth.for_months(region, traj["months"], asof)
+    except Exception:
+        traj["city"] = [None] * len(traj["months"])
 
     # Day figures come off the WHOLE frame, not the year-to-date windows: the
     # same weekday a year ago (asof - 364) falls one day outside the prior
     # window, so reading it there returns zero and the comparison prints +inf.
-    dl = df[df[L.COL_STORE_LABEL].astype(str).isin(lfl)]
+    # A store counts today only if today falls inside its own span, exactly as
+    # on the portfolio page.
+    _vb_start, _vb_end = vb
+    _day_set = {s for s in lfl
+                if s in _vb_start and _vb_start[s] <= asof <= _vb_end[s]}
+    dl = df[df[L.COL_STORE_LABEL].astype(str).isin(_day_set)]
     day_all = float(cur[cur["date"] == asof][amt].sum())
     d_ty = float(dl[dl["date"] == asof][amt].sum())
     d_date = float(dl[dl["date"] == asof - pd.DateOffset(years=1)][amt].sum())
@@ -686,7 +787,7 @@ def vfl_metrics(df, asof, gen_date=None, basis_label="", region=None) -> dict:
             f"As of {asof:%d %b %Y}",
             basis_label or f"Live to {asof:%d %b %Y}",
             f"{len(sy)} stores  |  {len(closed_labels)} closed  |  {n_open} trading",
-            f"Like to like = {len(lfl)} stores open before last year began",
+            f"Like to like = {len(lfl)} stores, each over its comparable span",
         ],
         # The portfolio pack's six, definition for definition — see the block
         # above. Bills & basket loses its tile and is not replaced (Manav,
@@ -726,7 +827,7 @@ def vfl_metrics(df, asof, gen_date=None, basis_label="", region=None) -> dict:
              "key": ("Throughput / sq ft",
                      f"Rs {throughput:,.0f}" if throughput else "—")},
         ],
-        "traj": {**traj, "note": "Rs crore by month"},
+        "traj": {**traj, "note": traj_note},
         "tables": [
             {"title": "Men / Women / Kids", "sub": "year to date",
              "cols": ["Segment", "YTD", "Mix", "G/D"], "rows": gender_rows,
@@ -734,9 +835,9 @@ def vfl_metrics(df, asof, gen_date=None, basis_label="", region=None) -> dict:
             {"title": "Brand lines", "sub": "year to date",
              "cols": ["Line", "YTD", "G/D"], "rows": line_rows},
             {"title": "Gained", "sub": "by rupees",
-             "cols": ["Store", "Moved", "G/D"], "rows": mover_rows(True)},
+             "cols": ["Store", "Moved", "G/D"], "rows": mover_rows(yl, True)},
             {"title": "Declined", "sub": "by rupees",
-             "cols": ["Store", "Moved", "G/D"], "rows": mover_rows(False)},
+             "cols": ["Store", "Moved", "G/D"], "rows": mover_rows(yl, False)},
         ],
         # Concentration lost its tile to the portfolio's six and keeps its
         # figures in the box under the first table — the same box, in the same
