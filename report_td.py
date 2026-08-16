@@ -1543,8 +1543,9 @@ def _regions_in(rows):
 
 
 def render_night_sms(sheet, by="store") -> Image.Image:
-    """The night's sheets: a money table per region, then a KPI table per
-    region, each running city by city with a subtotal under every city."""
+    """The night's sheets: ONE money table and ONE KPI table for the whole
+    estate, running city by city with a subtotal under every city, each region
+    closing with its own total, and the grand total closing all of them."""
     day = sheet["day"]
     mode = "city" if by == "city" else sheet.get("mode", "all")
     cols = _sms_cols(mode)
@@ -1562,7 +1563,7 @@ def render_night_sms(sheet, by="store") -> Image.Image:
         if mode == "all":
             if kind == "grand":                 # the totals row carries no name
                 head = [("G. TOTAL", 3)]
-            elif kind == "subtotal":
+            elif kind in ("subtotal", "regiontotal"):
                 head = [(r["name"], 3)]
             elif kind == "loctotal":
                 # The label spans LOCATION and BRAND — a location total has no
@@ -1609,45 +1610,61 @@ def render_night_sms(sheet, by="store") -> Image.Image:
                 f"{b / f_ * 100:,.1f}" if (b is not None and f_) else ""]
         return counts + rates + [_money(r["achieved"])]
 
-    def money_rows(rows):
-        """The grid's cells, so widths can be measured across both regions
-        before either is drawn."""
-        body = _by_city(rows)
-        T = _sms_totals(rows)
-        T["_kpi"] = _kpi_agg(rows)
+    # ★ ONE MONEY TABLE AND ONE KPI TABLE FOR THE WHOLE ESTATE (Manav, 16 Aug).
+    # East & NE and South ran as two money tables and two KPI tables; each region
+    # now closes with its OWN TOTAL inside a single table, and the grand total
+    # closes all of them. A region total is a total like the grand one and takes
+    # the same yellow — the workbook does the same at every level of the
+    # Growth-Degrowth sheet — with the label saying which region it closes.
+    def _region_total(rs, name):
+        return {**_sms_totals(rs), "name": f"{name.upper()} TOTAL",
+                "city": "", "brand": ""}
+
+    def money_rows(by_region):
+        """Every region's cells in one grid, so widths are measured across the
+        whole table before any of it is drawn."""
         grid = []
-        for kind, r in body:
-            fill = (HDR_BG if kind == "subtotal"
-                    else LOC_BG if kind == "loctotal" else None)
-            grid.append((_cells(line(r, kind), aligns, fill,
-                                kind in ("subtotal", "loctotal"),
-                                ink=_row_ink(r) if kind == "store" else INK),
-                         ROW_H))
+        for n, rs in by_region.items():
+            for kind, r in _by_city(rs):
+                fill = (HDR_BG if kind == "subtotal"
+                        else LOC_BG if kind == "loctotal" else None)
+                grid.append((_cells(line(r, kind), aligns, fill,
+                                    kind in ("subtotal", "loctotal"),
+                                    ink=_row_ink(r) if kind == "store" else INK),
+                             ROW_H))
+            if _show_region_totals:
+                grid.append((_cells(line(_region_total(rs, n), "regiontotal"),
+                                    aligns, TOTAL_BG, True), ROW_H))
+        T = _sms_totals([r for rs in by_region.values() for r in rs])
         grid.append((_cells(line(T, "grand"), aligns, TOTAL_BG, True), ROW_H))
         return grid
 
-    def kpi_rows(rows):
+    def kpi_rows(by_region):
         """The same shape, plus BRAND after the location (Manav, 14 Aug)."""
-        body = _by_city(rows)
-        T = _sms_totals(rows)
-        T["_kpi"] = _kpi_agg(rows)
+        rows = [r for rs in by_region.values() for r in rs]
         if not any(r["bills"] or r["qty"] or r["footfall"] for r in rows):
             return None
+
+        def kpi_line(r, head, fill, bold, ink=INK):
+            return (_cells(head, ["l"] * 3, fill, bold, ink=ink)
+                    + [cell(v, align="r", fill=fill, bold=bold, ink=ink)
+                       for v in kpis(r)], ROW_H)
+
         kg = []
-        for kind, r in body:
-            fill = (HDR_BG if kind == "subtotal"
-                    else LOC_BG if kind == "loctotal" else None)
-            bold = kind in ("subtotal", "loctotal")
-            ink = INK if kind != "store" else _row_ink(r)
-            head = ([(r["name"], 3)] if kind == "subtotal"
-                    else [r["city"], (r["name"], 2)] if kind == "loctotal"
-                    else [r["city"], r["name"], r.get("brand", "")])
-            kg.append((_cells(head, ["l"] * 3, fill, bold, ink=ink)
-                       + [cell(v, align="r", fill=fill, bold=bold, ink=ink)
-                          for v in kpis(r)], ROW_H))
-        kg.append((_cells([("G. TOTAL", 3)], ["l"] * 3, TOTAL_BG, True)
-                   + [cell(v, align="r", fill=TOTAL_BG, bold=True) for v in kpis(T)],
-                   ROW_H))
+        for n, rs in by_region.items():
+            for kind, r in _by_city(rs):
+                fill = (HDR_BG if kind == "subtotal"
+                        else LOC_BG if kind == "loctotal" else None)
+                head = ([(r["name"], 3)] if kind == "subtotal"
+                        else [r["city"], (r["name"], 2)] if kind == "loctotal"
+                        else [r["city"], r["name"], r.get("brand", "")])
+                kg.append(kpi_line(r, head, fill, kind in ("subtotal", "loctotal"),
+                                   ink=INK if kind != "store" else _row_ink(r)))
+            if _show_region_totals:
+                RT = _region_total(rs, n)
+                kg.append(kpi_line(RT, [(RT["name"], 3)], TOTAL_BG, True))
+        T = _sms_totals(rows)
+        kg.append(kpi_line(T, [("G. TOTAL", 3)], TOTAL_BG, True))
         return kg
 
     by_region = {n: [r for r in sheet["rows"] if r.get("region") == n]
@@ -1655,10 +1672,13 @@ def render_night_sms(sheet, by="store") -> Image.Image:
     if len(regions) == 1 and not by_region.get(regions[0]):
         by_region = {regions[0]: sheet["rows"]}
     by_region = {n: rs for n, rs in by_region.items() if rs}
+    # A region total under a report of ONE region would repeat the grand total
+    # below it — the same noise `_by_city` avoids for a single-city region.
+    _show_region_totals = len(by_region) > 1
 
     kh = ["CITY", "LOCATION", "BRAND"] + [h for h, _ in KPI_COLS]
-    m_rows = {n: money_rows(rs) for n, rs in by_region.items()}
-    k_rows = {n: kpi_rows(rs) for n, rs in by_region.items()}
+    m_grid = money_rows(by_region)
+    k_grid = kpi_rows(by_region)
 
     # ★ ONE WIDTH FOR EVERY TABLE (Manav, 14 Aug), measured across BOTH regions
     # so they line up down the page and the wider one no longer runs off it.
@@ -1666,10 +1686,8 @@ def render_night_sms(sheet, by="store") -> Image.Image:
     # gets the MINIMUM width its longest value needs and no more, which is the
     # narrow shape Manav asked for. Capping on top of that only clipped
     # "BENGALURU" and "COMMERCIAL STREET" into ellipses.
-    m_w = measure_for(header, [r for grid in m_rows.values() for r, _ in grid],
-                      len(header))
-    k_w = measure_for(kh, [r for grid in k_rows.values() if grid
-                           for r, _ in grid], len(kh))
+    m_w = measure_for(header, [r for r, _ in m_grid], len(header))
+    k_w = measure_for(kh, [r for r, _ in (k_grid or [])], len(kh))
     # The KPI table carries four fewer columns, so its minimum width is narrower
     # than the money table's. Widen it to match rather than leaving the page with
     # two right edges — every table then starts and ends on the same lines.
@@ -1682,22 +1700,21 @@ def render_night_sms(sheet, by="store") -> Image.Image:
     # is a function of HEIGHT — so East & NE's 60 rows stretched it half again
     # as wide as South's 8, which is exactly the mismatch Manav saw. Pinned
     # widths with the stretch off give every table the same, narrower shape.
-    parts = []
-    for n in by_region:                        # east first, then south
-        parts.append(_draw_grid(header, m_rows[n], widths=m_w, landscape=False,
-                                title=f"{n.upper()} — ALL STORE TOTAL SMS  ·  "
-                                      f"{day:%d %b %Y}"))
-        if k_rows[n]:
-            parts.append(_draw_grid(kh, k_rows[n], widths=k_w, landscape=False,
-                                    title=f"{n.upper()} — DAILY KPI REPORT"))
-        else:
-            parts.append(_draw_grid(
-                [],
-                [([cell(f"No bill, quantity or footfall typed in the night fill "
-                        f"for {n} — this table fills itself the day those three "
-                        f"columns are entered, as the target columns did.",
-                        align="l")], ROW_H)],
-                title=f"{n.upper()} — DAILY KPI REPORT"))
+    scope = " · ".join(n.upper() for n in by_region) if not _show_region_totals \
+        else "ALL REGIONS"
+    parts = [_draw_grid(header, m_grid, widths=m_w, landscape=False,
+                        title=f"{scope} — ALL STORE TOTAL SMS  ·  "
+                              f"{day:%d %b %Y}")]
+    if k_grid:
+        parts.append(_draw_grid(kh, k_grid, widths=k_w, landscape=False,
+                                title=f"{scope} — DAILY KPI REPORT"))
+    else:
+        parts.append(_draw_grid(
+            [],
+            [([cell("No bill, quantity or footfall typed in the night fill — "
+                    "this table fills itself the day those three columns are "
+                    "entered, as the target columns did.", align="l")], ROW_H)],
+            title=f"{scope} — DAILY KPI REPORT"))
     return _stack(parts, _px(30))
 
 
