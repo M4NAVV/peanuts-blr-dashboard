@@ -3,8 +3,18 @@ name: Tests
 # Runs the repo's tests on every push and pull request.
 #
 # They are deliberately cheap: the suite works on synthetic frames, so it needs
-# no sheet, no secret and no network — only pandas, pinned to the same versions
-# the app runs on. A run finishes in well under a minute.
+# no sheet, no secret and no network — only the data and drawing libraries,
+# pinned to the same versions the app runs on. A run finishes in well under a
+# minute.
+#
+# ⚠️ PILLOW IS NOT OPTIONAL, though nothing here draws. `test_like_to_like`
+# imports `exec_snapshot` for the rule it pins, and that module reaches
+# portfolio_pdf → imaging → PIL at import time. Adding the test without adding
+# the library left this workflow red for four pushes (14-16 Aug) while the same
+# suite passed locally, where the app's venv had Pillow all along. If a future
+# test imports a module that pulls in something new, install it HERE and prove
+# it in a bare environment — a green run on a developer machine proves nothing
+# about this one.
 
 on:
   push:
@@ -22,10 +32,10 @@ jobs:
         with:
           python-version: "3.12"      # the version the Space builds on
 
-      - name: Install the data libraries the tests need
+      - name: Install the libraries the tests need
         run: |
           python -m pip install --upgrade pip
-          pip install "pandas==2.2.3" "numpy==1.26.4" pytest
+          pip install "pandas==2.2.3" "numpy==1.26.4" "pillow==12.3.0" pytest
 
       - name: Run the tests
         run: python -m pytest tests -q
