@@ -19,6 +19,7 @@ import plotly.graph_objects as go
 import streamlit as st
 import streamlit.components.v1 as components
 
+import festive as FEST
 import loader as L
 import portfolio_loader as PL
 from imaging import table_to_png
@@ -445,6 +446,78 @@ def _load_portfolio_cached():
             df.attrs.get("provisional_date"))
 
 
+@st.cache_data(ttl=3600, show_spinner=False)
+def _festive_windows():
+    """The dated festivals, cached for an hour — the tab changes once a year,
+    and this must not be fetched on every rerun of the page."""
+    return FEST.festive_windows()
+
+
+def _festive_tab(df, *, vfl: bool):
+    """The festive run-up sheets, on whichever feed the page is showing.
+
+    Same windows, same columns, same arithmetic in both modes — only the store
+    list and the groupings differ, because the VFL feed knows brand lines and
+    the portfolio feed knows parents.
+    """
+    st.subheader("🪔 Festive run-up")
+    st.caption(
+        "The last N days **ending on the festival**, this year against last — "
+        "Puja and Diwali move about three weeks a year, so a calendar window "
+        "compares the run-up with something that is not one. Dates come from "
+        "the **ImpFestiveDates** tab. Last year is **truncated to the same "
+        "elapsed days**, so the comparison is like for like; `LY FULL` is the "
+        "whole of last year's window, the season's target.")
+
+    windows = _festive_windows()
+    if FEST.last_problem():
+        st.warning(f"Festive dates: {FEST.last_problem()}")
+    if not windows:
+        st.info("No dated festival with a tenure was found in the sheet.")
+        return
+
+    labels = [f"{w.festival} · {w.tenure} days · ends {w.ty_end:%d %b %Y}" for w in windows]
+    pick = st.radio("Window", labels, horizontal=True, key=f"fest_pick_{vfl}")
+    w = windows[labels.index(pick)]
+    st.markdown(f"**{w.basis()}**")
+    if not w.started:
+        st.info("This year's window has not opened yet, so only last year's "
+                "columns carry figures. It fills day by day once it starts.")
+
+    f = FEST.vfl_figures(df, w) if vfl else FEST.store_figures(df, w)
+    sales = (df.groupby("date")[L.COL_AMOUNT].sum() if vfl
+             else df.groupby("date")["sales"].sum())
+    money = list(FEST._MONEY_COLS)
+    sheets = [("Growth / Degrowth", *FEST.gd_report(f)),
+              ("Brand wise", *FEST.brand_report(f)),
+              ("Location wise", *FEST.location_report(f))]
+    for title, disp, types in sheets:
+        st.markdown(f"##### {FEST.sheet_title(w, title.upper())}")
+        st.markdown(styled_report_html(disp, money_cols=money, row_types=types,
+                                       compact=True),
+                    unsafe_allow_html=True)
+
+    with st.expander(f"Day by day — {w.tenure} days to {w.festival}"):
+        st.markdown(styled_report_html(FEST.day_ladder(sales, w),
+                                       money_cols=["Amount", "Running Total",
+                                                   "Amount ", "Running Total "],
+                                       compact=True),
+                    unsafe_allow_html=True)
+
+    if st.button("🧾 Generate PDF", key=f"fest_pdf_{vfl}", type="primary"):
+        with st.spinner("Building…"):
+            try:
+                name, payload = FEST.build_festive_pdf(df, w, vfl=vfl)
+                st.session_state[f"fest_out_{vfl}"] = (name, payload)
+            except Exception as e:                      # surface, don't crash tab
+                st.session_state[f"fest_out_{vfl}"] = None
+                st.error(f"Could not build: {e}")
+    out = st.session_state.get(f"fest_out_{vfl}")
+    if out:
+        st.download_button("⬇ Download", out[1], file_name=out[0],
+                           mime="application/pdf")
+
+
 def _open_store_count() -> int | None:
     """Stores the master says are trading — the estate the feed should carry."""
     try:
@@ -489,6 +562,7 @@ def _cr(x) -> str:
 
 
 _PF_TABS = ["📈 MW Data", "🧾 GD Sheet", "🏷️ Brand-wise GD", "🗺️ Loc-wise GD",
+            "🪔 Festive",
             "📐 Average", "📊 Executive", "📋 MTD / YTD Report", "📉 Degrowth",
             "🎯 Day Targets", "🥧 Contribution", "🏙️ City-wise G/D", "🏬 Stores",
             "📅 Monthly", "📄 Report PDF", "📑 REPORT TD"]
@@ -981,6 +1055,9 @@ def render_portfolio():
             "the workbook. The current FY shows the East & NE / South split.")
         st.markdown(PL.mw_data_html(PL.mw_data(pf_all)), unsafe_allow_html=True)
 
+    elif nav == "🪔 Festive":
+        _festive_tab(pf_all, vfl=False)
+
     # ===================== Report PDF (the five sheets, one shareable file) ==== #
     elif nav == "📄 Report PDF":
         import portfolio_pdf as PPDF
@@ -1052,6 +1129,15 @@ def render_portfolio():
             "night_sms": "Night sale SMS  ·  every store, city by city, with "
                          "city subtotals + the daily KPI table",
         }
+        # Festive windows come from the ImpFestiveDates tab, so the list is
+        # whatever Manav has dated there — a festival he adds appears here with
+        # no code change, and one he cannot date says why rather than vanishing.
+        fw = _festive_windows()
+        for i, w in enumerate(fw):
+            available[f"festive_{i}"] = (
+                f"{w.festival} {w.tenure}-day run-up  ·  {w.basis()}")
+        if FEST.last_problem():
+            st.caption(f"⚠️ Festive dates: {FEST.last_problem()}")
         chosen = [k for k, label in available.items()
                   if st.checkbox(label, value=True, key=f"td_{k}")]
         if "night_sms" in chosen:
@@ -1106,6 +1192,10 @@ def render_portfolio():
                         # Reads the night fill directly — it is the only source
                         # for the day's figures at the hour this goes out.
                         built.append(RTD.build_night_sms(pf_all, basis_label=basis))
+                    for i, w in enumerate(fw):
+                        if f"festive_{i}" in chosen:
+                            built.append(FEST.build_festive_pdf(
+                                pf_all, w, basis_label=basis))
                     name, payload, mime = RTD.bundle(built)
                     st.session_state["td_out"] = (name, payload, mime)
                 except Exception as e:                    # surface, don't crash tab
@@ -1775,7 +1865,8 @@ _TAB_LABELS = [
     "🧾 VFL G/D", "🧾 VFL Gender", "📄 Report PDF",
     "📋 MTD / YTD Report", "📉 Degrowth", "🔎 Degrowth Drivers",
     "📸 Morning snapshots",
-    "🧑‍🤝‍🧑 Gender G/D", "🏷️ Brand G/D", "🏬 Store × Brand G/D", "⚖️ Gender Mix",
+    "🪔 Festive", "🧑‍🤝‍🧑 Gender G/D", "🏷️ Brand G/D", "🏬 Store × Brand G/D",
+    "⚖️ Gender Mix",
     "📊 Executive", "🎯 Day Targets", "🏙️ City-wise G/D", "📅 Monthly Contribution",
     "📐 Store Productivity", "Overview", "🏬 Stores",
     "🔧 Build your view", "Trends", "Category mix", "Salespeople",
@@ -2253,6 +2344,15 @@ if nav == "📄 Report PDF":
             "⬇ Download PDF", st.session_state["vfl_pdf"],
             file_name=st.session_state.get("vfl_pdf_name", "vfl_report.pdf"),
             mime="application/pdf", use_container_width=True)
+
+# =========================================================================== #
+# FESTIVE — the Puja and Diwali run-ups, on the VFL feed
+# =========================================================================== #
+if nav == "🪔 Festive":
+    # `df_exec` is the frame the rest of the VFL page reports on, so the festive
+    # sheets answer for the same stores and the same filters as everything else.
+    _festive_tab(df_exec, vfl=True)
+
 
 # =========================================================================== #
 # GENDER MIX — contribution %  (Region × Gender + store detail)
