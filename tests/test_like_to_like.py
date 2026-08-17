@@ -131,6 +131,43 @@ def test_a_month_a_store_cannot_be_compared_in_is_absent_from_both_bars():
                  & (fr["date"] < pd.Timestamp(yr, 6, 1))]
         assert apr.empty, f"nothing before June should survive in {yr}"
 
+# --------------------------------------------------------------------------- #
+# The span opens on the OPENING DATE, not the first sale (Manav, 17 Aug)
+# --------------------------------------------------------------------------- #
+def test_a_store_dark_at_the_start_of_last_year_is_not_clipped():
+    """The whole reason the rule changed. Our stores shut all the time —
+    renovations, mall works — and a store that existed but was closed is not a
+    store that had not opened. Mani Square Colorplus, trading since 2017, was
+    losing five weeks of comparison because it was dark last April."""
+    df = _frame()
+    dark = df[~((df["code"] == OLD)
+                & (df["date"] >= pd.Timestamp(2025, 4, 1))
+                & (df["date"] < pd.Timestamp(2025, 5, 7)))]
+    opened = {OLD: pd.Timestamp(2017, 5, 1)}          # open since long before
+    start, _ = ES.l2l_bounds(dark, "code", "sales", {}, ASOF, opened=opened)
+    assert start[OLD] <= pd.Timestamp(2026, 4, 1), \
+        "an old store must be comparable from the start of the window"
+
+
+def test_a_store_that_opened_mid_last_year_still_clips():
+    """Silchar's case, which is what the split exists for."""
+    df = _frame()
+    opened = {OPENED_MID_LAST_YEAR: pd.Timestamp(2025, 6, 1)}
+    start, _ = ES.l2l_bounds(df, "code", "sales", {}, ASOF, opened=opened)
+    assert start[OPENED_MID_LAST_YEAR] == pd.Timestamp(2026, 6, 1)
+
+
+def test_an_opening_date_that_postdates_the_sales_is_a_takeover():
+    """South's recorded date is 19 April 2026 — the day we took the stores over,
+    not the day they opened — while the VFL feed holds the previous operator's
+    trading from a year earlier. Read literally it would throw all eight out of
+    like to like on the one feed that can compare them."""
+    df = _frame()                                     # OLD sells from Apr 2025
+    takeover = {OLD: pd.Timestamp(2026, 4, 19)}       # "opened" AFTER those sales
+    start, _ = ES.l2l_bounds(df, "code", "sales", {}, ASOF, opened=takeover)
+    assert start[OLD] <= pd.Timestamp(2026, 4, 1), \
+        "the trading starts where the trading starts"
+
 
 if __name__ == "__main__":
     for name, fn in sorted(globals().items()):

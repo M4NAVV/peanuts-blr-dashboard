@@ -268,7 +268,15 @@ WB_TOTAL, WB_NEG, WB_GRID = "#FFFF00", "#FF0000", "#9AA0A6"
 # GD/Brand/Loc/Average sheets colour every total tier the same yellow; the VFL
 # sheets grade them instead.
 WB_ROWS = {"subtotal": WB_TOTAL, "grand": WB_TOTAL,
-           "storetotal": WB_TOTAL, "block": WB_TOTAL, "loctotal": WB_TOTAL}
+           "storetotal": WB_TOTAL, "block": WB_TOTAL, "loctotal": WB_TOTAL,
+           # A store shown as its comparable and non-comparable halves: tinted a
+           # step under the header blue, so the pair reads as detail belonging to
+           # the total beneath it rather than as two more stores.
+           "split": "#EDF6F9",
+           # LIKE TO LIKE / NO L2L — the sheet's summary of itself, and the
+           # figure page 1 prints. Header blue, not a third yellow, so it does
+           # not read as one more total in a column of them.
+           "summary": WB_HDR_BG}
 WB_ROWS_VFL = {"storetotal": "#FDE9D9", "subtotal": "#95B3D7",
                "loctotal": "#92D050", "block": "#92D050", "grand": WB_TOTAL}
 
@@ -1129,15 +1137,6 @@ def render_portfolio():
             "night_sms": "Night sale SMS  ·  every store, city by city, with "
                          "city subtotals + the daily KPI table",
         }
-        # Festive windows come from the ImpFestiveDates tab, so the list is
-        # whatever Manav has dated there — a festival he adds appears here with
-        # no code change, and one he cannot date says why rather than vanishing.
-        fw = _festive_windows()
-        for i, w in enumerate(fw):
-            available[f"festive_{i}"] = (
-                f"{w.festival} {w.tenure}-day run-up  ·  {w.basis()}")
-        if FEST.last_problem():
-            st.caption(f"⚠️ Festive dates: {FEST.last_problem()}")
         chosen = [k for k, label in available.items()
                   if st.checkbox(label, value=True, key=f"td_{k}")]
         if "night_sms" in chosen:
@@ -1192,10 +1191,6 @@ def render_portfolio():
                         # Reads the night fill directly — it is the only source
                         # for the day's figures at the hour this goes out.
                         built.append(RTD.build_night_sms(pf_all, basis_label=basis))
-                    for i, w in enumerate(fw):
-                        if f"festive_{i}" in chosen:
-                            built.append(FEST.build_festive_pdf(
-                                pf_all, w, basis_label=basis))
                     name, payload, mime = RTD.bundle(built)
                     st.session_state["td_out"] = (name, payload, mime)
                 except Exception as e:                    # surface, don't crash tab

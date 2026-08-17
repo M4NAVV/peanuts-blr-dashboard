@@ -239,7 +239,7 @@ def _closed_codes(pf, asof) -> set:
             if c in shut and pd.to_datetime(shut[c]) <= pd.Timestamp(asof)}
 
 
-def l2l_bounds(raw, key, amt, shut, asof):
+def l2l_bounds(raw, key, amt, shut, asof, opened=None):
     """Each store's LIKE TO LIKE span, in THIS year's dates. (Manav, 14 Aug.)
 
     His rule, verbatim: *"L2L comparison is CONSIDERED only from the date the
@@ -280,7 +280,31 @@ def l2l_bounds(raw, key, amt, shut, asof):
     for k, f in first.items():
         if pd.isna(f):
             continue
-        start[k] = pd.Timestamp(f) + pd.DateOffset(years=1)
+        # ★★ THE SPAN OPENS ON THE STORE'S OPENING DATE (Manav, 17 Aug), when one
+        # is known. It used to open on the store's first SALE, which conflated
+        # two different things: a store that did not exist yet, and a store that
+        # existed and was shut. Ours shut all the time — renovations, mall works,
+        # a strike — and clipping an established store for it read as if it had
+        # opened late. Mani Square Colorplus, trading since 2017, lost five weeks
+        # of comparison because it was dark last April; Cosmos Mall lost two days
+        # for a bank holiday. On opening dates only a genuinely new store clips,
+        # which is the systematic answer.
+        #
+        # ★ A DATE CANNOT BE AN OPENING IF WE HAVE THE STORE'S SALES FROM BEFORE
+        # IT. South's recorded date is 19 April 2026 — the day we took the stores
+        # over, not the day they opened — and the VFL feed carries the previous
+        # operator's trading for them going back a year. Read literally it would
+        # throw all eight South stores out of like to like, on a feed that holds
+        # exactly the history they are supposed to be compared against. So an
+        # opening date that post-dates the store's own sales is a takeover, and
+        # the trading starts where the trading starts. The portfolio feed has no
+        # pre-takeover South rows, so there the date stands and South is
+        # correctly not comparable — one rule, right on both feeds.
+        o = pd.to_datetime((opened or {}).get(k), errors="coerce")
+        if pd.notna(o) and pd.Timestamp(f) < o:
+            o = pd.NaT
+        base = o if pd.notna(o) else pd.Timestamp(f)
+        start[k] = base + pd.DateOffset(years=1)
         cl = pd.to_datetime(shut.get(k), errors="coerce")
         end[k] = min(asof, cl) if pd.notna(cl) else asof
     return start, end
@@ -377,7 +401,9 @@ def portfolio_metrics(pf, asof, basis_label="", region=None) -> dict:
     # LIKE TO LIKE = each store over the span it has BOTH years (see `l2l_bounds`
     # for Manav's rule). The windows come off the report's own frames, so the
     # anchoring and closure handling below them is untouched.
-    bounds = l2l_bounds(pf, "code", "sales", PL.closed_map(), asof)
+    # Opening dates, so page 1 and the GD sheet compare over the same spans.
+    bounds = l2l_bounds(pf, "code", "sales", PL.closed_map(), asof,
+                        opened=PL.opened_map(pf, asof))
     ycur, ypri = PL._window_frames(pf, "YTD", asof)
     mcur, mpri = PL._window_frames(pf, "MTD", asof)
     yl = l2l_store_table(ycur, ypri, bounds, y, "code", "sales")
@@ -703,7 +729,13 @@ def vfl_metrics(df, asof, gen_date=None, basis_label="", region=None) -> dict:
     # their first sale here is the feed's own left edge.
     shut_by_label = {s: shut[c] for s, c in code_of.items()
                      if c in shut and s in _here}
-    vb = l2l_bounds(df, L.COL_STORE_LABEL, amt, shut_by_label, asof)
+    # Opening dates here too, so both feeds compare on the same rule. South's
+    # recorded date is a takeover and `l2l_bounds` sees through it — see there.
+    _doo = L.doo_map()
+    opened_by_label = {s: _doo[c] for s, c in code_of.items()
+                       if c in _doo and s in _here}
+    vb = l2l_bounds(df, L.COL_STORE_LABEL, amt, shut_by_label, asof,
+                    opened=opened_by_label)
     vy_cur, vy_pri = L.report_frames(df, "YTD", asof=asof)
     vm_cur, vm_pri = L.report_frames(df, "MTD", asof=asof)
     _key = L.COL_STORE_LABEL

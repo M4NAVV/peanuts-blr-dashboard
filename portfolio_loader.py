@@ -571,7 +571,17 @@ GD_SHEET_COLS = [
     "Sum of MONTH SALE LY", "Sum of PROJECTED MTD", "Sum of LY FULL SALES",
     "Sum of PROJECTED YTD",
 ]
-_NEWOLD_ORDER = ["2526FY", "2526PY", "2526NA"]
+def _newold_order(asof) -> list:
+    """The tag order for this fiscal year, DERIVED — never a frozen list.
+
+    It used to be the literal `["2526FY", "2526PY", "2526NA"]` while the tags
+    themselves were derived from the as-of date. On 1 April 2027 every tag would
+    have become `2627…`, matched nothing, and the sheet's whole NEW/OLD grouping
+    would have collapsed into one bucket with no error — the same shape as the
+    MW Data bomb. Closed stores sort last (Manav + chachu, 17 Aug).
+    """
+    p = _newold_prefix(asof)
+    return [f"{p}FY", f"{p}PY", f"{p}NA", f"{p}CL"]
 # The shape `gd_store_attrs_dyn` returns. Named because an EMPTY selection has to
 # return these columns too: built from an empty row list the frame has no columns
 # at all, and the next line — which reads `doo` — raised `KeyError: 'doo'`.
@@ -591,12 +601,18 @@ def gd_store_attrs() -> pd.DataFrame:
     return a
 
 
+def _newold_prefix(asof) -> str:
+    """`2526` for FY 2026-27 — the workbook's own way of naming the pair."""
+    fy = asof.year if asof.month >= 4 else asof.year - 1
+    return f"{(fy - 1) % 100:02d}{fy % 100:02d}"
+
+
 def _newold_from_doo(doo, asof):
     """NEW/OLD label derived live from DOO + the current fiscal year, so it
     re-labels itself every year (2526FY/PY/NA → 2627FY/PY/NA next FY)."""
     fy = asof.year if asof.month >= 4 else asof.year - 1
     prior = fy - 1
-    tag = f"{prior % 100:02d}{fy % 100:02d}"
+    tag = _newold_prefix(asof)
     if not doo or pd.isna(doo):
         return f"{tag}FY"
     d = pd.to_datetime(doo)
@@ -646,10 +662,62 @@ def gd_store_attrs_dyn(df: pd.DataFrame, asof=None) -> pd.DataFrame:
     # come back with the columns every caller reads — see `_GD_ATTR_COLS`.
     out = pd.DataFrame(rows) if rows else pd.DataFrame(columns=_GD_ATTR_COLS)
     out["new_old"] = [_newold_from_doo(d, asof) for d in out["doo"]]
+    # ★ A CLOSED STORE IS ITS OWN CLASS (chachu, 16 Aug: "moving them downwards
+    # in the sheet under a new head"). It outranks the DOO tag: what matters
+    # about a shut store is that it is shut, not when it opened. The prefix is
+    # the sheet's own, so it reads 2526CL beside 2526FY — see `_newold_order`.
+    _shut = {int(k): pd.Timestamp(v) for k, v in closed_map().items()}
+    out["new_old"] = [
+        f"{_newold_prefix(asof)}CL"
+        if (int(c) in _shut and _shut[int(c)] <= asof) else t
+        for c, t in zip(out["code"], out["new_old"])
+    ]
     for col in ["closed", "doo", "store_name_main", "location_main", "region",
                 "parent", "location_tl", "new_old"]:
         out[col] = out[col].fillna("").astype(str)
     return out
+
+
+def _l2l_spans(df: pd.DataFrame, asof):
+    """Each store's comparable span, in this year's dates — Manav's rule.
+
+    The same spans the Executive Snapshot compares over, so the sheet's own
+    like-to-like line and page 1's tile are the same arithmetic rather than two
+    calculations that happen to agree. Kept here as a thin call so there is one
+    definition of "comparable" in the codebase, not two.
+    """
+    import exec_snapshot
+    return exec_snapshot.l2l_bounds(df, "code", "sales", closed_map(), asof,
+                                    opened=opened_map(df, asof))
+
+
+def opened_map(df: pd.DataFrame, asof=None) -> dict:
+    """store code -> opening date, as the sheet itself prints it.
+
+    Deliberately the same `doo` the GD sheet shows in its own DOO column, so a
+    reader can check the like-to-like span against the row it sits on rather
+    than against a date held somewhere else.
+    """
+    a = gd_store_attrs_dyn(df, asof)
+    out = {}
+    for c, d in zip(a["code"], a["doo"]):
+        ts = pd.to_datetime(d, errors="coerce")
+        if pd.notna(ts):
+            out[int(c)] = ts
+    return out
+
+
+def _comparable_throughout(a, start, end) -> bool:
+    """True when a store's whole window is comparable — the ordinary store.
+
+    A start alone is not enough: South's span opens on 19 April 2027, a year
+    after its takeover and long past the end of this window, so every South
+    store looked comparable and carried its whole turnover into the like-to-like
+    line. The span has to actually exist.
+    """
+    c = int(a["code"])
+    s, e = start.get(c), end.get(c)
+    return s is not None and e is not None and s <= e
 
 
 def _gd_frac(ty, ly):
@@ -712,28 +780,105 @@ def gd_sheet_report(df: pd.DataFrame, asof=None):
             "Sum of PROJECTED YTD": proj_ytd,
         }
 
+    # ★★ THE SPLIT (chachu, 16 Aug; built 17 Aug). A store that has only PART of
+    # a comparable year is shown as two lines and a subtotal: the span it has no
+    # last year for, and the span it has. Silchar opened on 1 June last year, so
+    # its single line read +112.2% — true, and useless. Split, it says what is
+    # actually happening: two months of trade with nothing to compare, and the
+    # months that DO compare are down 2.8%.
+    #
+    # The halves carry their own NEW/OLD label (Manav's call): the comparable
+    # half `…FY`, the other `…NA`, which is what that tag has always meant. They
+    # stay ADJACENT under the store's own block rather than being filed into two
+    # different ones — the subtotal is the point, and a store split across the
+    # page would lose it.
+    #
+    # Only the YTD and MTD pairs split. The day's sale, last year's full month,
+    # the projections and last full year are different windows and would mean
+    # nothing cut this way; they sit on the subtotal, where the store is whole.
+    _l2l_start, _l2l_end = _l2l_spans(df, asof)
+    _yr = pd.DateOffset(years=1)
+    _split_cols = ["Sum of YTD_LY", "Sum of YTD_TY", "Sum of MTD_LY", "Sum of MTD_TY"]
+
+    def _window_part(frame, c, lo, hi):
+        m = ((frame["code"] == c) & (frame["date"] >= lo) & (frame["date"] <= hi))
+        return float(frame[m]["sales"].sum())
+
+    def _split_rows(a, whole):
+        """[] when the store is comparable throughout — the usual case."""
+        c = int(a["code"])
+        s, e = _l2l_start.get(c), _l2l_end.get(c)
+        if s is None or e is None or s > e:
+            return []                      # no comparable span at all: one line
+        inside = {
+            "Sum of YTD_TY": _window_part(ytd_cur, c, s, e),
+            "Sum of YTD_LY": _window_part(ytd_pri, c, s - _yr, e - _yr),
+            "Sum of MTD_TY": _window_part(mtd_cur, c, s, e),
+            "Sum of MTD_LY": _window_part(mtd_pri, c, s - _yr, e - _yr),
+        }
+        outside = {k: whole[k] - inside[k] for k in _split_cols}
+        if all(abs(v) < 1 for v in outside.values()):
+            return []                      # comparable all the way through
+        prefix = _newold_prefix(asof)
+
+        def part(values, tag, note):
+            d = {col: (float("nan") if col in _GD_VALUE_COLS else "")
+                 for col in GD_SHEET_COLS}
+            d.update({"Region": a["region"], "NEW/OLD": tag, "STORE CODE": c,
+                      "STORE NAME MAIN": a["store_name_main"],
+                      "LOCATION": f'{a["location_main"]} — {note}',
+                      "CLOSED": "", "DOO": ""})
+            d.update(values)
+            d["Sum of GD_YTD_%"] = _gd_frac(d["Sum of YTD_TY"], d["Sum of YTD_LY"])
+            d["Sum of GD_MTD_%"] = _gd_frac(d["Sum of MTD_TY"], d["Sum of MTD_LY"])
+            return d
+
+        return [part(outside, f"{prefix}NA", "no L2L"),
+                part(inside, f"{prefix}FY", f"L2L from {s:%d-%m-%Y}")]
+
     def _total_row(label_region, label_newold, sub):
         d = {c: "" for c in GD_SHEET_COLS}
         d["Region"] = label_region
         d["NEW/OLD"] = label_newold
         for c in _GD_VALUE_COLS:
-            d[c] = sub[c].sum()
+            d[c] = pd.to_numeric(sub[c], errors="coerce").fillna(0).sum()
         d["Sum of GD_YTD_%"] = _gd_frac(d["Sum of YTD_TY"], d["Sum of YTD_LY"])
         d["Sum of GD_MTD_%"] = _gd_frac(d["Sum of MTD_TY"], d["Sum of MTD_LY"])
         return d
 
+    order = {k: i for i, k in enumerate(_newold_order(asof))}
     attrs["_r"] = attrs["region"].map({k: i for i, k in enumerate(REGION_ORDER)}).fillna(9)
-    attrs["_n"] = attrs["new_old"].map({k: i for i, k in enumerate(_NEWOLD_ORDER)}).fillna(9)
+    attrs["_n"] = attrs["new_old"].map(order).fillna(9)
     attrs = attrs.sort_values(["_r", "_n", "code"])
 
     rows, types = [], []
     grand_rows = []
+    l2l_rows, non_l2l_rows = [], []          # for the footer summary
     for region, rgrp in attrs.groupby("region", sort=False):
         region_rows = []
         for newold, ngrp in rgrp.groupby("new_old", sort=False):
-            srows = [_store_row(a) for _, a in ngrp.iterrows()]
-            for sr in srows:
-                rows.append(sr); types.append("store")
+            srows = []
+            for _, a in ngrp.iterrows():
+                whole = _store_row(a)
+                halves = _split_rows(a, whole)
+                for h in halves:
+                    rows.append(h)
+                    types.append("split")
+                    (non_l2l_rows if h["NEW/OLD"].endswith("NA")
+                     else l2l_rows).append(h)
+                if halves:
+                    # The store's own line closes its two halves, so the sheet
+                    # still shows the store as one thing. Labelled TOTAL, not
+                    # "2526FY Total" — that is the block subtotal's label three
+                    # rows down, and two different totals cannot share a name.
+                    rows.append({**whole, "NEW/OLD": "TOTAL"})
+                    types.append("storetotal")
+                else:
+                    rows.append(whole)
+                    types.append("store")
+                    (l2l_rows if _comparable_throughout(a, _l2l_start, _l2l_end)
+                     else non_l2l_rows).append(whole)
+                srows.append(whole)
             sdf = pd.DataFrame(srows)
             region_rows.append(sdf)
             rows.append(_total_row(region, f"{newold} Total", sdf))
@@ -745,6 +890,23 @@ def gd_sheet_report(df: pd.DataFrame, asof=None):
     gdf = pd.concat(grand_rows, ignore_index=True)
     rows.append(_total_row("Grand Total", "", gdf))
     types.append("grand")
+
+    # ★ THE FOOTER THAT MAKES THE SHEET SAY ITS OWN LIKE TO LIKE. Summing the
+    # comparable lines gives the figure the Executive Snapshot prints on page 1,
+    # to the rupee — the sheet now shows its working instead of disagreeing.
+    if l2l_rows or non_l2l_rows:
+        for label, part in (("LIKE TO LIKE", l2l_rows), ("NO L2L", non_l2l_rows)):
+            if not part:
+                continue
+            r = _total_row(label, "", pd.DataFrame(part))
+            # Only the compared columns mean anything on these lines. Blanked as
+            # NaN, not as "" — the renderers format a number column and an empty
+            # string is not one.
+            for col in _GD_VALUE_COLS:
+                if col not in _split_cols:
+                    r[col] = float("nan")
+            rows.append(r)
+            types.append("summary")
     return pd.DataFrame(rows, columns=GD_SHEET_COLS), types
 
 

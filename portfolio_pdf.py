@@ -64,6 +64,14 @@ _ROW_BG = {
     "grand":      (TOTAL_BG, True),
     "storetotal": (TOTAL_BG, True),
     "block":      (TOTAL_BG, True),
+    # A store shown as its comparable and non-comparable halves. Tinted a step
+    # under the header blue so the pair reads as detail belonging to the total
+    # beneath them, rather than as two more stores.
+    "split":      ((237, 246, 249), False),
+    # LIKE TO LIKE / NO L2L — the sheet's own summary of itself, and the figure
+    # page 1 prints. Header blue rather than a third yellow, so it does not read
+    # as one more total in a column of them.
+    "summary":    (HDR_BG, True),
 }
 
 # The VFL sheets in the same workbook use a graded tier palette instead of flat
