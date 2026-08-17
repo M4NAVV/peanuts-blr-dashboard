@@ -123,6 +123,40 @@ def test_a_normal_selection_is_untouched():
     y = PL.store_yoy(df, "YTD", ASOF)
     assert set(y["code"]) == {OPEN}, "the shut store drops out, as it always did"
 
+def test_last_year_never_runs_past_where_this_year_has_reached():
+    """A store dated to close LATER THIS MONTH was being given last year to the
+    month's end while this year had only reached the 16th — fifteen days it had
+    not had. Vega Circle Mall read -51.8% instead of -49.5% the moment its
+    closure date was entered, and threw a spurious "no L2L" line for the
+    fortnight of last year this year has not lived yet."""
+    df = _frame()
+    future = pd.Timestamp(2026, 8, 31)          # closes at the end of this month
+    real = PL.closed_map
+    PL.closed_map = lambda: {OPEN: future}
+    try:
+        cur, pri = PL._window_frames(df, "YTD", ASOF)
+        assert pri[pri["code"] == OPEN]["date"].max() <= ASOF - pd.DateOffset(years=1)
+        # and a closure already PAST still gets its whole closing month
+        PL.closed_map = lambda: {OPEN: pd.Timestamp(2026, 5, 31)}
+        cur, pri = PL._window_frames(df, "YTD", ASOF)
+        assert pri[pri["code"] == OPEN]["date"].max() == pd.Timestamp(2025, 5, 31)
+    finally:
+        PL.closed_map = real
+
+
+def test_the_closed_column_shows_what_the_master_says():
+    """The column used to come from the committed file while the capping and the
+    CL tag came from the master, so a freshly dated closure changed every figure
+    and left the sheet's own CLOSED column blank."""
+    df = _frame()
+    real = PL.closed_map
+    PL.closed_map = lambda: {OPEN: pd.Timestamp(2026, 8, 31)}
+    try:
+        a = PL.gd_store_attrs_dyn(df, ASOF).set_index("code")
+        assert a.loc[OPEN, "closed"] == "2026-08-31"
+    finally:
+        PL.closed_map = real
+
 
 if __name__ == "__main__":
     for name, fn in sorted(globals().items()):

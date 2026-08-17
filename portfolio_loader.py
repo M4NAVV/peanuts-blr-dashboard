@@ -318,9 +318,20 @@ def _window_frames(df: pd.DataFrame, kind: str, asof: pd.Timestamp):
     cl = closed_map()
     closed_by_code = pd.Series({c: cl[c] for c in ty_end.index if c in cl},
                                dtype="datetime64[ns]")
-    closed_end = (closed_by_code + pd.offsets.MonthEnd(0)) - pd.DateOffset(years=1)
-    ly_end_by_code = closed_end.reindex(ty_end.index).fillna(
-        asof - pd.DateOffset(years=1))
+    # ★ AND NEVER PAST WHERE THIS YEAR HAS GOT TO. The month-end cap is there so
+    # a store that shut on 30 April compares against the whole of last April —
+    # but for a store shutting LATER THIS MONTH it ran last year to the end of
+    # the month while this year had only reached the 16th, handing it fifteen
+    # days it had not had. Vega Circle Mall, dated to close on 31 August, read
+    # -51.8% instead of -49.5% the moment the date was entered, and threw a
+    # spurious "no L2L" line showing -100% for the fortnight last year that this
+    # year has not lived yet.
+    ly_cap = asof - pd.DateOffset(years=1)
+    closed_end = ((closed_by_code + pd.offsets.MonthEnd(0))
+                  - pd.DateOffset(years=1))
+    if len(closed_end):
+        closed_end = closed_end.clip(upper=ly_cap)
+    ly_end_by_code = closed_end.reindex(ty_end.index).fillna(ly_cap)
     ly_end = df["code"].map(ly_end_by_code)
     ly_end.index = df.index
     prior = df[(df["date"] >= prior_start) & (df["date"] <= ly_end)]
@@ -661,6 +672,17 @@ def gd_store_attrs_dyn(df: pd.DataFrame, asof=None) -> pd.DataFrame:
     # No active store (a selection of stores that have all closed) still has to
     # come back with the columns every caller reads — see `_GD_ATTR_COLS`.
     out = pd.DataFrame(rows) if rows else pd.DataFrame(columns=_GD_ATTR_COLS)
+    # ★ THE CLOSURE DATE COMES FROM THE MASTER, like the behaviour it drives.
+    # This column used to be read from the committed attributes file while the
+    # capping and the CL tag read `closed_map()` — so the day Manav dated Vega
+    # Circle Mall's closure in the master, every report changed and the sheet's
+    # own CLOSED column still said "(blank)". One fact, one source.
+    _cl = {int(k): pd.Timestamp(v) for k, v in closed_map().items()}
+    out["closed"] = [
+        _cl[int(c)].strftime("%Y-%m-%d") if int(c) in _cl else (s or "")
+        for c, s in zip(out["code"], out["closed"])
+    ]
+
     out["new_old"] = [_newold_from_doo(d, asof) for d in out["doo"]]
     # ★ A CLOSED STORE IS ITS OWN CLASS (chachu, 16 Aug: "moving them downwards
     # in the sheet under a new head"). It outranks the DOO tag: what matters
