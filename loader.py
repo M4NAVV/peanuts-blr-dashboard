@@ -133,17 +133,16 @@ def _to_number(series: pd.Series) -> pd.Series:
 
 
 def _parse_dates(series: pd.Series) -> pd.Series:
-    """Parse Bill Date robustly. The raw export is US-style M/D/YYYY, but once the
-    file has passed through Google Sheets it may come back ISO (YYYY-MM-DD) or in
-    another locale. Try the known format first, then fall back to inference."""
-    s = series.astype(str).str.strip()
-    # Known raw format from the Tableau export.
-    dt = pd.to_datetime(s, format="%m/%d/%Y", errors="coerce")
-    # Fill any that failed (e.g. Sheets reformatted them) with flexible parsing.
-    missing = dt.isna()
-    if missing.any():
-        dt.loc[missing] = pd.to_datetime(s[missing], errors="coerce")
-    return dt
+    """Parse Bill Date on the convention the column PROVES, not the one assumed.
+
+    The Tableau export writes month first. It used to be parsed on that belief,
+    with anything that failed handed to flexible inference — so a source that
+    changed format would have been 35% silently wrong with nothing failing at
+    all. `dates.parse` reads the convention off the data and records what it
+    found; `validation` refuses on the disagreement. See `dates.py`.
+    """
+    import dates
+    return dates.parse(series, expect=dates.MONTH_FIRST, label="vfl")
 
 
 DIVISION_ALIASES = {

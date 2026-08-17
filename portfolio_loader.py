@@ -126,13 +126,12 @@ def clean(raw: pd.DataFrame) -> pd.DataFrame:
 
     df["code"] = pd.to_numeric(df[C_CODE], errors="coerce").astype("Int64")
     df["sales"] = _to_number(df[C_TOTAL]).fillna(0.0)
-    # Day-first Indian dates; fall back to flexible parsing for any stragglers.
-    dt = pd.to_datetime(df[C_DATE], format="%d/%m/%Y", errors="coerce")
-    miss = dt.isna()
-    if miss.any():
-        dt.loc[miss] = pd.to_datetime(
-            df.loc[miss, C_DATE], dayfirst=True, errors="coerce")
-    df["date"] = dt
+    # Day-first Indian dates — but proved from the column rather than assumed,
+    # and by the same code the VFL feed uses, because the two conventions
+    # disagreeing is exactly how 12 August once became 8 December. See `dates.py`.
+    import dates as _dates
+    df["date"] = _dates.parse(df[C_DATE], expect=_dates.DAY_FIRST,
+                              label="portfolio")
     df = df[df["date"].notna() & df["code"].notna()].copy()
 
     # Join canonical identity from the master (dedupes location/brand casing).

@@ -298,6 +298,16 @@ def validate(df: pd.DataFrame, kind: str, *, date_col: str, store_col: str,
     base = _state().get(kind)
     rep.baseline = base
 
+    # What the date parser found when it read this feed. The labels are the gate's
+    # own kinds, so a feed that changed convention refuses here rather than
+    # rendering a third of the year on the wrong day. See `dates.py`.
+    try:
+        import dates as _dates
+        rep.problems.extend(_dates.problems(kind))
+        rep.warnings.extend(_dates.warnings(kind))
+    except Exception:
+        pass
+
     if day_order_looks_wrong(df, date_col):
         rep.problems.append(
             "no date in this feed falls after the 12th of any month, over a span "
