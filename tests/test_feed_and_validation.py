@@ -79,12 +79,24 @@ def test_the_cause_is_named_in_words():
 # --------------------------------------------------------------------------- #
 # validation — refusing, and warning
 # --------------------------------------------------------------------------- #
-def _frame(rows=1000, stores=20, day="2026-08-13", total_each=100.0):
-    return pd.DataFrame({
-        "date": [pd.Timestamp(day)] * rows,
-        "store": [f"S{i % stores}" for i in range(rows)],
-        "sales": [total_each] * rows,
-    })
+def _frame(rows=1000, stores=20, day="2026-08-13", total_each=100.0, span=60):
+    """`span` days of history ending on `day`.
+
+    It used to be a single date. That made every row-count case easy to write,
+    but it also made the frame something the gate can say nothing about: with no
+    remembered baseline and no committed snapshot, a one-day feed has no
+    reference and too little history for the per-store checks either. The gate
+    now says so, correctly, so the fixture carries a real span and the degenerate
+    case is asserted on purpose in `test_a_feed_with_no_history_is_not_silently_ok`.
+    """
+    n_days = max(1, rows // stores) if span > 1 else 1
+    days = pd.date_range(pd.Timestamp(day) - pd.Timedelta(days=n_days - 1),
+                         pd.Timestamp(day), freq="D")
+    # A product, not a round robin: every store reports on every day, which is
+    # what the real feeds look like and what keeps the per-store checks quiet.
+    return pd.DataFrame([
+        {"date": d, "store": f"S{s}", "sales": total_each}
+        for d in days for s in range(stores)])
 
 
 def _fresh_state():
@@ -100,6 +112,15 @@ def test_a_good_feed_passes_quietly():
     _fresh_state()
     r = _check(_frame())
     assert r.ok and not r.warnings, (r.problems, r.warnings)
+
+
+def test_a_feed_with_no_history_is_not_silently_ok():
+    """One day, nothing remembered, no snapshot — nothing could check it, and a
+    gate that cannot check must not read as a clean bill of health."""
+    _fresh_state()
+    r = _check(_frame(span=1))
+    assert r.ok
+    assert any("nothing could verify" in w for w in r.warnings), r.warnings
 
 
 def test_an_empty_feed_is_refused():

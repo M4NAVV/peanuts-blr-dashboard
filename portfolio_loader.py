@@ -287,6 +287,21 @@ def _window_frames(df: pd.DataFrame, kind: str, asof: pd.Timestamp):
     full last-year window (their last sale is ~as-of), so they're unaffected."""
     ty_end = _ty_end(df, asof)
     df = df[df["code"].isin(ty_end.index)]                      # active stores only
+
+    # ★ NO STORE IN THIS SELECTION TRADED THIS YEAR. It is not the same as "no
+    # rows": a store that shut last October still has a full year of history, so
+    # the frame arrives populated and the caller's `df.empty` guard passes. The
+    # per-store closure map below is then keyed on an empty index, and mapping a
+    # column of codes through an empty datetime Series raises `TypeError: Cannot
+    # cast DatetimeArray to dtype float64`.
+    #
+    # It reaches a user through the ordinary filters — the city ASANSOL, the
+    # brand LONGHORNS, the stores Forum Mall / Galaxy Mall / Nh31A were each one
+    # click away from a traceback, and every future closure adds another. Return
+    # the empty pair and let the reports say they have nothing to show.
+    if df.empty:
+        return df, df.copy()
+
     start = _anchored_start(df, kind, asof)
     start.index = df.index
     prior_start = start - pd.DateOffset(years=1)
@@ -558,6 +573,12 @@ GD_SHEET_COLS = [
     "Sum of PROJECTED YTD",
 ]
 _NEWOLD_ORDER = ["2526FY", "2526PY", "2526NA"]
+# The shape `gd_store_attrs_dyn` returns. Named because an EMPTY selection has to
+# return these columns too: built from an empty row list the frame has no columns
+# at all, and the next line — which reads `doo` — raised `KeyError: 'doo'`.
+_GD_ATTR_COLS = ["code", "region", "store_name_main", "location_main", "closed",
+                 "doo", "parent", "location_tl", "brand_order", "loc_order",
+                 "sba", "ca", "new_old"]
 _GD_VALUE_COLS = ["Sum of YTD_LY", "Sum of YTD_TY", "Sum of MTD_LY", "Sum of MTD_TY",
                   "Sum of DAY SALE FIGURE", "Sum of MONTH SALE LY",
                   "Sum of PROJECTED MTD", "Sum of LY FULL SALES", "Sum of PROJECTED YTD"]
@@ -622,7 +643,9 @@ def gd_store_attrs_dyn(df: pd.DataFrame, asof=None) -> pd.DataFrame:
                  "sba": float("nan"), "ca": float("nan")}
         rows.append(r)
 
-    out = pd.DataFrame(rows)
+    # No active store (a selection of stores that have all closed) still has to
+    # come back with the columns every caller reads — see `_GD_ATTR_COLS`.
+    out = pd.DataFrame(rows) if rows else pd.DataFrame(columns=_GD_ATTR_COLS)
     out["new_old"] = [_newold_from_doo(d, asof) for d in out["doo"]]
     for col in ["closed", "doo", "store_name_main", "location_main", "region",
                 "parent", "location_tl", "new_old"]:
@@ -639,6 +662,10 @@ def gd_sheet_report(df: pd.DataFrame, asof=None):
     (display_df, row_types). Figures are live; identity from gd_store_attrs."""
     asof = as_of(df) if asof is None else pd.Timestamp(asof)
     attrs = gd_store_attrs_dyn(df, asof)
+    # Nothing traded this year in this selection — every store in it has
+    # closed. Return the report's own empty shape so the tab can say so.
+    if attrs.empty:
+        return pd.DataFrame(columns=GD_SHEET_COLS), []
 
     # Current-FY windows (active-only, close-capped) reused from the report engine.
     mtd_cur, mtd_pri = _window_frames(df, "MTD", asof)
@@ -988,6 +1015,10 @@ def brand_wise_gd_report(df: pd.DataFrame, asof=None):
     asof = as_of(df) if asof is None else pd.Timestamp(asof)
     metrics = _gd_store_metrics(df, asof)
     attrs = gd_store_attrs_dyn(df, asof)
+    # Nothing traded this year in this selection — every store in it has
+    # closed. Return the report's own empty shape so the tab can say so.
+    if attrs.empty:
+        return pd.DataFrame(columns=BRAND_GD_COLS), []
 
     def _store_row(a):
         m = metrics[int(a["code"])]
@@ -1048,6 +1079,10 @@ def loc_wise_gd_report(df: pd.DataFrame, asof=None):
     asof = as_of(df) if asof is None else pd.Timestamp(asof)
     metrics = _gd_store_metrics(df, asof)
     attrs = gd_store_attrs_dyn(df, asof)
+    # Nothing traded this year in this selection — every store in it has
+    # closed. Return the report's own empty shape so the tab can say so.
+    if attrs.empty:
+        return pd.DataFrame(columns=LOC_GD_COLS), []
 
     def _store_row(a):
         c = int(a["code"])
@@ -1106,6 +1141,10 @@ def average_report(df: pd.DataFrame, asof=None):
     asof = as_of(df) if asof is None else pd.Timestamp(asof)
     metrics = _gd_store_metrics(df, asof)
     attrs = gd_store_attrs_dyn(df, asof)
+    # Nothing traded this year in this selection — every store in it has
+    # closed. Return the report's own empty shape so the tab can say so.
+    if attrs.empty:
+        return pd.DataFrame(columns=AVG_COLS), []
     fy_year = asof.year if asof.month >= 4 else asof.year - 1
     fy_start = pd.Timestamp(fy_year, 4, 1)
 
