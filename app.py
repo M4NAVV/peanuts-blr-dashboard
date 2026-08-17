@@ -1860,7 +1860,8 @@ _TAB_LABELS = [
     "🧾 VFL G/D", "🧾 VFL Gender", "📄 Report PDF",
     "📋 MTD / YTD Report", "📉 Degrowth", "🔎 Degrowth Drivers",
     "📸 Morning snapshots",
-    "🪔 Festive", "🧑‍🤝‍🧑 Gender G/D", "🏷️ Brand G/D", "🏬 Store × Brand G/D",
+    "🪔 Festive", "💸 DB REPORTS",
+    "🧑‍🤝‍🧑 Gender G/D", "🏷️ Brand G/D", "🏬 Store × Brand G/D",
     "⚖️ Gender Mix",
     "📊 Executive", "🎯 Day Targets", "🏙️ City-wise G/D", "📅 Monthly Contribution",
     "📐 Store Productivity", "Overview", "🏬 Stores",
@@ -2348,6 +2349,82 @@ if nav == "🪔 Festive":
     # sheets answer for the same stores and the same filters as everything else.
     _festive_tab(df_exec, vfl=True)
 
+
+# =========================================================================== #
+# DB REPORTS — the women's discount vs fresh report (Mohey & Manyavar stores)
+# =========================================================================== #
+if nav == "💸 DB REPORTS":
+    import discount as DISC
+    st.subheader("💸 DB Reports  ·  women's discount")
+    st.caption(
+        "**Mohey and Twamev Women, in the Mohey & Manyavar stores only.** "
+        "Menswear carries no promotions at all — a `Promotion Amount` has never "
+        "been written against a Manyavar or Twamev Men line — so the men's side "
+        "of a discount report could only ever print zero.")
+    _d_asof = pd.Timestamp(gd_asof_note(end_d))
+    _w = DISC.womens(df_exec)
+    _w = _w[(_w["date"] >= _d_asof.replace(day=1)) & (_w["date"] <= _d_asof)]
+    if _w.empty:
+        st.info("No women's trade in this month for the current filters.")
+    else:
+        _stores = DISC.mohey_stores(_d_asof)
+        _brands = DISC.brand_rows(_w)
+        _tot = next(b for b in _brands if b["brand"] == "TOTAL")
+        c = st.columns(4)
+        c[0].metric("Women's sale", inr(_tot["val"]))
+        c[1].metric("Discounted", inr(_tot["disc_val"]),
+                    f'{_tot["disc_val"] / _tot["val"] * 100:.1f}% of women\'s'
+                    if _tot["val"] else None)
+        c[2].metric("Discounted units", f'{int(_tot["disc_qty"]):,}',
+                    f'{_tot["disc_qty"] / _tot["qty"] * 100:.1f}% of units'
+                    if _tot["qty"] else None)
+        _ad = _tot["disc_val"] / _tot["disc_qty"] if _tot["disc_qty"] else 0
+        _af = _tot["fresh_val"] / _tot["fresh_qty"] if _tot["fresh_qty"] else 0
+        c[3].metric("Price achieved", inr(_ad),
+                    f"vs {inr(_af)} fresh" if _af else None, delta_color="off")
+        st.caption(
+            "⚠️ **No depth is shown, because the feed cannot support one.** There "
+            "is no MRP column, and since June every promotional line carries a "
+            "`Promotion Amount` exactly equal to its `Bill Amount` — so the field "
+            "says *that* a line was discounted, not *by how much*. The price "
+            "achieved above is what answers that question instead.")
+
+        _rows = DISC.store_rows(_w, _stores, DISC.ever_recorded(get_data()))
+        _disp = pd.DataFrame([{
+            "Store": r["store"],
+            "Mohey fresh": r["MOHEY"]["fresh_val"], "Qty": r["MOHEY"]["fresh_qty"],
+            "Mohey disc.": r["MOHEY"]["disc_val"], "Qty ": r["MOHEY"]["disc_qty"],
+            "Twamev-W fresh": r["TWAMEV-WOMEN"]["fresh_val"],
+            "Twamev-W disc.": r["TWAMEV-WOMEN"]["disc_val"],
+            "Total women's": r["val"], "Units": r["qty"],
+            "Disc %": (r["disc_val"] / r["val"] * 100) if (r["val"] and r["records"]) else None,
+        } for r in _rows if r["traded"]])
+        st.markdown("##### Store by store")
+        st.markdown(styled_report_html(
+            _disp, money_cols=["Mohey fresh", "Mohey disc.", "Twamev-W fresh",
+                               "Twamev-W disc.", "Total women's"],
+            pct_cols=["Disc %"], compact=True), unsafe_allow_html=True)
+        _silent = [r["store"] for r in _rows if r["traded"] and not r["records"]]
+        if _silent:
+            st.caption(
+                "ℹ️ **Blank discount %** — no Promotion Amount has ever reached "
+                "us from these stores, in any month, so their discount cannot be "
+                "told apart from nil: " + ", ".join(_silent) + ".")
+
+        if st.button("🧾 Generate PDF", key="disc_pdf", type="primary",
+                     use_container_width=True):
+            with st.spinner("Building…"):
+                try:
+                    st.session_state["disc_out"] = DISC.build_pdf(
+                        get_data(), _d_asof, f"Live to {_d_asof:%d %b %Y}")
+                except Exception as e:                # surface, don't crash tab
+                    st.session_state["disc_out"] = None
+                    st.error(f"Could not build: {e}")
+        if st.session_state.get("disc_out"):
+            _n, _p = st.session_state["disc_out"]
+            st.success(f"Ready — {_n}")
+            st.download_button(f"⬇ Download {_n}", _p, file_name=_n,
+                               mime="application/pdf", use_container_width=True)
 
 # =========================================================================== #
 # GENDER MIX — contribution %  (Region × Gender + store detail)
