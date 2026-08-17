@@ -58,6 +58,10 @@ import pandas as pd
 # sheets are append-only in practice — so this is deliberately generous: it
 # fires on the 54% truncation we have seen, not on a day's ordinary variation.
 MIN_ROW_FRACTION = 0.70
+# Short of a refusal but worth a word. Rows shrinking at all is odd for an
+# append-only sheet; the one legitimate reason is a year-end archive, which is
+# exactly the kind of thing to be told about rather than to block on.
+ROW_WARN_FRACTION = 0.95
 # The estate moving by more than this against the last good load is worth a
 # look, not a refusal: stores do open and close.
 STORE_DROP_WARN = 1
@@ -142,6 +146,44 @@ def _closed_codes() -> set:
         return {str(c) for c in master_lookup.closed()}
     except Exception:
         return set()
+
+
+def duplicated_rows(df: pd.DataFrame, *, value_col: str) -> int:
+    """Whole rows repeated while carrying a value — a paste done twice.
+
+    Counting repeated store-days would not work: they are NORMAL here. The night
+    fill files one row per brand line, so store 107 legitimately has four rows on
+    one date, and 14 store-days carry more than one row on any ordinary day.
+
+    Repeated rows carrying ZERO are normal too, and for the same reason — two
+    brand lines of a store that took nothing are identical by nature. Measured
+    across the whole portfolio feed there are five such rows today and every one
+    is a zero. Rows that repeat AND carry money: none, ever. That is the signal.
+    """
+    if df is None or df.empty or value_col not in df:
+        return 0
+    v = pd.to_numeric(df[value_col], errors="coerce").fillna(0)
+    live = df[v > 0]
+    return int(live.duplicated(keep=False).sum())
+
+
+def day_order_looks_wrong(df: pd.DataFrame, date_col: str) -> bool:
+    """Dates that never pass the 12th, over a span far longer than a month.
+
+    The signature of a day-first sheet read month-first (or the reverse): every
+    date whose day is 13 or higher fails to parse or lands somewhere else, and
+    what survives is a calendar with no second half to any month. It is how 12
+    August once became 8 December.
+
+    A future date already gets refused above, but a flip does not always land in
+    the future — 5 April read the other way is 4 May, which is merely wrong.
+    """
+    if df is None or df.empty or date_col not in df:
+        return False
+    d = pd.to_datetime(df[date_col], errors="coerce").dropna()
+    if d.empty or (d.max() - d.min()).days < 40:
+        return False
+    return bool(d.dt.day.max() <= 12)
 
 
 def _has_history(df: pd.DataFrame, date_col: str,
@@ -256,6 +298,18 @@ def validate(df: pd.DataFrame, kind: str, *, date_col: str, store_col: str,
     base = _state().get(kind)
     rep.baseline = base
 
+    if day_order_looks_wrong(df, date_col):
+        rep.problems.append(
+            "no date in this feed falls after the 12th of any month, over a span "
+            "of more than a month — the day and month are almost certainly being "
+            "read the wrong way round")
+    dupes = duplicated_rows(df, value_col=value_col)
+    if dupes:
+        rep.problems.append(
+            f"{dupes:,} whole rows appear more than once while carrying a value "
+            "— a paste run twice looks exactly like this, and every figure built "
+            "on them would be double counted")
+
     if f["max_date"] is None:
         rep.problems.append("not one row carries a readable date")
     elif pd.Timestamp(f["max_date"]) > today:
@@ -268,9 +322,15 @@ def validate(df: pd.DataFrame, kind: str, *, date_col: str, store_col: str,
     # no longer unguarded. Both are named in the message: "smaller than the
     # snapshot in the repo" and "smaller than an hour ago" mean different things.
     floor = _floor(kind)
-    ref, ref_name = ((base, "the last good load") if base and base.get("rows")
-                     else (floor, f"the committed {floor['source']}") if floor
-                     else (None, None))
+    # ★ THE LARGER OF THE TWO, NOT THE MOST RECENT. A truncated load that slipped
+    # through before there was anything to compare it against became the
+    # baseline, and would then have quietly lowered the bar for every load after
+    # it. Taking the larger means a poisoned baseline can only ever be ignored.
+    ref, ref_name = (None, None)
+    if base and base.get("rows"):
+        ref, ref_name = base, "the last good load"
+    if floor and floor.get("rows") and (not ref or floor["rows"] > ref["rows"]):
+        ref, ref_name = floor, f"the committed {floor['source']}"
     if ref and ref.get("rows"):
         frac = f["rows"] / ref["rows"]
         if frac < MIN_ROW_FRACTION:
@@ -278,6 +338,21 @@ def validate(df: pd.DataFrame, kind: str, *, date_col: str, store_col: str,
                 f"the feed lost {(1 - frac) * 100:,.0f}% of its rows against "
                 f"{ref_name} — {f['rows']:,} now against {ref['rows']:,}. "
                 "A truncated export looks exactly like this.")
+        elif frac < ROW_WARN_FRACTION:
+            # Between "obviously broken" and "fine" there is a band worth saying
+            # out loud. A refusal here would be wrong — a year-end archive of old
+            # rows is a legitimate reason for the feed to shrink — but a quiet
+            # 10% loss is how a bad export gets into a deck.
+            rep.warnings.append(
+                f"the feed is {(1 - frac) * 100:,.0f}% smaller than {ref_name} "
+                f"({f['rows']:,} against {ref['rows']:,}) — small enough to be "
+                "deliberate, big enough to check")
+        # The committed snapshot serving as the feed itself, not as a reference.
+        if floor and f["rows"] == floor["rows"]:
+            rep.warnings.append(
+                f"this is the committed {floor['source']}, not the live sheet — "
+                "the source could not be reached, so these figures stop where "
+                "that file stops")
     elif not ref and not _has_history(df, date_col):
         # Never silently skip every check. Said only when nothing could run: with
         # no reference AND too little history for the per-store comparison, this

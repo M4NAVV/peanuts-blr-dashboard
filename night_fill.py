@@ -42,6 +42,7 @@ stores differing.
 from __future__ import annotations
 
 import os
+import re
 
 import pandas as pd
 
@@ -53,6 +54,14 @@ URL_ENV = "NIGHT_FILL_URL"
 # "no CODE or Date column"; the derived URL is tried as a fallback for exactly
 # that case, so a mangled secret self-corrects.
 _GID = "1754360378"
+
+# ★ ADDRESSED BY NAME FIRST, gid SECOND (17 Aug). A gid is what a URL loses when
+# it is edited by hand, and what changes if a tab is deleted and recreated — the
+# night fill lost its gid once and silently served the workbook's FIRST tab, a
+# failure that looked exactly like a working configuration. A name survives both.
+# The gid stays as the fallback, so nothing breaks if a tab is renamed instead.
+_SHEET = "Night Tinku Fill"
+
 _PORTFOLIO_ENV = "PORTFOLIO_CSV_URL"
 
 # Raw portfolio sheet schema — appended rows must look exactly like sheet rows.
@@ -100,10 +109,23 @@ def _derived():
             f"/export?format=csv&gid={_GID}") if m else None
 
 
+def _by_name():
+    """The tab addressed by NAME — see the note beside `_SHEET`."""
+    import urllib.parse
+    base = _secret(_PORTFOLIO_ENV)
+    m = re.search(r"/spreadsheets/d/([A-Za-z0-9_-]+)", str(base)) if base else None
+    return (f"https://docs.google.com/spreadsheets/d/{m.group(1)}"
+            f"/gviz/tq?tqx=out:csv&sheet={urllib.parse.quote(_SHEET)}") if m else None
+
+
 def _urls():
-    """Every URL worth trying, best first, without duplicates."""
+    """Every URL worth trying, best first, without duplicates.
+
+    Name before gid: this tab is the one that lost its gid and silently served
+    the workbook's first tab, which is the failure the ordering exists for.
+    """
     out = []
-    for u in (_secret(URL_ENV), _derived()):
+    for u in (_secret(URL_ENV), _by_name(), _derived()):
         if u and u not in out:
             out.append(u)
     return out

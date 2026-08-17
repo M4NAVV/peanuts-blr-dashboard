@@ -127,3 +127,63 @@ if __name__ == "__main__":
             fn()
             print("ok  ", name)
     print("all gate-baseline tests passed")
+
+
+# --------------------------------------------------------------------------- #
+# What arrives from the sheets — section C of the fragility audit
+# --------------------------------------------------------------------------- #
+def test_a_paste_run_twice_is_refused():
+    """Repeated store-days are NORMAL (one row per brand line). Repeated whole
+    rows carrying money are not, and there are none in either live feed."""
+    _fresh_container()
+    df = _frame()
+    doubled = pd.concat([df, df.head(50)], ignore_index=True)
+    rep = V.validate(doubled, "synthetic", **KW)
+    assert rep.problems and "more than once" in rep.problems[0]
+
+
+def test_repeated_rows_carrying_zero_are_left_alone():
+    """Two brand lines of a store that took nothing are identical by nature —
+    five such rows exist in the live portfolio feed today."""
+    _fresh_container()
+    df = _frame()
+    zeros = df.head(5).copy()
+    zeros["sales"] = 0.0
+    rep = V.validate(pd.concat([df, zeros, zeros], ignore_index=True),
+                     "synthetic", **KW)
+    assert not rep.problems, rep.problems
+
+
+def test_a_day_month_flip_is_refused():
+    """Every date lands on the 12th or before, over a span of years."""
+    _fresh_container()
+    df = _frame(start="2026-01-01", end=END)
+    df = df[df["date"].dt.day <= 12].copy()
+    df["date"] = df["date"].map(lambda t: pd.Timestamp(t.year, t.day, t.month))
+    assert V.day_order_looks_wrong(df, "date")
+
+
+def test_an_ordinary_feed_is_not_mistaken_for_a_flip():
+    assert not V.day_order_looks_wrong(_frame(), "date")
+    # ...and a short span is never judged at all: a fortnight of data can
+    # legitimately have no date after the 12th.
+    short = _frame(start=END - pd.Timedelta(days=10), end=END)
+    assert not V.day_order_looks_wrong(short, "date")
+
+
+def test_a_poisoned_baseline_cannot_lower_the_bar():
+    """A truncated load that became the reference must be ignored in favour of
+    the committed snapshot, not trusted because it is more recent."""
+    _fresh_container()
+    full = _frame()
+    V._floor_original = V._floor
+    V._floor = lambda kind: {"rows": len(full), "source": "committed snapshot"}
+    try:
+        tiny = full.sample(frac=0.3, random_state=3)
+        V._save("synthetic", V.fingerprint(tiny, date_col="date",
+                                           store_col="code", value_col="sales"))
+        rep = V.validate(tiny, "synthetic", **KW)
+        assert rep.problems, "the floor must still refuse it"
+        assert "committed snapshot" in rep.problems[0]
+    finally:
+        V._floor = V._floor_original

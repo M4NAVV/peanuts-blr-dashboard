@@ -28,6 +28,14 @@ import pandas as pd
 
 URL_ENV = "TARGETS_URL"
 _GID = "1007333059"
+
+# ★ ADDRESSED BY NAME FIRST, gid SECOND (17 Aug). A gid is what a URL loses when
+# it is edited by hand, and what changes if a tab is deleted and recreated — the
+# night fill lost its gid once and silently served the workbook's FIRST tab, a
+# failure that looked exactly like a working configuration. A name survives both.
+# The gid stays as the fallback, so nothing breaks if a tab is renamed instead.
+_SHEET = "Targets"
+
 _PORTFOLIO_ENV = "PORTFOLIO_CSV_URL"
 _MONTHS = ("Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
            "Jan", "Feb", "Mar")
@@ -62,8 +70,19 @@ def _num(s):
 
 
 def load(url=None) -> pd.DataFrame | None:
-    """One row per store: code, year, and a column per filled month."""
-    url = url or _url()
+    """One row per store: code, year, and a column per filled month.
+
+    Tries the tab by name before falling back to its gid — a wrong gid serves
+    the workbook's first tab, which reads as a configuration that works.
+    """
+    for candidate in ([url] if url else _candidates()):
+        got = _load_one(candidate)
+        if got is not None:
+            return got
+    return None
+
+
+def _load_one(url) -> pd.DataFrame | None:
     if not url:
         return None
     try:
@@ -109,3 +128,22 @@ def for_month(day) -> dict:
         if e:
             out[int(r["code"])] = e
     return out
+
+
+def _candidates():
+    """Every URL worth trying, best first: an explicit override, then the tab by
+    NAME, then by gid. See the note beside `_SHEET`."""
+    import urllib.parse
+    out = []
+    explicit = _from_secret(URL_ENV)
+    if explicit:
+        out.append(explicit)
+    base = _from_secret(_PORTFOLIO_ENV)
+    m = re.search(r"/spreadsheets/d/([A-Za-z0-9_-]+)", str(base)) if base else None
+    if m:
+        wid = m.group(1)
+        out.append(f"https://docs.google.com/spreadsheets/d/{wid}"
+                   f"/gviz/tq?tqx=out:csv&sheet={urllib.parse.quote(_SHEET)}")
+        out.append(f"https://docs.google.com/spreadsheets/d/{wid}"
+                   f"/export?format=csv&gid={_GID}")
+    return [u for i, u in enumerate(out) if u and u not in out[:i]]

@@ -18,6 +18,7 @@ than wrong.
 from __future__ import annotations
 
 import os
+import re
 
 import pandas as pd
 
@@ -40,6 +41,14 @@ _EXTRACT = os.path.join(os.path.dirname(__file__), "store_attrs.csv")
 # every closure and opening date came from the committed extract, and Manav
 # dating ten closures in the sheet changed nothing on screen.
 _GID = "1723658342"
+
+# ★ ADDRESSED BY NAME FIRST, gid SECOND (17 Aug). A gid is what a URL loses when
+# it is edited by hand, and what changes if a tab is deleted and recreated — the
+# night fill lost its gid once and silently served the workbook's FIRST tab, a
+# failure that looked exactly like a working configuration. A name survives both.
+# The gid stays as the fallback, so nothing breaks if a tab is renamed instead.
+_SHEET = "storemaster"
+
 _PORTFOLIO_ENV = "PORTFOLIO_CSV_URL"
 _LAST_PROBLEM = None
 
@@ -98,11 +107,20 @@ def carpet() -> dict:
 def _read():
     """The live master as a frame, or None — saying why, never silently."""
     global _LAST_PROBLEM
-    url = _master_url()
-    if not url:
+    urls = _candidates()
+    if not urls:
         _LAST_PROBLEM = ("no master URL — neither $STORE_MASTER_URL nor "
                          "$PORTFOLIO_CSV_URL is set")
         return None
+    for i, url in enumerate(urls):
+        got = _read_one(url)
+        if got is not None:
+            return got
+    return None
+
+
+def _read_one(url):
+    global _LAST_PROBLEM
     try:
         m = pd.read_csv(url, dtype=str)
         m.columns = [str(c).strip() for c in m.columns]
@@ -164,3 +182,22 @@ def opened() -> dict:
 def closed() -> dict:
     """store code -> closure date, the LAST month still counted (Manav, 7 Aug)."""
     return _dates("CLOSURE DATE", "closed")
+
+
+def _candidates():
+    """Every URL worth trying, best first: an explicit override, then the tab by
+    NAME, then by gid. See the note beside `_SHEET`."""
+    import urllib.parse
+    out = []
+    explicit = _secret(MASTER_URL_ENV)
+    if explicit:
+        out.append(explicit)
+    base = _secret(_PORTFOLIO_ENV)
+    m = re.search(r"/spreadsheets/d/([A-Za-z0-9_-]+)", str(base)) if base else None
+    if m:
+        wid = m.group(1)
+        out.append(f"https://docs.google.com/spreadsheets/d/{wid}"
+                   f"/gviz/tq?tqx=out:csv&sheet={urllib.parse.quote(_SHEET)}")
+        out.append(f"https://docs.google.com/spreadsheets/d/{wid}"
+                   f"/export?format=csv&gid={_GID}")
+    return [u for i, u in enumerate(out) if u and u not in out[:i]]
