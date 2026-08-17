@@ -27,6 +27,8 @@ import projections as PROJ
 COL_STORE = "SHORT_NAME"
 COL_DATE = "Bill Date"
 COL_BILL = "Bill No"
+# One bill, identified the only way it is unique — see `clean`.
+COL_BILL_UID = "bill_uid"
 COL_MOBILE = "CUSTOMER_MOBILE"
 COL_SALESPERSON = "Name (Dm Salesperson)"
 COL_DIVISION = "Division"
@@ -207,6 +209,31 @@ def clean(df: pd.DataFrame) -> pd.DataFrame:
         .str.strip()
     )
 
+    # ★★ WHAT MAKES A BILL ONE BILL: STORE, DAY AND NUMBER TOGETHER (17 Aug).
+    #
+    # `Bill No` is a PER-STORE sequence — `PM/00029/Apr-26` exists at 22 stores
+    # at once — so counting distinct bill numbers across stores merges bills that
+    # have nothing to do with each other. It understated the VFL year-to-date by
+    # 61% (10,285 against 26,208) and doubled the average ticket with it
+    # (Rs 28,306 against Rs 12,884), which is where "bills collapsing, ticket way
+    # up" came from: bills actually moved -1.8%, not -18.7%.
+    #
+    # The DAY belongs in the key too, and South proves why: at the 19 April
+    # takeover the previous operator's sequence and ours overlap, so CMH Road has
+    # a real `PM/00001/Apr-26` on the 1st AND another on the 19th. 1,597 pairs
+    # look like that, every one of them around a takeover.
+    #
+    # ★ NULL STAYS NULL. The night fill appends rows with no bill number at all,
+    # because a night's takings carry no bill numbers and inventing them would be
+    # fabricating transactions. Building the key by string concatenation would
+    # have turned each of those into the countable bill "store|date|nan" — so the
+    # key is null wherever the number is, and `nunique` keeps ignoring them.
+    _bill = df[COL_BILL].astype(str).str.strip()
+    df[COL_BILL_UID] = (
+        df[COL_STORE_LABEL].astype(str) + "␟"
+        + df["date"].dt.strftime("%Y-%m-%d") + "␟" + _bill
+    ).where(df[COL_BILL].notna() & _bill.ne("") & _bill.ne("nan"), pd.NA)
+
     # Indian fiscal calendar (Apr–Mar). FY26 = Apr 2025 → Mar 2026.
     fy_start_year = df["date"].dt.year.where(df["date"].dt.month >= 4,
                                              df["date"].dt.year - 1)
@@ -293,11 +320,11 @@ def headline_kpis(df: pd.DataFrame) -> dict:
     """Top-line KPIs for the overview cards."""
     total_sales = df[COL_AMOUNT].sum()
     total_units = df[COL_QTY].sum()
-    bills = df[COL_BILL].nunique()
+    bills = df[COL_BILL_UID].nunique()
     customers = df[COL_MOBILE].replace("", pd.NA).nunique()
     discount = df[COL_PROMO].sum()
 
-    per_bill = df.groupby(COL_BILL).agg(
+    per_bill = df.groupby(COL_BILL_UID).agg(
         amt=(COL_AMOUNT, "sum"), qty=(COL_QTY, "sum")
     )
     atv = per_bill["amt"].mean() if len(per_bill) else 0
@@ -306,7 +333,7 @@ def headline_kpis(df: pd.DataFrame) -> dict:
 
     cust_bills = (
         df[df[COL_MOBILE].replace("", pd.NA).notna()]
-        .groupby(COL_MOBILE)[COL_BILL]
+        .groupby(COL_MOBILE)[COL_BILL_UID]
         .nunique()
     )
     repeat_rate = (cust_bills > 1).mean() * 100 if len(cust_bills) else 0
@@ -330,7 +357,7 @@ def monthly_summary(df: pd.DataFrame) -> pd.DataFrame:
         df.groupby("month")
         .agg(
             sales=(COL_AMOUNT, "sum"),
-            bills=(COL_BILL, "nunique"),
+            bills=(COL_BILL_UID, "nunique"),
             units=(COL_QTY, "sum"),
             discount=(COL_PROMO, "sum"),
         )
@@ -345,7 +372,7 @@ def monthly_summary(df: pd.DataFrame) -> pd.DataFrame:
 def daily_summary(df: pd.DataFrame) -> pd.DataFrame:
     g = (
         df.groupby("date")
-        .agg(sales=(COL_AMOUNT, "sum"), bills=(COL_BILL, "nunique"), units=(COL_QTY, "sum"))
+        .agg(sales=(COL_AMOUNT, "sum"), bills=(COL_BILL_UID, "nunique"), units=(COL_QTY, "sum"))
         .reset_index()
         .sort_values("date")
     )
@@ -359,7 +386,7 @@ def dimension_summary(df: pd.DataFrame, col: str, top: int | None = None) -> pd.
         .agg(
             sales=(COL_AMOUNT, "sum"),
             units=(COL_QTY, "sum"),
-            bills=(COL_BILL, "nunique"),
+            bills=(COL_BILL_UID, "nunique"),
         )
         .reset_index()
         .sort_values("sales", ascending=False)
@@ -375,7 +402,7 @@ def salesperson_summary(df: pd.DataFrame) -> pd.DataFrame:
         .agg(
             sales=(COL_AMOUNT, "sum"),
             units=(COL_QTY, "sum"),
-            bills=(COL_BILL, "nunique"),
+            bills=(COL_BILL_UID, "nunique"),
         )
         .reset_index()
         .sort_values("sales", ascending=False)
@@ -391,7 +418,7 @@ def store_summary(df: pd.DataFrame) -> pd.DataFrame:
         .agg(
             sales=(COL_AMOUNT, "sum"),
             units=(COL_QTY, "sum"),
-            bills=(COL_BILL, "nunique"),
+            bills=(COL_BILL_UID, "nunique"),
             customers=("mobile_clean", "nunique"),
         )
         .reset_index()
@@ -419,7 +446,7 @@ def customer_stats(df: pd.DataFrame) -> dict:
     # First purchase date per customer.
     first = valid.groupby(COL_MOBILE)["date"].min().rename("first_date")
     bills = (
-        valid.groupby([COL_MOBILE, COL_BILL])
+        valid.groupby([COL_MOBILE, COL_BILL_UID])
         .agg(date=("date", "min"), amt=(COL_AMOUNT, "sum"))
         .reset_index()
         .merge(first, on=COL_MOBILE)
@@ -428,7 +455,7 @@ def customer_stats(df: pd.DataFrame) -> dict:
 
     top = (
         valid.groupby(COL_MOBILE)
-        .agg(spend=(COL_AMOUNT, "sum"), visits=(COL_BILL, "nunique"))
+        .agg(spend=(COL_AMOUNT, "sum"), visits=(COL_BILL_UID, "nunique"))
         .reset_index()
         .sort_values("spend", ascending=False)
         .head(20)
@@ -572,7 +599,7 @@ def _agg_base(work: pd.DataFrame, group_cols: list[str]) -> pd.DataFrame:
             sales=(COL_AMOUNT, "sum"),
             net_sales=("net_amount", "sum"),
             units=(COL_QTY, "sum"),
-            bills=(COL_BILL, "nunique"),
+            bills=(COL_BILL_UID, "nunique"),
             customers=("mobile_clean", "nunique"),
             stores=(COL_STORE_LABEL, "nunique"),
             discount=(COL_PROMO, "sum"),
@@ -614,7 +641,7 @@ def _sply(start: pd.Timestamp, end: pd.Timestamp):
 def _window_metrics(df: pd.DataFrame, start: pd.Timestamp, end: pd.Timestamp) -> dict:
     sub = df[(df["date"] >= start) & (df["date"] <= end)]
     sales = sub[COL_AMOUNT].sum()
-    bills = sub[COL_BILL].nunique()
+    bills = sub[COL_BILL_UID].nunique()
     units = sub[COL_QTY].sum()
     return {
         "sales": sales,
@@ -877,7 +904,7 @@ def _frame_metrics(f: pd.DataFrame) -> dict:
                if "_provisional" in f.columns else f)
     sales = f[COL_AMOUNT].sum()
     units = f[COL_QTY].sum()
-    bills = int(settled[COL_BILL].nunique())
+    bills = int(settled[COL_BILL_UID].nunique())
     s_sales = settled[COL_AMOUNT].sum()
     return {"sales": sales, "bills": bills, "units": int(units),
             "atv": s_sales / bills if bills else 0.0,
@@ -1004,7 +1031,7 @@ def all_scalar_kpis(df: pd.DataFrame) -> dict[str, tuple[float, bool]]:
     sales = df[COL_AMOUNT].sum()
     net = df["net_amount"].sum()
     units = df[COL_QTY].sum()
-    bills = df[COL_BILL].nunique()
+    bills = df[COL_BILL_UID].nunique()
     customers = df["mobile_clean"].nunique()
     stores = df[COL_STORE_LABEL].nunique()
     discount = df[COL_PROMO].sum()
