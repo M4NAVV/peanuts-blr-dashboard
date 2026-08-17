@@ -187,3 +187,14 @@ def test_a_poisoned_baseline_cannot_lower_the_bar():
         assert "committed snapshot" in rep.problems[0]
     finally:
         V._floor = V._floor_original
+
+
+def test_a_recorded_closure_is_excluded_on_a_LABEL_keyed_feed_too():
+    """The two feeds are keyed differently — the portfolio sheet by code, the VFL
+    sheet by store name — and a set of codes matched nothing on the VFL side.
+    Roodraksh Mall, shut on 31 July and recorded as such, was reported as a store
+    that had stopped reporting for no reason. A warning that cries wolf is worse
+    than no warning."""
+    shut = V._closed_codes()
+    assert any(x.isdigit() for x in shut), "codes, for the portfolio feed"
+    assert any(not x.isdigit() for x in shut), "and labels, for the VFL feed"

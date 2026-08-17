@@ -138,14 +138,30 @@ def _floor(kind: str) -> dict | None:
 def _closed_codes() -> set:
     """Stores the master says have shut, so they are not reported as missing.
 
+    ★ BY CODE **AND** BY STORE LABEL. The two feeds are keyed differently — the
+    portfolio sheet by code, the VFL sheet by name — and a set of codes silently
+    matched nothing on the VFL side. Roodraksh Mall, shut on 31 July and recorded
+    as such, was reported as a store that had stopped reporting for no reason. A
+    warning that cries wolf is worse than no warning: the next one gets ignored.
+
     Read defensively: this is a courtesy to the message, not a check of its own,
     and a master that cannot be reached must not stop the feed being validated.
     """
+    out = set()
     try:
         import master_lookup
-        return {str(c) for c in master_lookup.closed()}
+        shut = set(master_lookup.closed())
+        out |= {str(c) for c in shut}
     except Exception:
-        return set()
+        return out
+    try:
+        import loader
+        m = loader.load_store_master()
+        out |= {str(n) for n, c in zip(m["tableau_name"], m["code"])
+                if pd.notna(c) and int(c) in shut}
+    except Exception:
+        pass                       # codes alone still cover the portfolio feed
+    return out
 
 
 def duplicated_rows(df: pd.DataFrame, *, value_col: str) -> int:
