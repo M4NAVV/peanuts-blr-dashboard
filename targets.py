@@ -1,15 +1,19 @@
 """
 Targets — the year's and each month's, per store.
 
-A tab of the same workbook: one row per store per brand line, with a
-`YEAR TARGET` column and twelve month columns (Apr … Mar). A store's target sits
-on whichever brand line it was entered against and the others are blank, so
-figures are SUMMED per store — the same "once per store" pattern as the night
-fill's bills and footfall.
+The `Targets New` tab of the same workbook — HIS SOURCE OF TRUTH since 18 Aug
+2026 — with one row per store per brand line, a `YEAR TARGET` column and twelve
+month columns (APR … MAR). A store's target sits on whichever brand line it was
+entered against and the others are blank, so figures are SUMMED per store — the
+same "once per store" pattern as the night fill's bills and footfall.
 
 Verified against the 09-Aug night SMS, all eight South stores exact on both:
 `YEAR TARGET` is that report's YTD TARGET (85,78,75,000 for South) and the month
 column is its MTD TARGET (5,94,00,000 for August).
+
+⚠️ Column names are matched WITHOUT CASE. They were not until 18 Aug, and the
+mismatch (APR in the tab, Apr in this file) emptied every month target silently
+while the year target kept loading — see the note in `_load_one`.
 
 ★ THE DAY TARGET IS NOT HERE. It is the one target that moves daily, so it lives
 in the night fill beside the day's figures; see `night_fill`.
@@ -27,14 +31,19 @@ import re
 import pandas as pd
 
 URL_ENV = "TARGETS_URL"
-_GID = "1007333059"
 
-# ★ ADDRESSED BY NAME FIRST, gid SECOND (17 Aug). A gid is what a URL loses when
-# it is edited by hand, and what changes if a tab is deleted and recreated — the
-# night fill lost its gid once and silently served the workbook's FIRST tab, a
-# failure that looked exactly like a working configuration. A name survives both.
-# The gid stays as the fallback, so nothing breaks if a tab is renamed instead.
-_SHEET = "Targets"
+# ★★ THE SOURCE OF TRUTH IS THE `Targets New` TAB (Manav, 18 Aug: "i have added
+# a new targets new sheet which is the source of truth now for all target
+# related calculations"). The older `Targets` tab (gid 1007333059) is NO LONGER
+# READ AT ALL — not even as a fallback. Today the two agree to the rupee, so the
+# switch moves no number; the moment they diverge, a silent fall-back to the
+# superseded tab would be worse than showing nothing, which is why it is gone.
+#
+# ADDRESSED BY NAME, because a gid is what a URL loses when it is edited by hand
+# and what changes if a tab is deleted and recreated. A wrong NAME is safe here:
+# gviz answers it with the workbook's FIRST tab, whose columns are transactions,
+# and `_load_one` rejects anything without CODE and YEAR TARGET.
+_SHEET = "Targets New"
 
 _PORTFOLIO_ENV = "PORTFOLIO_CSV_URL"
 _MONTHS = ("Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
@@ -55,12 +64,21 @@ def _url():
     explicit = _from_secret(URL_ENV)
     if explicit:
         return explicit
-    base = _from_secret(_PORTFOLIO_ENV)
-    if not base:
-        return None
-    m = re.search(r"/spreadsheets/d/([A-Za-z0-9_-]+)", str(base))
-    return (f"https://docs.google.com/spreadsheets/d/{m.group(1)}"
-            f"/export?format=csv&gid={_GID}") if m else None
+    c = _candidates()
+    return c[0] if c else None
+
+
+_PROBLEM = None
+
+
+def last_problem():
+    """Why the last load gave less than it should have, in his words, or None.
+
+    A target that quietly fails to arrive is indistinguishable from a target
+    nobody set — and that is exactly how twelve month columns went missing
+    unnoticed. The reports ask this and print it.
+    """
+    return _PROBLEM
 
 
 def _num(s):
@@ -75,25 +93,52 @@ def load(url=None) -> pd.DataFrame | None:
     Tries the tab by name before falling back to its gid — a wrong gid serves
     the workbook's first tab, which reads as a configuration that works.
     """
+    global _PROBLEM
+    _PROBLEM = None
     for candidate in ([url] if url else _candidates()):
         got = _load_one(candidate)
         if got is not None:
             return got
+    if _PROBLEM is None:
+        _PROBLEM = (f"the '{_SHEET}' tab could not be read — every target "
+                    f"column is blank until it can be")
     return None
 
 
 def _load_one(url) -> pd.DataFrame | None:
+    global _PROBLEM
     if not url:
         return None
     try:
         d = pd.read_csv(url, dtype=str)
         d.columns = [str(c).strip() for c in d.columns]
-        if "CODE" not in d.columns or "YEAR TARGET" not in d.columns:
+        # ★ HEADERS ARE MATCHED WITHOUT REGARD TO CASE (18 Aug). The tab writes
+        # APR..MAR in capitals and this module named them Apr..Mar, so `m in
+        # d.columns` was False twelve times over and EVERY MONTH TARGET CAME
+        # BACK EMPTY — the night SMS and target-vs-achievement printed no MTD or
+        # YTD target at all, while the year target loaded fine and made the feed
+        # look healthy. The columns this module returns keep their title case,
+        # so nothing downstream changes.
+        by_upper = {c.upper(): c for c in d.columns}
+
+        def col(name):
+            return by_upper.get(name.upper())
+
+        if not col("CODE") or not col("YEAR TARGET"):
             return None
-        out = pd.DataFrame({"code": pd.to_numeric(d["CODE"], errors="coerce")})
-        out["year"] = _num(d["YEAR TARGET"])
+        out = pd.DataFrame({"code": pd.to_numeric(d[col("CODE")],
+                                                  errors="coerce")})
+        out["year"] = _num(d[col("YEAR TARGET")])
+        missing = [m for m in _MONTHS if not col(m)]
         for m in _MONTHS:
-            out[m] = _num(d[m]) if m in d.columns else pd.NA
+            src = col(m)
+            out[m] = _num(d[src]) if src else pd.NA
+        if len(missing) == len(_MONTHS):
+            _PROBLEM = (f"the '{_SHEET}' tab has no month columns "
+                        f"(Apr…Mar) — only the year target could be read")
+        elif missing:
+            _PROBLEM = (f"the '{_SHEET}' tab is missing "
+                        f"{', '.join(missing)} — those months read as no target")
         out = out[out["code"].notna()]
         if out.empty:
             return None
@@ -132,7 +177,7 @@ def for_month(day) -> dict:
 
 def _candidates():
     """Every URL worth trying, best first: an explicit override, then the tab by
-    NAME, then by gid. See the note beside `_SHEET`."""
+    NAME. There is deliberately no gid fallback — see the note beside `_SHEET`."""
     import urllib.parse
     out = []
     explicit = _from_secret(URL_ENV)
@@ -141,9 +186,6 @@ def _candidates():
     base = _from_secret(_PORTFOLIO_ENV)
     m = re.search(r"/spreadsheets/d/([A-Za-z0-9_-]+)", str(base)) if base else None
     if m:
-        wid = m.group(1)
-        out.append(f"https://docs.google.com/spreadsheets/d/{wid}"
+        out.append(f"https://docs.google.com/spreadsheets/d/{m.group(1)}"
                    f"/gviz/tq?tqx=out:csv&sheet={urllib.parse.quote(_SHEET)}")
-        out.append(f"https://docs.google.com/spreadsheets/d/{wid}"
-                   f"/export?format=csv&gid={_GID}")
     return [u for i, u in enumerate(out) if u and u not in out[:i]]

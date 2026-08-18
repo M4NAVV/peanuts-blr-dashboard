@@ -1110,6 +1110,13 @@ def render_portfolio():
                     key=f"rp_f{_i}")
 
         chosen = [k for k, v in picked.items() if v]
+        # A target that fails to arrive looks exactly like a target nobody set,
+        # which is how twelve month columns stayed missing for days. Say it.
+        if {"night_sms", "tva"} & set(chosen):
+            import targets as _TG
+            _TG.load()
+            if _TG.last_problem():
+                st.warning(f"⚠️ Targets: {_TG.last_problem()}.")
         if "night_sms" in chosen:
             st.caption("ℹ️ Night SMS: target columns are **blank until targets "
                        "exist**, and manual sale is blank until the night fill "
