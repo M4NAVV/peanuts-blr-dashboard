@@ -2062,11 +2062,18 @@ if nav == "🖼️ REPORTS IMAGES" and _img_what == "Morning set (ZIP)":
                                   help="One image, both periods, year on year.")
     want_degrowth = c2.checkbox("Degrowth by region", value=True,
                                 help="MTD and YTD × South and East & NE = 4.")
-    want_drivers = c3.checkbox("Per-store drivers", value=True,
-                               help=f"{len(_stores)} stores × MTD and YTD.")
+    # One document per store now carries BOTH periods, so it is no longer one
+    # file per period. `is_consolidated` is what says so — see snapshots.PANEL.
+    _one_doc = SN.is_consolidated()
+    _per_store = 1 if _one_doc else 2
+    want_drivers = c3.checkbox(
+        "Per-store drivers", value=True,
+        help=(f"{len(_stores)} stores, one document each — MTD, YTD and the "
+              f"KPIs together." if _one_doc
+              else f"{len(_stores)} stores × MTD and YTD."))
 
     _n = (1 if want_store_wise else 0) + (4 if want_degrowth else 0) \
-        + (len(_stores) * 2 if want_drivers else 0)
+        + (len(_stores) * _per_store if want_drivers else 0)
     st.caption(f"**{_n} image(s)** — `shared/` for the group, `by-store/` for "
                "individual managers.")
 
@@ -2095,14 +2102,20 @@ if nav == "🖼️ REPORTS IMAGES" and _img_what == "Morning set (ZIP)":
                             _add("shared",
                                  SN.degrowth_region(L, _src, _asof, _k, _r))
                 if want_drivers:
+                    # Footfall rides on the portfolio feed, not this one, and
+                    # conversion is blank without it.
+                    try:
+                        _ff = SN.footfall_map(_load_portfolio_cached()[0])
+                    except Exception:
+                        _ff = {}
                     for _st in _stores:
                         _code = (int(_master.loc[_st, "code"])
                                  if _st in _master.index else None)
-                        for _k in ("MTD", "YTD"):
+                        for _k in (("MTD",) if _one_doc else ("MTD", "YTD")):
                             try:
                                 _add("by-store",
-                                     SN.drivers_store(L, _src, _asof, _k, _st,
-                                                      _code))
+                                     SN.drivers(L, _src, _asof, _k, _st,
+                                                _code, ff=_ff))
                             except Exception as e:      # one store must not
                                 failed.append(f"{_st} {_k}: {e}")  # sink the run
                                 done[0] += 1
