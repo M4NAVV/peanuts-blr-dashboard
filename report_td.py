@@ -1752,3 +1752,222 @@ def build_night_sms(pf_df, region=None, targets=None,
                         + (f" · {basis_label}" if basis_label else ""))
     tag = "NIGHT SALE SMS" if region is None else f"{region.upper()} NIGHT SALE SMS"
     return (f"{tag} {day:%d-%m-%Y}.pdf", pdf)
+
+
+# --------------------------------------------------------------------------- #
+# TARGET vs ACHIEVEMENT — the night SMS's shape, at MTD and YTD
+# --------------------------------------------------------------------------- #
+# Manav, 18 Aug: "replicate same report on MTD and YTD level from 01-04-2026 …
+# this becomes a target vs ach report to us. and for south, u can do it from
+# 19th april, which is the takeover."
+#
+# ★ THE YEAR ANCHORS ITSELF, from two directions that agree. The achievement
+# side runs from each store's own takeover — 1 April for East & NE, 19 April for
+# South — exactly as the night SMS does. The target side needs no special case
+# at all: the Targets tab has no April figure for seven of the eight South
+# stores, because their year began after it. Summing April onward therefore
+# gives South a year that starts in May of its own accord.
+TVA_COLS = [
+    ("CITY", "l"), ("LOCATION", "l"), ("BRAND", "l"),
+    ("MTD TARGET", "r"), ("MTD ACHIVED", "r"), ("MTD ACHIVED %", "r"),
+    ("MTD BALANCE", "r"),
+    ("YTD TARGET", "r"), ("YTD ACHIVED", "r"), ("YTD ACHIVED %", "r"),
+    ("YTD BALANCE", "r"),
+    ("YEAR TARGET", "r"), ("YEAR ACHIVED %", "r"),
+]
+_TVA_VALUES = ("mtd_target", "mtd", "mtd_bal", "ytd_target", "ytd", "ytd_bal",
+               "year_target")
+
+
+def _tva_months(asof):
+    """The fiscal months elapsed, April first — how a year-to-date target is
+    built. A full-year figure would have every store reading 20-something per
+    cent in August and looking behind when it is not."""
+    order = ("Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+             "Jan", "Feb", "Mar")
+    return list(order[:((asof.month - 4) % 12) + 1])
+
+
+def target_vs_ach(pf_df, asof=None, targets_df=None) -> dict:
+    """Rows for the target-vs-achievement sheet, one per store."""
+    import portfolio_loader as PL
+    import loader as L
+    import targets as TG
+
+    asof = PL.as_of(pf_df) if asof is None else pd.Timestamp(asof)
+    t = TG.load() if targets_df is None else targets_df
+    months = _tva_months(asof)
+
+    master = PL.store_master().dropna(subset=["code"]).copy()
+    master["code"] = master["code"].astype(int)
+    shut = L.closed_map()
+    master = master[~master["code"].map(
+        lambda c: c in shut and pd.to_datetime(shut[c]) <= asof)]
+
+    fy = asof.year if asof.month >= 4 else asof.year - 1
+    fy_start = pd.Timestamp(fy, 4, 1)
+    tk_of = {int(c): pd.to_datetime(x, errors="coerce")
+             for c, x in zip(master["code"], master["takeover_date"])}
+    start_of = {c: (max(fy_start, tk) if pd.notna(tk) else fy_start)
+                for c, tk in tk_of.items()}
+
+    p = pf_df.copy()
+    p["code"] = pd.to_numeric(p["code"], errors="coerce").astype("Int64")
+    mtd = (p[(p["date"] >= asof.replace(day=1)) & (p["date"] <= asof)]
+           .groupby("code")["sales"].sum())
+    upto = p[p["date"] <= asof]
+    frm = upto["code"].map(lambda c: start_of.get(int(c), fy_start)
+                           if pd.notna(c) else fy_start)
+    ytd = upto[upto["date"] >= frm].groupby("code")["sales"].sum()
+
+    tgt = {} if t is None else t.set_index("code").to_dict("index")
+    rows = []
+    for _, m in master.iterrows():
+        c = int(m["code"])
+        g = tgt.get(c, {})
+        mt = g.get(months[-1])
+        yt = sum(v for k in months
+                 if (v := g.get(k)) is not None and pd.notna(v))
+        yr = g.get("year")
+        a_m, a_y = float(mtd.get(c, 0.0)), float(ytd.get(c, 0.0))
+        rows.append({
+            "code": c, "city": str(m["city"]).upper(),
+            "name": str(m["location"]), "brand": str(m.get("brand", "") or ""),
+            "region": str(m["region"]), "from": start_of.get(c, fy_start),
+            "mtd": a_m, "ytd": a_y,
+            "mtd_target": float(mt) if mt is not None and pd.notna(mt) else None,
+            "ytd_target": float(yt) if yt else None,
+            "year_target": float(yr) if yr is not None and pd.notna(yr) else None,
+        })
+    for r in rows:
+        r["mtd_bal"] = (r["mtd_target"] - r["mtd"]) if r["mtd_target"] else None
+        r["ytd_bal"] = (r["ytd_target"] - r["ytd"]) if r["ytd_target"] else None
+    return {"rows": rows, "asof": asof, "months": months,
+            "fy_start": fy_start}
+
+
+def _tva_total(part, label, city="", brand=""):
+    """Sum a set of stores into one row. Used for every tier, so a region total
+    cannot quietly become the last city's — which is exactly what it was."""
+    d = {"name": label, "city": city, "brand": brand,
+         "from": min(r["from"] for r in part)}
+    for k in _TVA_VALUES:
+        vals = [r[k] for r in part if r.get(k) is not None]
+        d[k] = sum(vals) if vals else None
+    d["mtd"] = sum(r["mtd"] for r in part)
+    d["ytd"] = sum(r["ytd"] for r in part)
+    return d
+
+
+def _tva_group(rows):
+    """City, then location, then store — the night SMS's own shape."""
+    def tot(part, label, city="", brand=""):
+        d = {"name": label, "city": city, "brand": brand,
+             "from": min(r["from"] for r in part)}
+        for k in _TVA_VALUES:
+            vals = [r[k] for r in part if r.get(k) is not None]
+            d[k] = sum(vals) if vals else None
+        d["mtd"] = sum(r["mtd"] for r in part)
+        d["ytd"] = sum(r["ytd"] for r in part)
+        return d
+
+    out = []
+    cities = {}
+    for r in rows:
+        cities.setdefault(r["city"], []).append(r)
+    for city in sorted(cities, key=lambda c: -sum(x["ytd"] for x in cities[c])):
+        members = cities[city]
+        locs = {}
+        for r in members:
+            locs.setdefault(r["name"], []).append(r)
+        for loc in sorted(locs, key=lambda l: -sum(x["ytd"] for x in locs[l])):
+            part = sorted(locs[loc], key=lambda r: -r["ytd"])
+            out.extend(("store", r) for r in part)
+            if len(part) > 1:
+                out.append(("loctotal", tot(part, f"{loc} TOTAL", city)))
+        out.append(("subtotal", tot(members, f"{city} TOTAL")))
+    return out
+
+
+def _tva_pace(r, asof, kind):
+    """How far through the period we are — what "on target" means today."""
+    if kind == "MTD":
+        return asof.day / calendar.monthrange(asof.year, asof.month)[1]
+    fy_end = pd.Timestamp(asof.year + (1 if asof.month >= 4 else 0), 3, 31)
+    span = (fy_end - r["from"]).days + 1
+    return ((asof - r["from"]).days + 1) / span if span > 0 else 1.0
+
+
+def render_target_vs_ach(sheet, region=None) -> "Image":
+    """One money table: every store against its month and its year."""
+    asof = sheet["asof"]
+    rows = [r for r in sheet["rows"]
+            if region is None or r["region"] == region]
+    header = [h for h, _ in TVA_COLS]
+    aligns = [a for _, a in TVA_COLS]
+
+    def pct(a, b):
+        return f"{a / b * 100:,.1f}" if (a is not None and b) else ""
+
+    def line(r, kind):
+        if kind == "store":
+            head = [r["city"], r["name"], r.get("brand", "")]
+        elif kind == "loctotal":
+            head = [r["city"], (r["name"], 2)]
+        else:
+            head = [(r["name"], 3)]
+        return head + [
+            _money(r["mtd_target"]), _money(r["mtd"]),
+            pct(r["mtd"], r["mtd_target"]), _money(r["mtd_bal"]),
+            _money(r["ytd_target"]), _money(r["ytd"]),
+            pct(r["ytd"], r["ytd_target"]), _money(r["ytd_bal"]),
+            _money(r["year_target"]), pct(r["ytd"], r["year_target"])]
+
+    def ink_for(r, kind):
+        """Green once the target is met, red when behind where the calendar is.
+
+        A store at 60% of its month on the 17th is not behind — it is exactly
+        where it should be. Colouring anything under 100% red would paint the
+        whole sheet red every day but the last, and be ignored by the second
+        morning.
+        """
+        if kind not in ("store",) or not r.get("mtd_target"):
+            return INK
+        share = r["mtd"] / r["mtd_target"] if r["mtd_target"] else 0
+        if share >= 1:
+            return GREEN
+        return NEG_INK if share < _tva_pace(r, asof, "MTD") * 0.9 else INK
+
+    grid = []
+    for kind, r in _tva_group(rows):
+        fill = (HDR_BG if kind == "subtotal"
+                else LOC_BG if kind == "loctotal" else None)
+        grid.append((_cells(line(r, kind), aligns, fill,
+                            kind in ("subtotal", "loctotal"),
+                            ink=ink_for(r, kind)), ROW_H))
+    if region is None:
+        for reg in sorted({r["region"] for r in rows}):
+            part = [r for r in rows if r["region"] == reg]
+            if part:
+                grid.append((_cells(line(_tva_total(part, f"{reg.upper()} TOTAL"),
+                                         "subtotal"), aligns, TOTAL_BG, True),
+                             ROW_H))
+    grid.append((_cells(line(_tva_total(rows, "G. TOTAL"), "subtotal"),
+                        aligns, TOTAL_BG, True), ROW_H))
+
+    m = sheet["months"]
+    return _draw_grid(header, grid, landscape=False,
+                      title=f"TARGET vs ACHIEVEMENT  ·  {asof:%d %b %Y}  ·  "
+                            f"year to date covers {m[0]}–{m[-1]}")
+
+
+def build_target_vs_ach(pf_df, asof=None, basis_label="") -> tuple[str, bytes]:
+    """The whole estate, one page, against month and year."""
+    sheet = target_vs_ach(pf_df, asof)
+    asof = sheet["asof"]
+    with _LOCK, desk():
+        img = render_target_vs_ach(sheet)
+        pdf = _pdf_from([("Target vs achievement", img)],
+                        f"As of {asof:%d %b %Y}"
+                        + (f" · {basis_label}" if basis_label else ""))
+    return (f"TARGET VS ACHIEVEMENT {asof:%d-%m-%Y}.pdf", pdf)

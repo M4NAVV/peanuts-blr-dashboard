@@ -570,10 +570,9 @@ def _cr(x) -> str:
 
 
 _PF_TABS = ["📈 MW Data", "🧾 GD Sheet", "🏷️ Brand-wise GD", "🗺️ Loc-wise GD",
-            "🪔 Festive",
             "📐 Average", "📊 Executive", "📋 MTD / YTD Report", "📉 Degrowth",
             "🎯 Day Targets", "🥧 Contribution", "🏙️ City-wise G/D", "🏬 Stores",
-            "📅 Monthly", "📄 Report PDF", "📑 REPORT TD"]
+            "📅 Monthly", "📄 REPORTS PDF"]
 
 
 def render_portfolio():
@@ -1063,111 +1062,75 @@ def render_portfolio():
             "the workbook. The current FY shows the East & NE / South split.")
         st.markdown(PL.mw_data_html(PL.mw_data(pf_all)), unsafe_allow_html=True)
 
-    elif nav == "🪔 Festive":
-        _festive_tab(pf_all, vfl=False)
-
-    # ===================== Report PDF (the five sheets, one shareable file) ==== #
-    elif nav == "📄 Report PDF":
+    elif nav == "📄 REPORTS PDF":
         import portfolio_pdf as PPDF
-        st.subheader("📄 Portfolio report (PDF)")
-        st.caption(
-            "Compiles the five workbook sheets — **MW Data, GD Sheet, Brand-wise, "
-            "Loc-wise, Average** — into one shareable, print-clean PDF. The four "
-            "G/D sheets honour the current sidebar filters and the date below; "
-            "MW Data always covers the whole portfolio (like its tab).")
+        import report_td as RTD
+        import festive as FEST
+        st.subheader("📄 Reports (PDF)")
+        st.caption("Everything this view can put in a PDF. Tick what you need — "
+                   "one file, or a zip if you tick several.")
+
         _dmin, _dmax = pf["date"].min().date(), pf["date"].max().date()
         pdf_asof = pd.Timestamp(st.date_input(
-            "As of", value=_dmax, min_value=_dmin, max_value=_dmax, key="pf_pdf_asof"))
+            "As of", value=_dmax, min_value=_dmin, max_value=_dmax,
+            key="pf_pdf_asof"))
         basis = f"Live to {pdf_asof:%d %b %Y}"
         if pf_provisional is not None and pd.Timestamp(pdf_asof) >= pf_provisional:
             basis += f" · {pf_provisional:%d %b} provisional (night fill)"
-        if st.button("🧾 Generate PDF", key="pf_pdf_gen", type="primary",
-                     use_container_width=True):
-            with st.spinner("Building the report pack…"):
-                try:
-                    # The VFL frame supplies last year for South, whose history
-                    # predates the takeover and is absent from the portfolio
-                    # feed. Same cache the VFL side uses.
-                    st.session_state["pf_pdf"] = PPDF.build(
-                        pf, pf_all, pdf_asof, basis, vfl_df=get_data())
-                    st.session_state["pf_pdf_name"] = (
-                        f"peanuts_portfolio_{pdf_asof:%Y%m%d}.pdf")
-                except Exception as e:                    # surface, don't crash tab
-                    st.session_state["pf_pdf"] = None
-                    st.error(f"Could not build the PDF: {e}")
-        if st.session_state.get("pf_pdf"):
-            st.success("PDF ready.")
-            st.download_button(
-                "⬇ Download PDF", st.session_state["pf_pdf"],
-                file_name=st.session_state.get("pf_pdf_name", "portfolio.pdf"),
-                mime="application/pdf", use_container_width=True)
 
-    elif nav == "📑 REPORT TD":
-        # A SEPARATE REPORTING VERTICAL. These reproduce the operational
-        # workbooks (L-to-L, month-wise totals, night SMS) and deliberately look
-        # like those Excel files rather than like the report packs above, which
-        # keep the growth-degrowth palette. Nothing here touches those.
-        import report_td as RTD
-        st.subheader("📑 Report TD")
-        st.caption(
-            "Reproductions of the operational workbooks, in their own format. "
-            "Pick one to download it as a PDF, or several to get them as a ZIP. "
-            "These are independent of the report packs on the other tabs.")
+        picked = {}
+        c1, c2 = st.columns(2)
+        with c1:
+            st.markdown("**The pack**")
+            picked["pack"] = st.checkbox(
+                "Portfolio report  ·  MW Data, GD Sheet, Brand-wise, Loc-wise, "
+                "Average, and the executive snapshot", value=True, key="rp_pack")
+            st.markdown("**Report TD**")
+            picked["south_ltol"] = st.checkbox(
+                "South L-to-L  ·  day by day, month by month", key="rp_sl")
+            picked["east_ltol"] = st.checkbox(
+                "East & NE L-to-L  ·  all brands", key="rp_el")
+            picked["mw"] = st.checkbox(
+                "Month-wise total sale  ·  East overall, East VFL, South",
+                key="rp_mw")
+            picked["night_sms"] = st.checkbox(
+                "Night sale SMS  ·  every store, city by city, with the KPI table",
+                key="rp_ns")
+            picked["tva"] = st.checkbox(
+                "Target vs achievement  ·  MTD and YTD against the Targets tab",
+                key="rp_tva")
+        with c2:
+            st.markdown("**Festive run-ups**")
+            _fw = _festive_windows()
+            if FEST.last_problem():
+                st.caption(f"⚠️ Festive dates: {FEST.last_problem()}")
+            for _i, _w in enumerate(_fw):
+                picked[f"festive_{_i}"] = st.checkbox(
+                    f"{_w.festival} {_w.tenure}-day  ·  {_w.basis()}",
+                    key=f"rp_f{_i}")
 
-        # South's last year is the previous operator's history, which only the
-        # VFL feed retains — the portfolio feed has no South last year at all.
-        # Show what the report will be built from. Every page is stamped with
-        # this date too, so a stale cache produces a report that says so rather
-        # than one that looks current.
-        try:
-            _td_asof = L.as_of(get_data())
-            st.caption(f"Sales data through **{_td_asof:%d %b %Y}**. "
-                       "Use *Refresh portfolio data* in the sidebar if the sheet "
-                       "has been updated since.")
-        except Exception:
-            pass
-
-        available = {
-            "south_ltol": "South L-to-L sheet  ·  current month first, then each "
-                          "earlier month of the year",
-            "east_ltol": "East & NE L-to-L sheet  ·  current month first, then "
-                         "each earlier month of the year",
-            "mw": "Month-wise total sale  ·  25-26 vs 26-27, East & NE overall "
-                  "then its Mohey Manyavar stores, then South — one file",
-            "night_sms": "Night sale SMS  ·  every store, city by city, with "
-                         "city subtotals + the daily KPI table",
-        }
-        chosen = [k for k, label in available.items()
-                  if st.checkbox(label, value=True, key=f"td_{k}")]
+        chosen = [k for k, v in picked.items() if v]
         if "night_sms" in chosen:
             st.caption("ℹ️ Night SMS: target columns are **blank until targets "
                        "exist**, and manual sale is blank until the night fill "
                        "has that column. Everything else is live.")
-            st.caption("ℹ️ One file for the whole estate: **city and location "
-                       "subtotals** in both tables, cities from the night "
-                       "fill's own CITY column, and the brand-line split kept "
-                       "for the VFL stores that fill it. Each store's year runs "
-                       "from its own takeover date. A store that made its day "
-                       "target prints **green**, one under its region's floor "
-                       "(Rs 10,000 East & NE, Rs 50,000 South) prints **red**.")
         if "east_ltol" in chosen:
-            # Its like-to-like and new-store columns follow Manav's stated rules
-            # (11-12 Aug), which the older workbook does not: it re-decides
-            # new/old every month, so a store can switch sides mid-year.
             st.caption("ℹ️ East L-to-L: new/old is fixed for the year against "
                        "1 April of the previous year, so **June and July read a "
                        "few points higher** than the old workbook, which decided "
                        "it month by month.")
         if "mw" in chosen:
-            # The last-year store COUNT (and so the last-year store average and
-            # carpet area) comes from a comparable-store list kept by hand, which
-            # no data we hold reproduces. The sales columns are exact both years.
             st.caption("⚠️ Month-wise: last-year **store counts, store averages "
                        "and carpet area** are computed from the data and will "
                        "differ from the workbook, which uses a hand-kept "
                        "comparable-store list. All sales figures match.")
+        if "tva" in chosen:
+            st.caption("ℹ️ Target vs achievement: the year-to-date target is the "
+                       "**sum of the months elapsed**, not the full year — South "
+                       "starts at its 19 April takeover, which is where its "
+                       "targets start too.")
 
-        if st.button("🧾 Generate", key="td_gen", type="primary",
+        if st.button("🧾 Generate", key="rp_gen", type="primary",
                      use_container_width=True, disabled=not chosen):
             with st.spinner("Building…"):
                 try:
@@ -1176,32 +1139,89 @@ def render_portfolio():
                     # year exists only in that feed.
                     vdf = get_data()
                     v_asof = L.as_of(vdf)
-                    basis = f"Live to {v_asof:%d %b %Y}"
+                    tdb = f"Live to {v_asof:%d %b %Y}"
                     built = []
+                    if "pack" in chosen:
+                        built.append((
+                            f"peanuts_portfolio_{pdf_asof:%Y%m%d}.pdf",
+                            PPDF.build(pf, pf_all, pdf_asof, basis,
+                                       vfl_df=vdf)))
                     if "south_ltol" in chosen:
-                        built.append(RTD.build_south_ltol(vdf, v_asof, basis))
+                        built.append(RTD.build_south_ltol(vdf, v_asof, tdb))
                     if "east_ltol" in chosen:
-                        built.append(RTD.build_east_ltol(pf_all, v_asof, basis))
+                        built.append(RTD.build_east_ltol(pf_all, v_asof, tdb))
                     if "mw" in chosen:
-                        # One file: East & NE overall, its Mohey Manyavar
-                        # stores, then South.
                         built.append(
-                            RTD.build_month_wise(pf_all, vdf, v_asof, basis))
+                            RTD.build_month_wise(pf_all, vdf, v_asof, tdb))
                     if "night_sms" in chosen:
-                        # Reads the night fill directly — it is the only source
-                        # for the day's figures at the hour this goes out.
-                        built.append(RTD.build_night_sms(pf_all, basis_label=basis))
+                        built.append(RTD.build_night_sms(pf_all, basis_label=tdb))
+                    if "tva" in chosen:
+                        built.append(RTD.build_target_vs_ach(pf_all, pdf_asof,
+                                                             basis))
+                    for _i, _w in enumerate(_fw):
+                        if f"festive_{_i}" in chosen:
+                            built.append(FEST.build_festive_pdf(
+                                pf_all, _w, basis_label=basis))
                     name, payload, mime = RTD.bundle(built)
-                    st.session_state["td_out"] = (name, payload, mime)
+                    st.session_state["rp_out"] = (name, payload, mime)
                 except Exception as e:                    # surface, don't crash tab
-                    st.session_state["td_out"] = None
+                    st.session_state["rp_out"] = None
                     st.error(f"Could not build: {e}")
 
-        if st.session_state.get("td_out"):
-            name, payload, mime = st.session_state["td_out"]
+        if st.session_state.get("rp_out"):
+            name, payload, mime = st.session_state["rp_out"]
             st.success(f"Ready — {name}")
             st.download_button(f"⬇ Download {name}", payload, file_name=name,
                                mime=mime, use_container_width=True)
+
+
+# --------------------------------------------------------------------------- #
+# The two single-table images. Kept as functions because REPORTS IMAGES builds
+# them while the tables themselves are read on their own tabs — one source for
+# the figures, one for the picture, so the two cannot drift apart.
+# --------------------------------------------------------------------------- #
+def _png_mtd_ytd(df, asof):
+    rep, rtypes = L.region_store_report(df, asof=pd.Timestamp(asof))
+    if rep.empty:
+        return None
+    sdf = rep.copy()
+    _money = [c for c in ["Day Sales", "MTD LY", "MTD TY", "GD MTD Value",
+                          "YTD LY", "YTD TY", "GD YTD Value"] if c in sdf.columns]
+    _pct = [c for c in ["GD MTD %", "GD YTD %"] if c in sdf.columns]
+    for c in _money:
+        sdf[c] = sdf[c].map(_fmt_cell_money)
+    for c in _pct:
+        sdf[c] = sdf[c].map(_fmt_cell_pct)
+    sdf = sdf.astype(str)
+    row_bg = []
+    for _k, _t in enumerate(rtypes):
+        row_bg.append("#F6D9D5" if _t == "subtotal"
+                      else "#CDE8CF" if _t == "grand"
+                      else ("#FFFFFF" if _k % 2 == 0 else "#FAF6EF"))
+    return table_to_png(sdf, "", row_bg=row_bg, signed_cols=_money + _pct)
+
+
+def _png_degrowth(df, asof, kind):
+    dg = L.degrowth_report(df, asof=pd.Timestamp(asof), kind=kind)
+    if dg.empty:
+        return None
+    disp = dg.copy()
+    disp.insert(0, "DATE", f"{pd.Timestamp(asof):%d-%m-%Y}")
+    disp = disp.rename(columns={
+        "region": "Region", "code": "STORE CODE", "location": "LOCATION",
+        "prior": f"{kind} LY", "cur": f"{kind} TY",
+        "shortfall": "Shortfall", "growth": "Degrowth %"})
+    for _drop in ("brand", "city"):
+        if _drop in disp.columns:
+            disp = disp.drop(columns=[_drop])
+    disp["STORE CODE"] = disp["STORE CODE"].astype(int)
+    for c in [f"{kind} LY", f"{kind} TY", "Shortfall"]:
+        disp[c] = disp[c].map(_fmt_cell_money)
+    disp["Degrowth %"] = disp["Degrowth %"].map(_fmt_cell_pct)
+    disp = disp.astype(str)
+    bg = ["#FFFFFF" if k % 2 == 0 else "#FAF6EF" for k in range(len(disp))]
+    return table_to_png(disp, "", row_bg=bg,
+                        signed_cols=["Shortfall", "Degrowth %"])
 
 
 # ---- Top-level data mode: whole-Portfolio breadth vs VFL depth ----
@@ -1857,10 +1877,9 @@ def render_productivity(pr, key):
 # rerun). The 7 main reports show as pills; the rest live in a "More" overflow
 # menu. Selection lives in session_state (active_nav), so it PERSISTS on rerun.
 _TAB_LABELS = [
-    "🧾 VFL G/D", "🧾 VFL Gender", "📄 Report PDF",
+    "🧾 VFL G/D", "🧾 VFL Gender", "📄 REPORTS PDF", "🖼️ REPORTS IMAGES",
     "📋 MTD / YTD Report", "📉 Degrowth", "🔎 Degrowth Drivers",
-    "📸 Morning snapshots",
-    "🪔 Festive", "💸 DB REPORTS",
+    "💸 DB REPORTS",
     "🧑‍🤝‍🧑 Gender G/D", "🏷️ Brand G/D", "🏬 Store × Brand G/D",
     "⚖️ Gender Mix",
     "📊 Executive", "🎯 Day Targets", "🏙️ City-wise G/D", "📅 Monthly Contribution",
@@ -1965,38 +1984,50 @@ if nav == "📋 MTD / YTD Report":
         file_name=f"peanuts_mtd_ytd_report_{end_d:%Y%m%d}.csv",
         mime="text/csv", use_container_width=True,
     )
-    if _c2.button("🖼️ Generate shareable image (PNG)", key="rep_png_btn",
-                  use_container_width=True):
-        sdf = rep_show.copy()
-        _money = [c for c in ["Day Sales", "MTD LY", "MTD TY", "GD MTD Value",
-                              "YTD LY", "YTD TY", "GD YTD Value"] if c in sdf.columns]
-        _pct = [c for c in ["GD MTD %", "GD YTD %"] if c in sdf.columns]
-        for c in _money:
-            sdf[c] = sdf[c].map(_fmt_cell_money)
-        for c in _pct:
-            sdf[c] = sdf[c].map(_fmt_cell_pct)
-        sdf = sdf.astype(str)
-        row_bg = []
-        for _k, _t in enumerate(rtypes):
-            if _t == "subtotal":
-                row_bg.append("#F6D9D5")
-            elif _t == "grand":
-                row_bg.append("#CDE8CF")
-            else:
-                row_bg.append("#FFFFFF" if _k % 2 == 0 else "#FAF6EF")
-        st.session_state["rep_png"] = table_to_png(
-            sdf, "", row_bg=row_bg, signed_cols=_money + _pct)
-    if st.session_state.get("rep_png"):
-        st.download_button(
-            "⬇ Download image", st.session_state["rep_png"],
-            file_name=f"peanuts_mtd_ytd_{end_d:%Y%m%d}.png", mime="image/png")
-        st.image(st.session_state["rep_png"],
-                 caption="Preview — share this picture in the group")
+    _c2.caption("🖼️ The shareable picture of this table is under "
+                "**Reports (images)**.")
 
 # =========================================================================== #
 # DEGROWTH — stores below last year (watchlist)
 # =========================================================================== #
-if nav == "📸 Morning snapshots":
+if nav == "🖼️ REPORTS IMAGES":
+    # ★ ONE TAB FOR EVERY PICTURE (Manav, 18 Aug). The morning ZIP and the two
+    # single tables were spread over three tabs. The tables are still read on
+    # their own tabs — only the "make me a PNG" button moved here.
+    _img_what = st.radio(
+        "What to build",
+        ["Morning set (ZIP)", "MTD / YTD report (PNG)", "Degrowth watchlist (PNG)"],
+        horizontal=True, key="img_what")
+
+if nav == "🖼️ REPORTS IMAGES" and _img_what == "MTD / YTD report (PNG)":
+    st.subheader("MTD / YTD report — image")
+    st.caption("The same table as its own tab, as one picture for the group.")
+    if st.button("🖼️ Generate", key="img_rep", type="primary",
+                 use_container_width=True):
+        st.session_state["rep_png"] = _png_mtd_ytd(df_exec, end_d)
+    if st.session_state.get("rep_png"):
+        st.download_button(
+            "⬇ Download image", st.session_state["rep_png"],
+            file_name=f"peanuts_mtd_ytd_{end_d:%Y%m%d}.png",
+            mime="image/png", use_container_width=True)
+        st.image(st.session_state["rep_png"],
+                 caption="Preview — share this picture in the group")
+
+if nav == "🖼️ REPORTS IMAGES" and _img_what == "Degrowth watchlist (PNG)":
+    st.subheader("Degrowth watchlist — image")
+    _ik = st.radio("Period", ["YTD", "MTD"], horizontal=True, key="img_dg_kind")
+    if st.button("🖼️ Generate", key="img_dg", type="primary",
+                 use_container_width=True):
+        st.session_state["dg_png"] = _png_degrowth(df_exec, end_d, _ik)
+    if st.session_state.get("dg_png"):
+        st.download_button(
+            "⬇ Download image", st.session_state["dg_png"],
+            file_name=f"peanuts_degrowth_{_ik}_{end_d:%Y%m%d}.png",
+            mime="image/png", use_container_width=True)
+        st.image(st.session_state["dg_png"],
+                 caption="Preview — share this picture in the group")
+
+if nav == "🖼️ REPORTS IMAGES" and _img_what == "Morning set (ZIP)":
     import io as _io
     import zipfile
     import snapshots as SN
@@ -2189,23 +2220,8 @@ if nav == "📉 Degrowth":
             "⬇ Download degrowth list (CSV)", disp.to_csv(index=False).encode(),
             file_name=f"peanuts_degrowth_{dg_kind}_{end_d:%Y%m%d}.csv",
             mime="text/csv", use_container_width=True)
-        if _d2.button("🖼️ Generate shareable image (PNG)", key="dg_png_btn",
-                      use_container_width=True):
-            sdf = disp.copy()
-            for c in [f"{dg_kind} LY", f"{dg_kind} TY", "Shortfall"]:
-                sdf[c] = sdf[c].map(_fmt_cell_money)
-            sdf["Degrowth %"] = sdf["Degrowth %"].map(_fmt_cell_pct)
-            sdf = sdf.astype(str)
-            dg_bg = ["#FFFFFF" if k % 2 == 0 else "#FAF6EF" for k in range(len(sdf))]
-            st.session_state["dg_png"] = table_to_png(
-                sdf, "", row_bg=dg_bg, signed_cols=["Shortfall", "Degrowth %"])
-        if st.session_state.get("dg_png"):
-            st.download_button(
-                "⬇ Download image", st.session_state["dg_png"],
-                file_name=f"peanuts_degrowth_{dg_kind}_{end_d:%Y%m%d}.png",
-                mime="image/png")
-            st.image(st.session_state["dg_png"],
-                     caption="Preview — share this picture in the group")
+        _d2.caption("🖼️ The shareable picture of this list is under "
+                    "**Reports (images)**.")
 
 # =========================================================================== #
 # GENDER-WISE GROWTH / DEGROWTH  (Region → Gender, FY YoY)
@@ -2317,38 +2333,75 @@ if nav == "🧾 VFL Gender":
 # =========================================================================== #
 # REPORT PDF — the two VFL sheets compiled into one shareable file.
 # =========================================================================== #
-if nav == "📄 Report PDF":
+# =========================================================================== #
+# REPORTS PDF — every PDF this view makes, in one place
+# =========================================================================== #
+# ★ Manav, 18 Aug: the pack, the festive run-ups and DB Reports were three tabs
+# whose only job was to hand over a file. Tick and take one download; several
+# ticked come out as a zip. DB Reports keeps its own tab as a VIEW — its tiles
+# and store table are worth reading before you generate anything — and only its
+# download moved here. Festive gave up its view by his instruction.
+if nav == "📄 REPORTS PDF":
     import vfl_pdf
-    st.subheader("📄 VFL report (PDF)")
-    st.caption("Compiles the **VFL G/D** and **VFL Gender** sheets into one "
-               "shareable, print-clean PDF (honours the current sidebar filters).")
+    import report_td as RTD
+    import festive as FEST
+    import discount as DISC
+    st.subheader("📄 Reports (PDF)")
+    st.caption("Everything this view can put in a PDF. Tick what you need — one "
+               "file, or a zip if you tick several. **The pack honours the "
+               "sidebar filters; the rest are always the full estate.**")
     p_asof = gd_asof_note(end_d)
     p_basis = f"Live to {p_asof:%d %b %Y}"
-    if st.button("🧾 Generate PDF", key="vfl_pdf_gen", type="primary",
-                 use_container_width=True):
-        with st.spinner("Building the VFL report…"):
+
+    picked = {}
+    c1, c2 = st.columns(2)
+    with c1:
+        st.markdown("**The pack**")
+        picked["pack"] = st.checkbox(
+            "VFL report  ·  G/D and Gender sheets, with the executive snapshot",
+            value=True, key="vrp_pack")
+        st.markdown("**DB Reports**")
+        picked["db"] = st.checkbox(
+            "Women's discount  ·  year to date, the month, and every Mohey store "
+            "day by day", key="vrp_db")
+    with c2:
+        st.markdown("**Festive run-ups**")
+        _fw = _festive_windows()
+        if FEST.last_problem():
+            st.caption(f"⚠️ Festive dates: {FEST.last_problem()}")
+        for _i, _w in enumerate(_fw):
+            picked[f"festive_{_i}"] = st.checkbox(
+                f"{_w.festival} {_w.tenure}-day  ·  {_w.basis()}",
+                key=f"vrp_f{_i}")
+
+    chosen = [k for k, v in picked.items() if v]
+    if st.button("🧾 Generate", key="vrp_gen", type="primary",
+                 use_container_width=True, disabled=not chosen):
+        with st.spinner("Building…"):
             try:
-                st.session_state["vfl_pdf"] = vfl_pdf.build(
-                    df_exec, asof=p_asof, gen_date=pd.Timestamp(end_d), basis_label=p_basis)
-                st.session_state["vfl_pdf_name"] = f"peanuts_vfl_{p_asof:%Y%m%d}.pdf"
+                built = []
+                if "pack" in chosen:
+                    built.append((
+                        f"peanuts_vfl_{p_asof:%Y%m%d}.pdf",
+                        vfl_pdf.build(df_exec, asof=p_asof,
+                                      gen_date=pd.Timestamp(end_d),
+                                      basis_label=p_basis)))
+                if "db" in chosen:
+                    built.append(DISC.build_pdf(get_data(), p_asof, p_basis))
+                for _i, _w in enumerate(_fw):
+                    if f"festive_{_i}" in chosen:
+                        built.append(FEST.build_festive_pdf(
+                            df_exec, _w, basis_label=p_basis, vfl=True))
+                name, payload, mime = RTD.bundle(built)
+                st.session_state["vrp_out"] = (name, payload, mime)
             except Exception as e:                        # surface, don't crash tab
-                st.session_state["vfl_pdf"] = None
-                st.error(f"Could not build the PDF: {e}")
-    if st.session_state.get("vfl_pdf"):
-        st.success("PDF ready.")
-        st.download_button(
-            "⬇ Download PDF", st.session_state["vfl_pdf"],
-            file_name=st.session_state.get("vfl_pdf_name", "vfl_report.pdf"),
-            mime="application/pdf", use_container_width=True)
-
-# =========================================================================== #
-# FESTIVE — the Puja and Diwali run-ups, on the VFL feed
-# =========================================================================== #
-if nav == "🪔 Festive":
-    # `df_exec` is the frame the rest of the VFL page reports on, so the festive
-    # sheets answer for the same stores and the same filters as everything else.
-    _festive_tab(df_exec, vfl=True)
-
+                st.session_state["vrp_out"] = None
+                st.error(f"Could not build: {e}")
+    if st.session_state.get("vrp_out"):
+        name, payload, mime = st.session_state["vrp_out"]
+        st.success(f"Ready — {name}")
+        st.download_button(f"⬇ Download {name}", payload, file_name=name,
+                           mime=mime, use_container_width=True)
 
 # =========================================================================== #
 # DB REPORTS — the women's discount vs fresh report (Mohey & Manyavar stores)
@@ -2411,20 +2464,8 @@ if nav == "💸 DB REPORTS":
                 "us from these stores, in any month, so their discount cannot be "
                 "told apart from nil: " + ", ".join(_silent) + ".")
 
-        if st.button("🧾 Generate PDF", key="disc_pdf", type="primary",
-                     use_container_width=True):
-            with st.spinner("Building…"):
-                try:
-                    st.session_state["disc_out"] = DISC.build_pdf(
-                        get_data(), _d_asof, f"Live to {_d_asof:%d %b %Y}")
-                except Exception as e:                # surface, don't crash tab
-                    st.session_state["disc_out"] = None
-                    st.error(f"Could not build: {e}")
-        if st.session_state.get("disc_out"):
-            _n, _p = st.session_state["disc_out"]
-            st.success(f"Ready — {_n}")
-            st.download_button(f"⬇ Download {_n}", _p, file_name=_n,
-                               mime="application/pdf", use_container_width=True)
+        st.caption("📄 The PDF of this — year to date, the month and every "
+                   "store day by day — is under **Reports (PDF)**.")
 
 # =========================================================================== #
 # GENDER MIX — contribution %  (Region × Gender + store detail)
