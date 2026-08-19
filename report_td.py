@@ -1182,7 +1182,7 @@ def build_east_ltol(pf_df, asof, basis_label="") -> tuple[str, bytes]:
 # Twamev 42k), and BRAND now names the format for all 50, which is what the
 # other 42 need.
 #
-# ★ DAY ACHIVED MOVED TO THE KPI TABLE, to the right of CONVERSION (Manav,
+# ★ DAY ACHIEVED MOVED TO THE KPI TABLE, to the right of CONVERSION (Manav,
 # 14 Aug), so the money table ends on what was sold and the KPI table ends on
 # what that came to.
 def _sms_cols(mode="all"):
@@ -1190,9 +1190,9 @@ def _sms_cols(mode="all"):
             "vfl": [("STORE NAME", "l")],
             "mixed": [("STORE NAME", "l"), ("BRAND", "l")],
             "city": [("CITY", "l")]}[mode]
-    money = [("MTD TARGET", "r"), ("MTD ACHIVED", "r"), ("MTD ACHIVED %", "r"),
-             ("YTD TARGET", "r"), ("YTD ACHIVED", "r"),
-             ("YTD ACHIVED %", "r"), ("DAY TARGET", "r"),
+    money = [("MTD TARGET", "r"), ("MTD ACHIEVED", "r"), ("MTD ACHIEVED %", "r"),
+             ("YTD TARGET", "r"), ("YTD ACHIEVED", "r"),
+             ("YTD ACHIEVED %", "r"), ("DAY TARGET", "r"),
              ("TOTAL SYSTEM SALE", "r")]
     split = [("MANYAVAR SYSTEM SALE", "r"), ("MOHEY SYSTEM SALE", "r"),
              ("TWAMEV SYSTEM SALE", "r")] if mode in ("vfl", "all") else []
@@ -1200,11 +1200,11 @@ def _sms_cols(mode="all"):
 
 
 SMS_COLS = _sms_cols("all")
-# DAY ACHIVED closes the KPI row: bills, units and footfall, the four rates they
+# DAY ACHIEVED closes the KPI row: bills, units and footfall, the four rates they
 # make, and then the day's takings the rates describe.
 KPI_COLS = [("BILL", "r"), ("QTY", "r"), ("FOOTFALL", "r"),
             ("ABS", "r"), ("ABV", "r"), ("ASP", "r"), ("CONVERSION", "r"),
-            ("DAY ACHIVED", "r")]
+            ("DAY ACHIEVED", "r")]
 
 
 def _ordinal(n: int) -> str:
@@ -1474,12 +1474,25 @@ def _made_target(r) -> bool:
     return bool(t) and a is not None and a >= t
 
 
+def unfloored_regions(rows) -> list:
+    """Regions in the report that `DAY_FLOOR` has no figure for.
+
+    ★ A region absent from the dict can never be marked red — `_below_floor`
+    returns False for it, so a new region's store taking Rs 200 would print
+    black beside East stores printing red, and nothing would say why. The
+    silence is the bug, not the missing floor: only Manav can set what a day
+    is worth in a region we have not traded in yet. The report names them.
+    """
+    seen = {str(r.get("region", "")) for r in rows if r.get("region")}
+    return sorted(s for s in seen if s and s not in DAY_FLOOR)
+
+
 def _below_floor(r) -> bool:
     """Took less than its region asks of a store in a day.
 
     A store with NO figure is not below the floor — it has not filed, which is
     a different thing, and red would accuse it of a bad night it may not have
-    had.
+    had. A region with no floor is handled by `unfloored_regions`.
     """
     a = r.get("achieved")
     floor = DAY_FLOOR.get(str(r.get("region", "")))
@@ -1567,7 +1580,7 @@ def render_night_sms(sheet, by="store") -> Image.Image:
         return f"{a / b * 100:,.1f}" if (a and b) else ""
 
     def line(r, kind):
-        """A row of the money table. `DAY ACHIVED` is not here any more — it
+        """A row of the money table. `DAY ACHIEVED` is not here any more — it
         closes the KPI table instead (Manav, 14 Aug)."""
         if mode == "all":
             if kind == "grand":                 # the totals row carries no name
@@ -1756,9 +1769,16 @@ def build_night_sms(pf_df, region=None, targets=None,
         day = sheet["day"]
         contents = [(f"{sheet['region']} · Night sale SMS · {day:%d %b %Y}",
                      render_night_sms(sheet))]
+        # A region with no day floor cannot be marked red — say so on the page
+        # rather than letting it read as a region that never has a bad night.
+        note = ""
+        unfloored = unfloored_regions(sheet.get("rows", []))
+        if unfloored:
+            note = (f" · no day floor set for {', '.join(unfloored)} — "
+                    f"those stores are never marked red")
         pdf = _pdf_from(contents,
                         f"As of {day:%d %b %Y}"
-                        + (f" · {basis_label}" if basis_label else ""))
+                        + (f" · {basis_label}" if basis_label else "") + note)
     tag = "NIGHT SALE SMS" if region is None else f"{region.upper()} NIGHT SALE SMS"
     return (f"{tag} {day:%d-%m-%Y}.pdf", pdf)
 
@@ -1778,11 +1798,11 @@ def build_night_sms(pf_df, region=None, targets=None,
 # gives South a year that starts in May of its own accord.
 TVA_COLS = [
     ("CITY", "l"), ("LOCATION", "l"), ("BRAND", "l"),
-    ("MTD TARGET", "r"), ("MTD ACHIVED", "r"), ("MTD ACHIVED %", "r"),
+    ("MTD TARGET", "r"), ("MTD ACHIEVED", "r"), ("MTD ACHIEVED %", "r"),
     ("MTD BALANCE", "r"),
-    ("YTD TARGET", "r"), ("YTD ACHIVED", "r"), ("YTD ACHIVED %", "r"),
+    ("YTD TARGET", "r"), ("YTD ACHIEVED", "r"), ("YTD ACHIEVED %", "r"),
     ("YTD BALANCE", "r"),
-    ("YEAR TARGET", "r"), ("YEAR ACHIVED %", "r"),
+    ("YEAR TARGET", "r"), ("YEAR ACHIEVED %", "r"),
 ]
 _TVA_VALUES = ("mtd_target", "mtd", "mtd_bal", "ytd_target", "ytd", "ytd_bal",
                "year_target")
@@ -1907,6 +1927,94 @@ def _tva_pace(r, asof, kind):
     return ((asof - r["from"]).days + 1) / span if span > 0 else 1.0
 
 
+TVA_EXEC_COLS = [
+    ("", "l"), ("TARGET", "r"), ("ACHIEVED", "r"), ("ACHIEVED %", "r"),
+    ("BALANCE TARGET", "r"), ("BALANCE %", "r"),
+    ("BALANCE DAYS", "r"), ("PER DAY REQD", "r"),
+]
+
+
+def tva_exec_rows(sheet):
+    """The snapshot above the sheet: what is left, in how long, at what rate.
+
+    Manav, 19 Aug: *"Total Target / Ach % / Balance Target / Balance % … Main
+    ref points will be Balance No of Days, Target Shortfall, Per day Avg
+    required to acheieve the target. Both MTD and YTD level. Overall / East & NE
+    / South in one sheet only."*
+
+    ★ EACH BLOCK IS MEASURED AGAINST THE WHOLE PERIOD'S TARGET, not the part of
+    it elapsed — the month's target for the month, the YEAR's target for the
+    year. A per-day rate has to be "what is left, over the days left", and the
+    sheet below already carries the elapsed-months view in its YTD TARGET
+    column. The two answer different questions on purpose.
+
+    Balance days EXCLUDE today: the day's takings are already in the achieved
+    figure, so asking the estate to earn them again would overstate the rate.
+    """
+    rows = sheet["rows"]
+    asof = sheet["asof"]
+    fy_end = pd.Timestamp(asof.year + (1 if asof.month >= 4 else 0), 3, 31)
+    days_mtd = calendar.monthrange(asof.year, asof.month)[1] - asof.day
+    days_ytd = (fy_end - asof).days
+
+    def block(part, label, tgt_key, ach_key, days):
+        tgt = sum(r[tgt_key] for r in part if r.get(tgt_key))
+        ach = sum(r[ach_key] for r in part)
+        bal = (tgt - ach) if tgt else None
+        return {
+            "label": label, "target": tgt or None, "ach": ach,
+            "ach_pct": (ach / tgt * 100) if tgt else None,
+            "bal": bal, "bal_pct": (bal / tgt * 100) if tgt else None,
+            "days": days,
+            # Ahead of the ask needs no daily rate — printing one would read as
+            # a demand where none exists.
+            "per_day": (bal / days) if (bal and bal > 0 and days > 0) else None,
+        }
+
+    out = []
+    for kind, tgt_key, ach_key, days in (
+            ("MONTH TO DATE", "mtd_target", "mtd", days_mtd),
+            ("YEAR TO DATE", "year_target", "ytd", days_ytd)):
+        out.append(("head", {"label": kind, "days": days}))
+        out.append(("total", block(rows, "OVERALL", tgt_key, ach_key, days)))
+        for reg in sorted({r["region"] for r in rows}):
+            part = [r for r in rows if r["region"] == reg]
+            out.append(("region",
+                        block(part, reg.upper(), tgt_key, ach_key, days)))
+    return out
+
+
+def render_tva_exec(sheet) -> "Image":
+    """The snapshot table — one grid, both periods, three scopes each."""
+    asof = sheet["asof"]
+    header = [h for h, _ in TVA_EXEC_COLS]
+    aligns = [a for _, a in TVA_EXEC_COLS]
+    grid = []
+    for kind, r in tva_exec_rows(sheet):
+        if kind == "head":
+            note = ("against the month's target" if "MONTH" in r["label"]
+                    else "against the year's target")
+            grid.append((_cells([(f'{r["label"]}  ·  {note}  ·  '
+                                  f'{r["days"]} day(s) left', 8)],
+                                aligns, HDR_BG, True), ROW_H))
+            continue
+        ink = INK
+        if r["ach_pct"] is not None:
+            ink = GREEN if r["ach_pct"] >= 100 else INK
+        grid.append((_cells([
+            r["label"],
+            _money(r["target"]), _money(r["ach"]),
+            f'{r["ach_pct"]:,.1f}' if r["ach_pct"] is not None else "",
+            _money(r["bal"]),
+            f'{r["bal_pct"]:,.1f}' if r["bal_pct"] is not None else "",
+            f'{r["days"]:,}',
+            _money(r["per_day"]),
+        ], aligns, TOTAL_BG if kind == "total" else None,
+            kind == "total", ink=ink), ROW_H))
+    return _draw_grid(header, grid, landscape=False,
+                      title=f"EXECUTIVE SNAPSHOT  ·  {asof:%d %b %Y}")
+
+
 def render_target_vs_ach(sheet, region=None) -> "Image":
     """One money table: every store against its month and its year."""
     asof = sheet["asof"]
@@ -1975,7 +2083,9 @@ def build_target_vs_ach(pf_df, asof=None, basis_label="") -> tuple[str, bytes]:
     sheet = target_vs_ach(pf_df, asof)
     asof = sheet["asof"]
     with _LOCK, desk():
-        img = render_target_vs_ach(sheet)
+        # The snapshot leads, then the store sheet it summarises — one page, so
+        # the estate figure and the stores that make it are read together.
+        img = _stack([render_tva_exec(sheet), render_target_vs_ach(sheet)], 34)
         pdf = _pdf_from([("Target vs achievement", img)],
                         f"As of {asof:%d %b %Y}"
                         + (f" · {basis_label}" if basis_label else ""))
