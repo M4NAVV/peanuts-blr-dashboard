@@ -278,7 +278,13 @@ WB_ROWS = {"subtotal": WB_TOTAL, "grand": WB_TOTAL,
            # not read as one more total in a column of them.
            "summary": WB_HDR_BG}
 WB_ROWS_VFL = {"storetotal": "#FDE9D9", "subtotal": "#95B3D7",
-               "loctotal": "#92D050", "block": "#92D050", "grand": WB_TOTAL}
+               "loctotal": "#92D050", "block": "#92D050", "grand": WB_TOTAL,
+               # The like-to-like halves and the sheet's own summary of itself,
+               # in this sheet's palette rather than the portfolio's: a pale
+               # step under the store-total blue, so the pair reads as detail
+               # belonging to the total beneath it, and header blue for the
+               # footer so it is not mistaken for one more total.
+               "split": "#DCE6F1", "summary": WB_HDR_BG}
 
 
 def styled_report_html(disp, money_cols=(), pct_cols=(), sign_cols=(),
@@ -1204,6 +1210,10 @@ def _png_mtd_ytd(df, asof):
     for _k, _t in enumerate(rtypes):
         row_bg.append("#F6D9D5" if _t == "subtotal"
                       else "#CDE8CF" if _t == "grand"
+                      # A store's comparable / non-comparable halves, and the
+                      # report's own LIKE TO LIKE line — not zebra rows.
+                      else "#EDF6F9" if _t == "split"
+                      else "#DAEEF3" if _t == "summary"
                       else ("#FFFFFF" if _k % 2 == 0 else "#FAF6EF"))
     return table_to_png(sdf, "", row_bg=row_bg, signed_cols=_money + _pct)
 

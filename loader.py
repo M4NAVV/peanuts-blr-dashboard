@@ -884,6 +884,28 @@ def report_frames(df: pd.DataFrame, kind: str, asof=None, anchor_takeover: bool 
         # (new stores show YTD_LY = "-" / GD = new).
         opened = pd.to_datetime(df[COL_STORE_LABEL].map(takeover_map()), errors="coerce")
         prior_mask &= ~(opened >= pd.Timestamp(fy_year, 4, 1))
+    # ★★ LAST YEAR STOPS WHERE A CLOSED STORE'S THIS YEAR STOPS (19 Aug 2026).
+    #
+    # This feed had no closure handling at all, so a shut store compared its
+    # FULL last year against a this year that ends with the shutter. Roodraksh
+    # Mall closed 31 July and read -22.0% where the truth is -16.1%; last year's
+    # 1-18 August, Rs 1,72,537 over 62 rows, had no counterpart to be compared
+    # against. The portfolio feed has always cut this (`_window_frames`), which
+    # is why the same store reads correctly there.
+    #
+    # ★ DONE HERE, AT THE SOURCE, RATHER THAN IN THE TWO REPORTS THAT SHOWED IT.
+    # Manav asked his team and took the wider fix: patching the executive screens
+    # alone would have left the degrowth watchlists and the morning manager
+    # reports on the old basis — trading a visible inconsistency for a hidden
+    # one. Every VFL surface now uses one closure rule.
+    #
+    # Cut on the closure DAY, where the portfolio cuts at its MONTH-END. All 13
+    # recorded closures are month-ends so the two agree today; the day is the
+    # stricter reading and matches the like-to-like spans.
+    _shut = closure_cutoffs(asof)
+    if _shut:
+        _lim = df[COL_STORE_LABEL].map(_shut) - pd.DateOffset(years=1)
+        prior_mask &= ~(_lim.notna() & (df["date"] > _lim))
     prior = df[prior_mask]
     return cur, prior
 
@@ -999,6 +1021,53 @@ def region_store_report(df: pd.DataFrame, asof=None):
             "GD YTD Value": yty - yly, "GD YTD %": _growth_pct(yty, yly),
         }
 
+    # ★ THE LIKE-TO-LIKE SPLIT, the same rule as the GD sheets on both feeds
+    # (Manav, 19 Aug: "we can make this change in the mtd/ytd reports tab also").
+    # A store only comparable over part of the window shows that part on its own
+    # line, with the rest above it, and its own row still closes the pair — so
+    # the growth on the comparable half is not diluted by months with no last
+    # year. Only the MTD and YTD pairs split; the day's sale is a different
+    # window and would mean nothing cut this way.
+    l2l_start, l2l_end = _l2l_spans_vfl(df, asof)
+    fy_year = asof.year if asof.month >= 4 else asof.year - 1
+    win_start = pd.Timestamp(fy_year, 4, 1)
+    _yr = pd.DateOffset(years=1)
+
+    def _part(frame, label, lo, hi):
+        m = ((frame[COL_STORE_LABEL] == label) & (frame["date"] >= lo)
+             & (frame["date"] <= hi))
+        return float(frame[m][COL_AMOUNT].sum())
+
+    def _halves(label, whole):
+        s, e = l2l_start.get(label), l2l_end.get(label)
+        if s is None or e is None or s > e:
+            return []                     # no comparable span at all
+        if s <= win_start and e >= asof:
+            return []                     # the span covers the window
+        inside = {"YTD TY": _part(ytd_cur, label, s, e),
+                  "YTD LY": _part(ytd_pri, label, s - _yr, e - _yr),
+                  "MTD TY": _part(mtd_cur, label, s, e),
+                  "MTD LY": _part(mtd_pri, label, s - _yr, e - _yr)}
+        outside = {k: whole[k] - inside[k] for k in inside}
+        if all(abs(v) < 1 for v in outside.values()):
+            return []
+        return [("no L2L", outside), (f"L2L from {s:%d-%m-%Y}", inside)]
+
+    def _half_row(loc, note, v):
+        """Only the compared columns mean anything on a half."""
+        return {
+            "Region": "", "DATE": "", "STORE CODE": "",
+            "LOCATION": f"{loc} — {note}",
+            "Day Sales": float("nan"),
+            "MTD LY": v["MTD LY"], "MTD TY": v["MTD TY"],
+            "GD MTD Value": v["MTD TY"] - v["MTD LY"],
+            "GD MTD %": _growth_pct(v["MTD TY"], v["MTD LY"]),
+            "YTD LY": v["YTD LY"], "YTD TY": v["YTD TY"],
+            "GD YTD Value": v["YTD TY"] - v["YTD LY"],
+            "GD YTD %": _growth_pct(v["YTD TY"], v["YTD LY"]),
+        }
+
+    l2l_rows, non_l2l_rows = [], []
     all_store_rows = []
     for region, grp in master.groupby("region", sort=False):
         region_rows = []
@@ -1009,6 +1078,15 @@ def region_store_report(df: pd.DataFrame, asof=None):
                 float(mtd_ly.get(name, 0.0)), float(mtd_ty.get(name, 0.0)),
                 float(ytd_ly.get(name, 0.0)), float(ytd_ty.get(name, 0.0)),
             )
+            parts = _halves(name, sr)
+            for note, vals in parts:
+                rows.append(_half_row(r["location"], note, vals))
+                types.append("split")
+                (non_l2l_rows if note == "no L2L" else l2l_rows).append(vals)
+            if not parts:
+                s, e = l2l_start.get(name), l2l_end.get(name)
+                (l2l_rows if (s is not None and e is not None and s <= e)
+                 else non_l2l_rows).append(sr)
             region_rows.append(sr)
             rows.append(sr)
             types.append("store")
@@ -1020,6 +1098,25 @@ def region_store_report(df: pd.DataFrame, asof=None):
     grand = pd.concat(all_store_rows, ignore_index=True)
     rows.append(_total_row("Grand Total", grand))
     types.append("grand")
+
+    # The report's own like-to-like line — the figure the Executive Snapshot
+    # prints, shown here rather than left for the reader to reconstruct.
+    for label, part in (("LIKE TO LIKE", l2l_rows), ("NO L2L", non_l2l_rows)):
+        if not part:
+            continue
+        t = {k: sum(float(p.get(k, 0.0) or 0.0) for p in part)
+             for k in ("MTD LY", "MTD TY", "YTD LY", "YTD TY")}
+        rows.append({
+            "Region": label, "DATE": "", "STORE CODE": "", "LOCATION": "",
+            "Day Sales": float("nan"),
+            "MTD LY": t["MTD LY"], "MTD TY": t["MTD TY"],
+            "GD MTD Value": t["MTD TY"] - t["MTD LY"],
+            "GD MTD %": _growth_pct(t["MTD TY"], t["MTD LY"]),
+            "YTD LY": t["YTD LY"], "YTD TY": t["YTD TY"],
+            "GD YTD Value": t["YTD TY"] - t["YTD LY"],
+            "GD YTD %": _growth_pct(t["YTD TY"], t["YTD LY"]),
+        })
+        types.append("summary")
 
     return pd.DataFrame(rows, columns=REPORT_COLS), types
 
@@ -1393,6 +1490,58 @@ def _vfl_gd_frac(ty, ly):
     return (ty - ly) / ly * 100 if ly else float("nan")
 
 
+def closure_cutoffs(asof) -> dict:
+    """{store label: closure date} for closures that have already happened."""
+    shut = closed_map()
+    if not shut:
+        return {}
+    asof = pd.Timestamp(asof)
+    master = load_store_master()
+    out = {}
+    for n, c in zip(master["tableau_name"], master["code"]):
+        try:
+            code = int(c)
+        except (TypeError, ValueError):
+            continue                      # code is a STRING column — see below
+        if code in shut and pd.Timestamp(shut[code]) <= asof:
+            out[str(n)] = pd.Timestamp(shut[code])
+    return out
+
+
+def _l2l_spans_vfl(df: pd.DataFrame, asof):
+    """Each store's comparable span on THIS feed, keyed by store label.
+
+    The same call the portfolio sheet makes, and the same one the Executive
+    Snapshot compares over — one definition of "comparable" in the codebase,
+    not three. Keyed by label because that is what the VFL feed is keyed by;
+    `l2l_bounds` does not care which, and reads South's takeover date correctly
+    on either feed without being told which feed it is on.
+    """
+    import exec_snapshot
+    master = load_store_master()
+    # ⚠️ `master["code"]` is a STRING column while `closed_map` and `doo_map`
+    # are keyed by INT. Without the cast every lookup below misses and both maps
+    # come back EMPTY — which does not raise: the spans simply open at the
+    # feed's left edge and never close, so a shut store compares a full last
+    # year against a part year. Cast, exactly as the snapshot does.
+    code_of = {str(n): int(c) for n, c in zip(master["tableau_name"],
+                                              master["code"])
+               if str(c).strip() not in ("", "nan", "None")}
+    here = set(df[COL_STORE_LABEL].dropna().astype(str).unique())
+    shut, doo = closed_map(), doo_map()
+    shut_by_label = {s: shut[c] for s, c in code_of.items()
+                     if c in shut and s in here}
+    open_by_label = {s: doo[c] for s, c in code_of.items()
+                     if c in doo and s in here}
+    # The failure above, made loud — but only when there are stores to match.
+    # An empty selection is a filter, not a fault, and must still render.
+    if here and not open_by_label:
+        raise RuntimeError("VFL like-to-like: no store matched the master — "
+                           "spans would silently span everything")
+    return exec_snapshot.l2l_bounds(df, COL_STORE_LABEL, COL_AMOUNT,
+                                    shut_by_label, asof, opened=open_by_label)
+
+
 def vfl_gd_report(df: pd.DataFrame, asof=None, gen_date=None):
     """The VFL sheet, matching the workbook 1:1. Region → Master Location → Store
     → Gender (MEN/WOMEN) → brand-line detail, with MEN/WOMEN, store, location,
@@ -1470,6 +1619,77 @@ def vfl_gd_report(df: pd.DataFrame, asof=None, gen_date=None):
     def rowsum(r):
         return {c: float(r[c]) for c in _VFL_SUM_COLS}
 
+    # ----------------------------------------------------------------- #
+    # ★★ THE LIKE-TO-LIKE SPLIT, the same rule the portfolio GD sheet got on
+    # 17 Aug and which Manav asked for here on 19 Aug: *"that rule we made for
+    # the portfolio growth degrowth table, where it splits a store into no l2l
+    # and l2l, to give an accurate read. i want to implement that same rule in
+    # the VFL growth degrowth also."*
+    #
+    # A store that is only comparable over part of the window has that part cut
+    # out and shown on its own line, with the rest on a second line, so the
+    # growth on the comparable half is not diluted by months that have no last
+    # year at all. The store's own total row still closes the block, so the
+    # store is never split across the page — the subtotal is the point.
+    #
+    # Only the YTD and MTD pairs split. The day's sale, last year's full month,
+    # the projections and last full year are different windows and would mean
+    # nothing cut this way; they sit on the store total, where it is whole.
+    _l2l_start, _l2l_end = _l2l_spans_vfl(df, asof)
+    _l2l_win_start = fy_start          # 1 April; a span opening on or before it
+    _yr = pd.DateOffset(years=1)       # clips nothing off this year's window
+    _y_cur, _y_pri = report_frames(df, "YTD", asof=asof)
+    _m_cur, _m_pri = report_frames(df, "MTD", asof=asof)
+    _split_src = ["YTD LY", "YTD TY", "MTD LY", "MTD TY"]
+
+    def _part(frame, label, lo, hi):
+        m = ((frame[COL_STORE_LABEL] == label) & (frame["date"] >= lo)
+             & (frame["date"] <= hi))
+        return float(frame[m][COL_AMOUNT].sum())
+
+    def _split_halves(label, whole):
+        """[] when the store is comparable throughout — the usual case."""
+        s, e = _l2l_start.get(label), _l2l_end.get(label)
+        if s is None or e is None or s > e:
+            return []                     # no comparable span at all: one line
+        # ★ THE TEST IS WHETHER THE SPAN CLIPS THE WINDOW, not whether two
+        # sums differ. This sheet DROPS pure-return brand lines ("like the
+        # sheet"), so a store total can sit a few thousand rupees off the raw
+        # frames — Agartala carries a TWAMEV MEN line at YTD LY -9,999 with no
+        # this-year counterpart. Reading that residual as "outside the span"
+        # split a store that is comparable from 2023 and put a phantom -100%
+        # line under it. Only a real clip splits a store.
+        if s <= _l2l_win_start and e >= asof:
+            return []
+        inside = {"YTD TY": _part(_y_cur, label, s, e),
+                  "YTD LY": _part(_y_pri, label, s - _yr, e - _yr),
+                  "MTD TY": _part(_m_cur, label, s, e),
+                  "MTD LY": _part(_m_pri, label, s - _yr, e - _yr)}
+        outside = {k: whole[k] - inside[k] for k in _split_src}
+        if all(abs(v) < 1 for v in outside.values()):
+            return []                     # comparable all the way through
+        return [("NO L2L", outside), (f"L2L FROM {s:%d-%m-%Y}", inside)]
+
+    def emit_split(gender_label, loc, values):
+        """A half-line: only the compared columns mean anything on it."""
+        d = dict.fromkeys(VFL_GD_COLS, "")
+        for c in VFL_GD_MONEY:
+            d[c] = float("nan")
+        d["MEN/WOMEN/KIDS"], d["LOCATION"] = gender_label, loc
+        for src in _split_src:
+            d[_VFL_SUM_SRC[src]] = values[src]
+        d["Sum of GD_YTD_%"] = _vfl_gd_frac(values["YTD TY"], values["YTD LY"])
+        d["Sum of GD_MTD_%"] = _vfl_gd_frac(values["MTD TY"], values["MTD LY"])
+        rows.append(d)
+        types.append("split")
+
+    def comparable_throughout(label) -> bool:
+        """A start alone is not enough — the span has to actually exist."""
+        s, e = _l2l_start.get(label), _l2l_end.get(label)
+        return s is not None and e is not None and s <= e
+
+    l2l_rows, non_l2l_rows = [], []       # for the footer summary
+
     for region in [r for r in _REGION_ORDER if r in sb["Region"].unique()]:
         rdf = sb[sb["Region"] == region]
         r_pend = region
@@ -1491,7 +1711,18 @@ def vfl_gd_report(df: pd.DataFrame, asof=None, gen_date=None):
                              br["Location"], br["DOO"], rowsum(br), "store")
                         r_pend = m_pend = c_pend = g_pend = ""
                     emit("", "", "", f"{gender} Total", "", "", "", sums(gdf), "storetotal")
-                emit("", "", f"{int(code)} Total", "", "", "", "", sums(cdf), "subtotal")
+                # The store's like-to-like halves sit between its gender totals
+                # and its own total, so the total still closes the block.
+                _label = str(cdf[COL_STORE_LABEL].iloc[0])
+                _whole = sums(cdf)
+                _halves = _split_halves(_label, _whole)
+                for _tag, _vals in _halves:
+                    emit_split(_tag, str(cdf["Location"].iloc[0]), _vals)
+                    (non_l2l_rows if _tag == "NO L2L" else l2l_rows).append(_vals)
+                if not _halves:
+                    (l2l_rows if comparable_throughout(_label)
+                     else non_l2l_rows).append(_whole)
+                emit("", "", f"{int(code)} Total", "", "", "", "", _whole, "subtotal")
             # Location totals get their own type so consumers can tell them
             # apart from the {code} Total rows above (both used to be
             # "subtotal"): the workbook colours them differently, and the PDF's
@@ -1499,6 +1730,26 @@ def vfl_gd_report(df: pd.DataFrame, asof=None, gen_date=None):
             emit("", f"{mloc} Total", "", "", "", "", "", sums(mdf), "loctotal")
         emit(f"{region} Total", "", "", "", "", "", "", sums(rdf), "block")
     emit("Grand Total", "", "", "", "", "", "", sums(sb), "grand")
+
+    # ★ THE FOOTER THAT MAKES THE SHEET SAY ITS OWN LIKE TO LIKE. Summing the
+    # comparable halves gives the figure the Executive Snapshot prints, to the
+    # rupee — the sheet shows its working instead of quietly disagreeing with
+    # page 1. Same two lines, same names, as the portfolio sheet's footer.
+    for label, part in (("LIKE TO LIKE", l2l_rows), ("NO L2L", non_l2l_rows)):
+        if not part:
+            continue
+        d = dict.fromkeys(VFL_GD_COLS, "")
+        for c in VFL_GD_MONEY:
+            d[c] = float("nan")
+        d["Region"] = label
+        tot = {k: sum(float(p.get(k, 0.0) or 0.0) for p in part)
+               for k in _split_src}
+        for src in _split_src:
+            d[_VFL_SUM_SRC[src]] = tot[src]
+        d["Sum of GD_YTD_%"] = _vfl_gd_frac(tot["YTD TY"], tot["YTD LY"])
+        d["Sum of GD_MTD_%"] = _vfl_gd_frac(tot["MTD TY"], tot["MTD LY"])
+        rows.append(d)
+        types.append("summary")
 
     return pd.DataFrame(rows, columns=VFL_GD_COLS), types
 

@@ -82,6 +82,11 @@ VFL_ROW_BG = {
     "loctotal":   ((146, 208, 80), True),    # #92D050 green — location totals
     "block":      ((146, 208, 80), True),    # region totals
     "grand":      (TOTAL_BG, True),          # #FFFF00 yellow — grand
+    # A store shown as its comparable and non-comparable halves, and the
+    # sheet's LIKE TO LIKE / NO L2L footer. Same idea as the GD sheet's, in
+    # this palette: a pale step under the store-total blue, then header blue.
+    "split":      ((220, 230, 241), False),  # #DCE6F1
+    "summary":    (HDR_BG, True),
 }
 
 _BODY_BG = (255, 255, 255)           # plain white body — no zebra banding

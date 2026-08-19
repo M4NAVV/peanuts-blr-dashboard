@@ -421,11 +421,70 @@ def region_store_report(df: pd.DataFrame, asof=None):
             "GD YTD Value": yty - yly, "GD YTD %": _growth(yty, yly),
         }
 
+    # ★ THE LIKE-TO-LIKE SPLIT, mirroring the GD sheet above and both VFL
+    # reports (Manav, 19 Aug: "yes, do the mirror for portfolio"). A store only
+    # comparable over part of the window shows that part on its own line, with
+    # the rest above it, and its own row still closes the pair. Only the MTD and
+    # YTD pairs split; the day's sale is a different window.
+    #
+    # Last year needs no capping here — `_window_frames` has always cut it at a
+    # closure, which is why a shut store reads one honest line on this feed and
+    # why the VFL side had to be given the same cap before it could match.
+    l2l_start, l2l_end = _l2l_spans(df, asof)
+    fy_year = asof.year if asof.month >= 4 else asof.year - 1
+    win_start = pd.Timestamp(fy_year, 4, 1)
+    _yr = pd.DateOffset(years=1)
+
+    def _part(frame, c, lo, hi):
+        m = ((frame["code"] == c) & (frame["date"] >= lo) & (frame["date"] <= hi))
+        return float(frame[m]["sales"].sum())
+
+    def _halves(c, whole):
+        s, e = l2l_start.get(c), l2l_end.get(c)
+        if s is None or e is None or s > e:
+            return []                      # no comparable span at all
+        if s <= win_start and e >= asof:
+            return []                      # the span covers the window
+        inside = {"YTD TY": _part(ytd_cur, c, s, e),
+                  "YTD LY": _part(ytd_pri, c, s - _yr, e - _yr),
+                  "MTD TY": _part(mtd_cur, c, s, e),
+                  "MTD LY": _part(mtd_pri, c, s - _yr, e - _yr)}
+        outside = {k: whole[k] - inside[k] for k in inside}
+        if all(abs(v) < 1 for v in outside.values()):
+            return []
+        return [("no L2L", outside), (f"L2L from {s:%d-%m-%Y}", inside)]
+
+    def _half_row(r, note, v):
+        return {
+            "Region": "", "STORE CODE": "", "CITY": "", "BRAND": "",
+            "LOCATION": f'{r["location"]} — {note}',
+            "Day Sales": float("nan"),
+            "MTD LY": v["MTD LY"], "MTD TY": v["MTD TY"],
+            "GD MTD Value": v["MTD TY"] - v["MTD LY"],
+            "GD MTD %": _growth(v["MTD TY"], v["MTD LY"]),
+            "YTD LY": v["YTD LY"], "YTD TY": v["YTD TY"],
+            "GD YTD Value": v["YTD TY"] - v["YTD LY"],
+            "GD YTD %": _growth(v["YTD TY"], v["YTD LY"]),
+        }
+
+    l2l_rows, non_l2l_rows = [], []
     all_rows = []
     for region, grp in present.groupby("region", sort=False):
-        region_rows = [_store_row(r) for _, r in grp.iterrows()]
-        for sr in region_rows:
-            rows.append(sr); types.append("store")
+        region_rows = []
+        for _, r in grp.iterrows():
+            sr = _store_row(r)
+            parts = _halves(r["code"], sr)
+            for note, vals in parts:
+                rows.append(_half_row(r, note, vals))
+                types.append("split")
+                (non_l2l_rows if note == "no L2L" else l2l_rows).append(vals)
+            if not parts:
+                s, e = l2l_start.get(r["code"]), l2l_end.get(r["code"])
+                (l2l_rows if (s is not None and e is not None and s <= e)
+                 else non_l2l_rows).append(sr)
+            region_rows.append(sr)
+            rows.append(sr)
+            types.append("store")
         region_df = pd.DataFrame(region_rows)
         all_rows.append(region_df)
         rows.append(_total_row(f"{region} Total", region_df))
@@ -434,6 +493,25 @@ def region_store_report(df: pd.DataFrame, asof=None):
     grand = pd.concat(all_rows, ignore_index=True)
     rows.append(_total_row("Grand Total", grand))
     types.append("grand")
+
+    # The report's own like-to-like line — the figure the Executive Snapshot
+    # prints, shown here rather than left for the reader to reconstruct.
+    for label, part in (("LIKE TO LIKE", l2l_rows), ("NO L2L", non_l2l_rows)):
+        if not part:
+            continue
+        t = {k: sum(float(p.get(k, 0.0) or 0.0) for p in part)
+             for k in ("MTD LY", "MTD TY", "YTD LY", "YTD TY")}
+        rows.append({
+            "Region": label, "STORE CODE": "", "CITY": "", "LOCATION": "",
+            "BRAND": "", "Day Sales": float("nan"),
+            "MTD LY": t["MTD LY"], "MTD TY": t["MTD TY"],
+            "GD MTD Value": t["MTD TY"] - t["MTD LY"],
+            "GD MTD %": _growth(t["MTD TY"], t["MTD LY"]),
+            "YTD LY": t["YTD LY"], "YTD TY": t["YTD TY"],
+            "GD YTD Value": t["YTD TY"] - t["YTD LY"],
+            "GD YTD %": _growth(t["YTD TY"], t["YTD LY"]),
+        })
+        types.append("summary")
     return pd.DataFrame(rows, columns=REPORT_COLS), types
 
 
