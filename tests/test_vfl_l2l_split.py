@@ -38,7 +38,18 @@ def _row(rep, label):
 
 @pytest.fixture(scope="module")
 def live():
-    df = L.load_data()
+    """The live feed, or a skip.
+
+    ⚠️ These assertions are about the ESTATE — which store is clipped, which is
+    closed — so they need the real data and cannot run on a fixture. CI has
+    neither the sheet nor a local export, and erroring there tells nobody
+    anything. The rule itself is pinned synthetically below, which is what CI
+    actually verifies.
+    """
+    try:
+        df = L.load_data()
+    except Exception as e:                      # no sheet, no export: not a fault
+        pytest.skip(f"live data unavailable: {type(e).__name__}")
     return df, L.as_of(df)
 
 
@@ -199,3 +210,64 @@ def test_the_cap_is_applied_once_not_twice(live):
             continue
         assert float(row.iloc[0]["YTD LY"]) == pytest.approx(
             float(by_store[store]), abs=1.0), f"{store}: last year capped twice"
+
+
+# --------------------------------------------------------------------------- #
+# The rule itself, on frames built here — so CI verifies it without the feed.
+# --------------------------------------------------------------------------- #
+
+def _frame(rows):
+    return pd.DataFrame(
+        [{"date": pd.Timestamp(d), L.COL_STORE_LABEL: s, L.COL_AMOUNT: float(v)}
+         for d, s, v in rows])
+
+
+def test_closure_cap_cuts_last_year_on_the_closure_day(monkeypatch):
+    """A store shut on 31 July must not carry last year's August into the
+    comparison. This is the whole of Option B, in eight rows."""
+    asof = pd.Timestamp("2026-08-18")
+    df = _frame([
+        ("2025-07-15", "SHUT", 100), ("2025-08-10", "SHUT", 50),   # LY, after close
+        ("2026-07-15", "SHUT", 90),                                 # TY, before close
+        ("2025-07-15", "OPEN", 100), ("2025-08-10", "OPEN", 50),
+        ("2026-07-15", "OPEN", 90), ("2026-08-10", "OPEN", 60),
+    ])
+    monkeypatch.setattr(L, "closure_cutoffs",
+                        lambda a: {"SHUT": pd.Timestamp("2026-07-31")})
+    _, prior = L.report_frames(df, "YTD", asof=asof, anchor_takeover=False)
+    shut = prior[prior[L.COL_STORE_LABEL] == "SHUT"]
+    opens = prior[prior[L.COL_STORE_LABEL] == "OPEN"]
+    assert shut[L.COL_AMOUNT].sum() == 100, "last year ran past the closure"
+    assert opens[L.COL_AMOUNT].sum() == 150, "an open store must not be cut"
+
+
+def test_no_closure_leaves_last_year_whole(monkeypatch):
+    """The cap must be inert when nothing has closed — it runs on every call."""
+    asof = pd.Timestamp("2026-08-18")
+    df = _frame([("2025-08-10", "OPEN", 50), ("2026-08-10", "OPEN", 60)])
+    monkeypatch.setattr(L, "closure_cutoffs", lambda a: {})
+    _, prior = L.report_frames(df, "YTD", asof=asof, anchor_takeover=False)
+    assert prior[L.COL_AMOUNT].sum() == 50
+
+
+def test_a_future_closure_does_not_cut_anything(monkeypatch):
+    """VEGA has a closure date at the end of this month and is still trading.
+    Only a closure that has already happened may cap last year."""
+    asof = pd.Timestamp("2026-08-18")
+    df = _frame([("2025-08-10", "LATER", 50), ("2026-08-10", "LATER", 60)])
+    monkeypatch.setattr(L, "closure_cutoffs", lambda a: {})   # cutoffs filters by asof
+    _, prior = L.report_frames(df, "YTD", asof=asof, anchor_takeover=False)
+    assert prior[L.COL_AMOUNT].sum() == 50
+
+
+def test_closure_cutoffs_ignores_a_date_in_the_future():
+    """The filter that makes the test above true, checked directly."""
+    import datetime as _dt
+    real_closed, real_master = L.closed_map, L.load_store_master
+    try:
+        L.closed_map = lambda: {1: pd.Timestamp("2030-01-01")}
+        L.load_store_master = lambda: pd.DataFrame(
+            {"tableau_name": ["FUTURE"], "code": ["1"]})
+        assert L.closure_cutoffs(pd.Timestamp("2026-08-18")) == {}
+    finally:
+        L.closed_map, L.load_store_master = real_closed, real_master
