@@ -1803,6 +1803,7 @@ TVA_COLS = [
     ("YTD TARGET", "r"), ("YTD ACHIEVED", "r"), ("YTD ACHIEVED %", "r"),
     ("YTD BALANCE", "r"),
     ("YEAR TARGET", "r"), ("YEAR ACHIEVED %", "r"),
+    ("AVG DAY SALES", "r"),
 ]
 _TVA_VALUES = ("mtd_target", "mtd", "mtd_bal", "ytd_target", "ytd", "ytd_bal",
                "year_target")
@@ -2038,7 +2039,32 @@ def render_target_vs_ach(sheet, region=None) -> "Image":
             pct(r["mtd"], r["mtd_target"]), _money(r["mtd_bal"]),
             _money(r["ytd_target"]), _money(r["ytd"]),
             pct(r["ytd"], r["ytd_target"]), _money(r["ytd_bal"]),
-            _money(r["year_target"]), pct(r["ytd"], r["year_target"])]
+            _money(r["year_target"]), pct(r["ytd"], r["year_target"]),
+            _money(_avg_day(r))]
+
+    def _avg_day(r):
+        """Year to date ÷ the CALENDAR days this row has been trading.
+
+        ★ Manav, 19 Aug: a city total is the CITY'S daily takings — its whole
+        turnover over the days elapsed — not the average of a store within it.
+        So the divisor is calendar days, never the sum of its stores' days:
+        five stores do not give a city five days in a day.
+
+        One formula serves every tier because each row carries its own start —
+        `from`, which the FROM column prints, and which a total takes as the
+        EARLIEST of its members. So South divides by 19 April and everyone else
+        by 1 April, at store, location, city, region and grand total alike.
+
+        ⚠️ This is deliberately NOT the Average sheet's `AVG DAY SALE`, which
+        divides a total by store-days and answers "what does a store average
+        here". Both are right; they answer different questions, and this report
+        sits beside a per-day-required figure that is also calendar-based.
+        """
+        start = r.get("from")
+        if start is None:
+            return None
+        days = (asof - pd.Timestamp(start)).days + 1
+        return (r["ytd"] / days) if days > 0 else None
 
     def ink_for(r, kind):
         """Green once the target is met, red when behind where the calendar is.
