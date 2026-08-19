@@ -27,3 +27,7 @@ sample_*.pdf
 # The full store master carries GST, phone numbers, addresses and store
 # mail IDs. This repo is PUBLIC — only the carpet-area extract is tracked.
 store_master_full.csv
+
+# Scrapped work kept only for reference — Reports Sonu, retired 19 Aug 2026
+# when its one useful report shipped as the DB REPORTS tab. Never pushed.
+_archive/

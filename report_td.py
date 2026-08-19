@@ -732,8 +732,17 @@ def build_month_wise(pf_df, vfl_df, asof, basis_label="") -> tuple[str, bytes]:
 
 
 
-def bundle(reports: list[tuple[str, bytes]]) -> tuple[str, bytes, str]:
-    """One report downloads as itself; several download as a ZIP."""
+def bundle(reports: list[tuple[str, bytes]],
+           zip_name: str = "REPORTS.zip") -> tuple[str, bytes, str]:
+    """One report downloads as itself; several download as a ZIP.
+
+    ★ `zip_name` because the zip used to be called `REPORT_TD.zip` whatever it
+    held. That was true while REPORT TD was the only tab that bundled anything;
+    once every report moved under one 📄 REPORTS PDF tab per view (18 Aug), a
+    portfolio pack and a VFL pack both arrived under the name of a tab that no
+    longer exists. Each caller now says what its own zip is, dated, so two
+    downloads in a folder are told apart.
+    """
     if len(reports) == 1:
         name, data = reports[0]
         return name, data, "application/pdf"
@@ -741,7 +750,7 @@ def bundle(reports: list[tuple[str, bytes]]) -> tuple[str, bytes, str]:
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
         for name, data in reports:
             z.writestr(name, data)
-    return "REPORT_TD.zip", buf.getvalue(), "application/zip"
+    return zip_name, buf.getvalue(), "application/zip"
 
 
 # ── Month-wise data ─────────────────────────────────────────────────────────

@@ -1175,7 +1175,8 @@ def render_portfolio():
                         if f"festive_{_i}" in chosen:
                             built.append(FEST.build_festive_pdf(
                                 pf_all, _w, basis_label=basis))
-                    name, payload, mime = RTD.bundle(built)
+                    name, payload, mime = RTD.bundle(
+                        built, zip_name=f"PORTFOLIO REPORTS {pdf_asof:%d-%m-%Y}.zip")
                     st.session_state["rp_out"] = (name, payload, mime)
                 except Exception as e:                    # surface, don't crash tab
                     st.session_state["rp_out"] = None
@@ -2422,7 +2423,8 @@ if nav == "📄 REPORTS PDF":
                     if f"festive_{_i}" in chosen:
                         built.append(FEST.build_festive_pdf(
                             df_exec, _w, basis_label=p_basis, vfl=True))
-                name, payload, mime = RTD.bundle(built)
+                name, payload, mime = RTD.bundle(
+                    built, zip_name=f"VFL REPORTS {p_asof:%d-%m-%Y}.zip")
                 st.session_state["vrp_out"] = (name, payload, mime)
             except Exception as e:                        # surface, don't crash tab
                 st.session_state["vrp_out"] = None
