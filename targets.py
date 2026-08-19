@@ -149,6 +149,65 @@ def _load_one(url) -> pd.DataFrame | None:
         return None
 
 
+# --------------------------------------------------------------------------- #
+# ★★ WHICH YEAR ARE THESE TARGETS FOR? THE TAB DOES NOT SAY. (19 Aug 2026)
+#
+# It holds `YEAR TARGET` and twelve month columns and nothing that names a
+# fiscal year, so `for_month(2027-04-15)` cheerfully returned FY26-27's targets
+# — 53 stores, unlabelled, indistinguishable from a tab someone had updated.
+# On 1 April 2027 every achievement figure would have been measured against
+# last year's ask, with no error anywhere.
+#
+# Nothing in the data can be derived from, so the check is the same one the
+# validation gate uses for its row floor: a COMMITTED reference. `targets_fy.json`
+# records the fiscal year these figures were last seen changing in, plus a
+# fingerprint of the numbers. If the year rolls over and the numbers have not
+# moved, the tab was never rolled forward, and the reports say so instead of
+# quoting last year's ask as this year's.
+#
+# When the team does paste new targets the fingerprint changes, the warning
+# stops by itself, and the file is refreshed on the next push.
+# --------------------------------------------------------------------------- #
+_MARKER = "targets_fy.json"
+
+
+def _fingerprint(t) -> str:
+    import hashlib
+    cols = ["code", "year"] + list(_MONTHS)
+    have = [c for c in cols if c in t.columns]
+    body = t[have].sort_values("code").round(2).to_csv(index=False)
+    return hashlib.sha1(body.encode()).hexdigest()[:16]
+
+
+def _marker_path():
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)), _MARKER)
+
+
+def _read_marker():
+    import json
+    try:
+        with open(_marker_path()) as f:
+            m = json.load(f)
+        return int(m["fy"]), str(m["fingerprint"])
+    except Exception:
+        return None, None
+
+
+def fiscal_year_problem(t, day):
+    """The tab's year against the day's, or None. See the block above."""
+    fy = day.year if day.month >= 4 else day.year - 1
+    seen_fy, seen_fp = _read_marker()
+    if seen_fy is None or t is None or t.empty:
+        return None                       # no reference yet: say nothing
+    if fy <= seen_fy:
+        return None                       # the year these targets are known for
+    if _fingerprint(t) == seen_fp:
+        return (f"the '{_SHEET}' tab has not changed since FY{seen_fy}-"
+                f"{str(seen_fy + 1)[-2:]} — these are LAST YEAR'S targets, not "
+                f"FY{fy}-{str(fy + 1)[-2:]}'s")
+    return None                           # numbers moved: taken as rolled forward
+
+
 def for_month(day) -> dict:
     """-> {code: {"ytd": year target, "mtd": that month's}}. Empty if absent.
 
@@ -156,10 +215,15 @@ def for_month(day) -> dict:
     closed stores, and a zero target would make any achievement read as
     infinite rather than as unknown.
     """
+    global _PROBLEM
     t = load()
     if t is None:
         return {}
     day = pd.Timestamp(day)
+    stale = fiscal_year_problem(t, day)
+    if stale:                             # a wrong YEAR is worse than no target
+        _PROBLEM = stale
+        return {}
     col = _MONTHS[(day.month - 4) % 12]
     out = {}
     for _, r in t.iterrows():

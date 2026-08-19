@@ -282,6 +282,37 @@ def stopped_reporting(df: pd.DataFrame, *, date_col: str, store_col: str,
     return sorted(gone - _closed_codes())
 
 
+def identity_drift(df: pd.DataFrame, *, store_col: str,
+                   cols=("location", "city", "region", "brand")) -> list:
+    """Stores whose name, city, region or brand is not what it first was.
+
+    ★ Identity everywhere comes from `drop_duplicates("code")` — THE FIRST ROW
+    EVER SEEN. That is deliberate and stable, but it means a rename never
+    appears and a relocation keeps the old city in every city-grouped report,
+    with nothing to say so. Verified stable for all 63 codes at audit time, so
+    this fires on nothing today; it exists for the first rename, which is the
+    only moment anyone could act on it.
+
+    A warning, never a refusal: the reports are not wrong, they are behind, and
+    which name is the right one is a question for Manav rather than for code.
+    """
+    if df is None or df.empty or store_col not in df:
+        return []
+    have = [c for c in cols if c in df.columns]
+    if not have:
+        return []
+    out = []
+    for key, grp in df.groupby(df[store_col].astype(str), sort=True):
+        for c in have:
+            vals = grp[c].dropna().astype(str).str.strip()
+            vals = vals[vals != ""]
+            if vals.nunique() > 1:
+                first, last = vals.iloc[0], vals.iloc[-1]
+                if first != last:
+                    out.append(f"{key}: {c} was {first!r}, now {last!r}")
+    return out
+
+
 def fingerprint(df: pd.DataFrame, *, date_col: str, store_col: str,
                 value_col: str) -> dict:
     d = pd.to_datetime(df[date_col], errors="coerce")
@@ -409,6 +440,17 @@ def validate(df: pd.DataFrame, kind: str, *, date_col: str, store_col: str,
             f"the last {STOPPED_DAYS} days — {shown}{more}. Either they have "
             "closed and the master does not say so, or they have fallen out of "
             "the export.")
+    # A rename or a relocation never shows, because identity is the first row
+    # ever seen for a code. Say it once here rather than let every report keep
+    # printing a name nobody uses any more.
+    drift = identity_drift(df, store_col=store_col)
+    if drift:
+        shown = "; ".join(drift[:4])
+        more = f" and {len(drift) - 4} more" if len(drift) > 4 else ""
+        rep.warnings.append(
+            f"{len(drift)} store detail(s) changed in the feed but the reports "
+            f"keep the first value seen — {shown}{more}. A rename or a "
+            "relocation looks exactly like this.")
     missing = missing_open_stores(df, date_col=date_col, store_col=store_col)
     if missing:
         shown = ", ".join(str(s) for s in missing[:8])

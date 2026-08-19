@@ -189,8 +189,24 @@ def festive_windows(asof=None, url=None) -> list[Window]:
             out.append(Window(festival=short, tenure=n, ty_start=ty_start, ty_end=ty,
                               ly_start=ly - pd.Timedelta(days=n - 1), ly_end=ly,
                               elapsed=elapsed, asof=asof))
-    _LAST_PROBLEM = ("; ".join(refused) if refused and not out
-                     else ("; ".join(refused) if refused else None))
+
+    # ★★ A WINDOW FROM A FINISHED YEAR IS NOT A WINDOW (19 Aug 2026).
+    # The tab holds one season's dates. Read on 19 Aug 2027 it returned the 2026
+    # festivals — Durga Puja "day 45 of 45", complete, with `last_problem` None:
+    # a whole tab of last year's run-ups presented as this year's, silently. The
+    # dates carry their own year, so the tab can be asked whether it has been
+    # rolled forward rather than trusted to have been.
+    fy = asof.year if asof.month >= 4 else asof.year - 1
+    fy_start, fy_end = pd.Timestamp(fy, 4, 1), pd.Timestamp(fy + 1, 3, 31)
+    stale = [w for w in out if not (fy_start <= w.ty_end <= fy_end)]
+    out = [w for w in out if fy_start <= w.ty_end <= fy_end]
+    if stale:
+        seasons = sorted({f"{w.ty_end:%Y}" for w in stale})
+        refused.append(
+            f"the {_SHEET} tab still holds {', '.join(seasons)} dates — it has "
+            f"not been rolled forward to FY{fy}-{str(fy + 1)[-2:]}, so "
+            f"{len(stale)} window(s) were left out")
+    _LAST_PROBLEM = "; ".join(refused) if refused else None
     return sorted(out, key=lambda w: (w.ty_end, -w.tenure))
 
 

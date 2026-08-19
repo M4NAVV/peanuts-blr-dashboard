@@ -446,10 +446,18 @@ def portfolio_metrics(pf, asof, basis_label="", region=None) -> dict:
     import master_lookup
     carpet_map = master_lookup.carpet()
     open_codes = set(int(c) for c in y["code"]) - closed
-    area = float(sum(carpet_map.get(c, 0) or 0 for c in open_codes))
+    # ★ A STORE WITH NO CARPET FIGURE LEAVES BOTH SIDES OF THE RATIO, not just
+    # the bottom. `carpet_map.get(c, 0)` gave it zero floor space while its
+    # sales stayed in the numerator, so throughput rose and the page said
+    # nothing. Every open store has a figure today, so this moves no number —
+    # it bites the day a store opens before the master's CARPET cell is filled,
+    # which is the normal order of events.
+    measured = {c for c in open_codes if (carpet_map.get(c) or 0) > 0}
+    area = float(sum(carpet_map[c] for c in measured))
     proj_open = sum(v["proj_ytd"] for c, v in mets.items()
-                    if int(c) in open_codes)
+                    if int(c) in measured)
     throughput = (proj_open / area) if area else None
+    unmeasured = len(open_codes) - len(measured)
 
     # South has NO last year in the portfolio feed, so its like to like set is
     # empty and a like to like trajectory would be five zero bars — a page that
@@ -567,7 +575,11 @@ def portfolio_metrics(pf, asof, basis_label="", region=None) -> dict:
              "key": ("", f"{int((yl['shortfall'] < 0).sum())} down" if len(yl) else "")},
             {"label": "Estate", "value": f"{n_open} open",
              "sub": f"{len(closed)} closed, excluded",
-             "rows": [("Carpet area", f"{area:,.0f} sq ft" if area else "—")],
+             # A store still waiting on its CARPET cell is named here rather
+             # than silently lifting the rate it is left out of.
+             "rows": [("Carpet area",
+                       (f"{area:,.0f} sq ft" if area else "—")
+                       + (f"  ·  {unmeasured} unmeasured" if unmeasured else ""))],
              "key": ("Throughput / sq ft",
                      f"Rs {throughput:,.0f}" if throughput else "—")},
         ],
@@ -783,7 +795,9 @@ def vfl_metrics(df, asof, gen_date=None, basis_label="", region=None) -> dict:
     ly_full_by = df[(df["date"] >= pd.Timestamp(fy_year - 1, 4, 1))
                     & (df["date"] <= pd.Timestamp(fy_year, 3, 31))] \
         .groupby(L.COL_STORE_LABEL)[amt].sum()
-    proj = proj_open = ly_full = 0.0
+    proj = proj_open = proj_open_all = ly_full = 0.0
+    import master_lookup as _ML
+    carpet_by_code = _ML.carpet()
     for _, r in sy.iterrows():
         s = str(r["store"])
         c = code_of.get(s)
@@ -798,7 +812,9 @@ def vfl_metrics(df, asof, gen_date=None, basis_label="", region=None) -> dict:
         proj += p
         ly_full += float(ly_full_by.get(s, 0.0))
         if s not in closed_labels:
-            proj_open += p
+            proj_open_all += p
+            if (carpet_by_code.get(c) or 0) > 0:      # see the portfolio site
+                proj_open += p
 
     # Floor space being traded from, and what it earns. Closed stores are out of
     # both the area and the sales that divide by it, so the two describe the
@@ -808,8 +824,10 @@ def vfl_metrics(df, asof, gen_date=None, basis_label="", region=None) -> dict:
     carpet_map = master_lookup.carpet()
     open_codes = {code_of[s] for s in sy["store"].astype(str)
                   if s in code_of and s not in closed_labels}
-    area = float(sum(carpet_map.get(c, 0) or 0 for c in open_codes))
+    measured = {c for c in open_codes if (carpet_map.get(c) or 0) > 0}
+    area = float(sum(carpet_map[c] for c in measured))
     throughput = (proj_open / area) if area else None
+    unmeasured = len(open_codes) - len(measured)
 
     return {
         "title": "Executive Snapshot",
@@ -855,7 +873,11 @@ def vfl_metrics(df, asof, gen_date=None, basis_label="", region=None) -> dict:
              "key": ("", f"{int((yl['shortfall'] < 0).sum())} down" if len(yl) else "")},
             {"label": "Estate", "value": f"{n_open} open",
              "sub": f"{len(closed_labels)} closed, excluded",
-             "rows": [("Carpet area", f"{area:,.0f} sq ft" if area else "—")],
+             # A store still waiting on its CARPET cell is named here rather
+             # than silently lifting the rate it is left out of.
+             "rows": [("Carpet area",
+                       (f"{area:,.0f} sq ft" if area else "—")
+                       + (f"  ·  {unmeasured} unmeasured" if unmeasured else ""))],
              "key": ("Throughput / sq ft",
                      f"Rs {throughput:,.0f}" if throughput else "—")},
         ],

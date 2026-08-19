@@ -1,0 +1,5 @@
+{
+ "fy": 2026,
+ "fingerprint": "696d579dcf31d4e5",
+ "note": "The fiscal year these targets were last seen changing in, and a fingerprint of the numbers. If the year rolls over and the fingerprint has not moved, the tab was never rolled forward \u2014 targets.fiscal_year_problem() says so. Refresh this file when new targets are pasted."
+}
