@@ -1931,7 +1931,7 @@ def _tva_pace(r, asof, kind):
 TVA_EXEC_COLS = [
     ("", "l"), ("TARGET", "r"), ("ACHIEVED", "r"), ("ACHIEVED %", "r"),
     ("BALANCE TARGET", "r"), ("BALANCE %", "r"),
-    ("BALANCE DAYS", "r"), ("PER DAY REQD", "r"),
+    ("BALANCE DAYS", "r"), ("AVG DAY SALES", "r"), ("PER DAY REQD", "r"),
 ]
 
 
@@ -1958,30 +1958,42 @@ def tva_exec_rows(sheet):
     days_mtd = calendar.monthrange(asof.year, asof.month)[1] - asof.day
     days_ytd = (fy_end - asof).days
 
-    def block(part, label, tgt_key, ach_key, days):
+    month_start = asof.replace(day=1)
+
+    def block(part, label, tgt_key, ach_key, days, period_start):
         tgt = sum(r[tgt_key] for r in part if r.get(tgt_key))
         ach = sum(r[ach_key] for r in part)
         bal = (tgt - ach) if tgt else None
+        # ★ WHAT THIS SCOPE ACTUALLY AVERAGES A DAY, on the same calendar basis
+        # as `per_day` beside it and as the AVG DAY SALES column below — the
+        # scope's whole turnover over the days it has been trading, never the
+        # average of a store inside it. A scope starts on the EARLIEST of its
+        # members, so South counts from 19 April and the rest from 1 April;
+        # within a month, from the 1st unless a store opened later.
+        start = max(period_start, min(pd.Timestamp(r["from"]) for r in part))
+        elapsed = (asof - start).days + 1
         return {
             "label": label, "target": tgt or None, "ach": ach,
             "ach_pct": (ach / tgt * 100) if tgt else None,
             "bal": bal, "bal_pct": (bal / tgt * 100) if tgt else None,
             "days": days,
+            "avg_day": (ach / elapsed) if elapsed > 0 else None,
             # Ahead of the ask needs no daily rate — printing one would read as
             # a demand where none exists.
             "per_day": (bal / days) if (bal and bal > 0 and days > 0) else None,
         }
 
     out = []
-    for kind, tgt_key, ach_key, days in (
-            ("MONTH TO DATE", "mtd_target", "mtd", days_mtd),
-            ("YEAR TO DATE", "year_target", "ytd", days_ytd)):
+    for kind, tgt_key, ach_key, days, start in (
+            ("MONTH TO DATE", "mtd_target", "mtd", days_mtd, month_start),
+            ("YEAR TO DATE", "year_target", "ytd", days_ytd, sheet["fy_start"])):
         out.append(("head", {"label": kind, "days": days}))
-        out.append(("total", block(rows, "OVERALL", tgt_key, ach_key, days)))
+        out.append(("total",
+                    block(rows, "OVERALL", tgt_key, ach_key, days, start)))
         for reg in sorted({r["region"] for r in rows}):
             part = [r for r in rows if r["region"] == reg]
             out.append(("region",
-                        block(part, reg.upper(), tgt_key, ach_key, days)))
+                        block(part, reg.upper(), tgt_key, ach_key, days, start)))
     return out
 
 
@@ -1996,7 +2008,7 @@ def render_tva_exec(sheet) -> "Image":
             note = ("against the month's target" if "MONTH" in r["label"]
                     else "against the year's target")
             grid.append((_cells([(f'{r["label"]}  ·  {note}  ·  '
-                                  f'{r["days"]} day(s) left', 8)],
+                                  f'{r["days"]} day(s) left', 9)],
                                 aligns, HDR_BG, True), ROW_H))
             continue
         ink = INK
@@ -2009,6 +2021,7 @@ def render_tva_exec(sheet) -> "Image":
             _money(r["bal"]),
             f'{r["bal_pct"]:,.1f}' if r["bal_pct"] is not None else "",
             f'{r["days"]:,}',
+            _money(r["avg_day"]),
             _money(r["per_day"]),
         ], aligns, TOTAL_BG if kind == "total" else None,
             kind == "total", ink=ink), ROW_H))
