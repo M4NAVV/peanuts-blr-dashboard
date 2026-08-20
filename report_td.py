@@ -58,6 +58,7 @@ from PIL import Image, ImageDraw
 
 from imaging import _LOCK
 import portfolio_pdf as PP
+import projections as PROJ
 from portfolio_pdf import (_ft, _px, _fmt_in, _compose, save_pages, PAGE_PT_W,
                            HDR_BG, TOTAL_BG, NEG_INK, GRID, GREEN, INK, WHITE)
 
@@ -1932,6 +1933,7 @@ TVA_EXEC_COLS = [
     ("", "l"), ("TARGET", "r"), ("ACHIEVED", "r"), ("ACHIEVED %", "r"),
     ("BALANCE TARGET", "r"), ("BALANCE %", "r"),
     ("BALANCE DAYS", "r"), ("AVG DAY SALES", "r"), ("PER DAY REQD", "r"),
+    ("PROJECTED", "r"),
 ]
 
 
@@ -1960,7 +1962,7 @@ def tva_exec_rows(sheet):
 
     month_start = asof.replace(day=1)
 
-    def block(part, label, tgt_key, ach_key, days, period_start):
+    def block(part, label, tgt_key, ach_key, days, period_start, period_days):
         tgt = sum(r[tgt_key] for r in part if r.get(tgt_key))
         ach = sum(r[ach_key] for r in part)
         bal = (tgt - ach) if tgt else None
@@ -1978,22 +1980,31 @@ def tva_exec_rows(sheet):
             "bal": bal, "bal_pct": (bal / tgt * 100) if tgt else None,
             "days": days,
             "avg_day": (ach / elapsed) if elapsed > 0 else None,
+            # ★ WHERE THIS SCOPE LANDS AT ITS CURRENT RATE — `projections.py`,
+            # the same rule the GD sheet's PROJECTED MTD / PROJECTED YTD use, so
+            # the two reports cannot disagree about the word. Run-rate over the
+            # days traded, scaled to the length of the period: the month's own
+            # 28-31 days, and Manav's flat 365 for the year (his call, 9 Aug —
+            # NOT South's own 347-day window).
+            "projected": PROJ.project(ach, start, asof, None, period_days),
             # Ahead of the ask needs no daily rate — printing one would read as
             # a demand where none exists.
             "per_day": (bal / days) if (bal and bal > 0 and days > 0) else None,
         }
 
     out = []
-    for kind, tgt_key, ach_key, days, start in (
-            ("MONTH TO DATE", "mtd_target", "mtd", days_mtd, month_start),
-            ("YEAR TO DATE", "year_target", "ytd", days_ytd, sheet["fy_start"])):
+    for kind, tgt_key, ach_key, days, start, span in (
+            ("MONTH TO DATE", "mtd_target", "mtd", days_mtd, month_start,
+             PROJ.month_days(asof)),
+            ("YEAR TO DATE", "year_target", "ytd", days_ytd, sheet["fy_start"],
+             PROJ.YEAR_DAYS)):
         out.append(("head", {"label": kind, "days": days}))
         out.append(("total",
-                    block(rows, "OVERALL", tgt_key, ach_key, days, start)))
+                    block(rows, "OVERALL", tgt_key, ach_key, days, start, span)))
         for reg in sorted({r["region"] for r in rows}):
             part = [r for r in rows if r["region"] == reg]
-            out.append(("region",
-                        block(part, reg.upper(), tgt_key, ach_key, days, start)))
+            out.append(("region", block(part, reg.upper(), tgt_key, ach_key,
+                                        days, start, span)))
     return out
 
 
@@ -2008,7 +2019,7 @@ def render_tva_exec(sheet) -> "Image":
             note = ("against the month's target" if "MONTH" in r["label"]
                     else "against the year's target")
             grid.append((_cells([(f'{r["label"]}  ·  {note}  ·  '
-                                  f'{r["days"]} day(s) left', 9)],
+                                  f'{r["days"]} day(s) left', 10)],
                                 aligns, HDR_BG, True), ROW_H))
             continue
         ink = INK
@@ -2023,6 +2034,7 @@ def render_tva_exec(sheet) -> "Image":
             f'{r["days"]:,}',
             _money(r["avg_day"]),
             _money(r["per_day"]),
+            _money(r["projected"]),
         ], aligns, TOTAL_BG if kind == "total" else None,
             kind == "total", ink=ink), ROW_H))
     return _draw_grid(header, grid, landscape=False,
