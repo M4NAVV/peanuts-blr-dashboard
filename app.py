@@ -50,8 +50,15 @@ st.markdown(
         padding: 14px 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.04);
       }}
 
-      /* ---- Top navigation: 7 report pills + a "More" overflow menu ---- */
-      [data-testid="stButtonGroup"] {{ margin: 16px 0 !important; }}
+      /* ---- Top navigation: EVERY section as a pill, wrapped over rows ----
+         Manav, 21 Aug: "remove that more option for the tabs, and make all the
+         tabs come in the screen itself." A hidden section is a section nobody
+         opens; twelve of the twenty-five lived behind a popover. They now wrap
+         onto as many rows as they need. */
+      [data-testid="stButtonGroup"] {{
+        margin: 16px 0 !important;
+        display: flex !important; flex-wrap: wrap !important; gap: 6px !important;
+      }}
       [data-testid^="stBaseButton-segmented_control"] {{
         border-radius: 999px !important; padding: 4px 12px !important;
         font-weight: 600 !important; font-size: 0.78rem !important;
@@ -71,27 +78,7 @@ st.markdown(
       }}
       [data-testid="stBaseButton-segmented_controlActive"] p {{ color: #FFFFFF !important; }}
 
-      /* "More" popover trigger — same pill look + height as the tabs */
-      [data-testid="stPopoverButton"] {{
-        border-radius: 999px !important; padding: 4px 14px !important;
-        min-height: 34px !important; font-weight: 600 !important;
-        font-size: 0.78rem !important; color: {MAROON} !important;
-        background: #FFFFFF !important; border: 1px solid #ECE4D6 !important;
-      }}
-      [data-testid="stPopoverButton"] p {{ font-size: 0.78rem !important; }}
-      [data-testid="stPopoverButton"]:hover {{
-        background: #FBEFEA !important; border-color: {MAROON} !important;
-      }}
-      /* menu items inside the "More" popover — clean left-aligned list */
-      [data-testid="stPopoverBody"] [data-testid="stButton"] button {{
-        justify-content: flex-start !important; text-align: left !important;
-        border: none !important; background: transparent !important;
-        color: {INK} !important; font-weight: 500 !important;
-        border-radius: 8px !important; padding: 6px 10px !important;
-      }}
-      [data-testid="stPopoverBody"] [data-testid="stButton"] button:hover {{
-        background: #FBEFEA !important; color: {MAROON} !important;
-      }}
+
 
       /* ---- Mobile responsiveness (phones / narrow screens) ---- */
       @media (max-width: 640px) {{
@@ -1892,8 +1879,8 @@ def render_productivity(pr, key):
 
 
 # Top-level navigation (NOT st.tabs, which snaps back to the first tab on every
-# rerun). The 7 main reports show as pills; the rest live in a "More" overflow
-# menu. Selection lives in session_state (active_nav), so it PERSISTS on rerun.
+# rerun). EVERY section is a pill, wrapped over as many rows as it takes.
+# Selection lives in session_state (active_nav), so it PERSISTS on rerun.
 _TAB_LABELS = [
     "🧾 VFL G/D", "🧾 VFL Gender", "📄 REPORTS PDF", "🖼️ REPORTS IMAGES",
     "📋 MTD / YTD Report", "📉 Degrowth", "🔎 Degrowth Drivers",
@@ -1905,8 +1892,10 @@ _TAB_LABELS = [
     "🔧 Build your view", "Trends", "Category mix", "Salespeople",
     "Customers", "Colors & sizes",
 ]
-_PILL_TABS = _TAB_LABELS[:7]          # main reports shown as pills
-_MORE_TABS = _TAB_LABELS[7:]          # the rest, in a "More" overflow menu
+# ★ ALL OF THEM ON SCREEN (21 Aug). Twelve sections used to sit behind a "More"
+# popover, which is where a report goes to be forgotten. The pills wrap; nothing
+# is hidden.
+_PILL_TABS = _TAB_LABELS
 
 if "active_nav" not in st.session_state:
     st.session_state["active_nav"] = _PILL_TABS[0]
@@ -1919,30 +1908,16 @@ def _on_pills():                      # a pill was clicked → it becomes the se
         st.session_state["active_nav"] = v
 
 
-def _pick_more(lbl):                  # a "More" item was picked → clear the pills
-    st.session_state["active_nav"] = lbl
-    st.session_state["nav_pills"] = None
-
-
 nav = st.session_state["active_nav"]
-_more_active = nav in _MORE_TABS
-if _more_active:                      # tint the "More" button when its section is open
-    st.markdown(
-        f"<style>[data-testid='stPopoverButton']{{background:{MAROON}!important;"
-        f"border-color:{MAROON}!important;}}"
-        f"[data-testid='stPopoverButton'] p{{color:#fff!important;}}</style>",
-        unsafe_allow_html=True)
 
-_nav_l, _nav_r = st.columns([5, 1], vertical_alignment="center", gap="small")
-with _nav_l:
-    st.segmented_control("Section", _PILL_TABS, key="nav_pills",
-                         on_change=_on_pills, label_visibility="collapsed")
-with _nav_r:
-    with st.popover("More  ▾", use_container_width=True):
-        st.caption("Jump to a section")
-        for _lbl in _MORE_TABS:
-            st.button(_lbl, key=f"more_{_lbl}", use_container_width=True,
-                      on_click=_pick_more, args=(_lbl,))
+# A section chosen before this change may have left `nav_pills` empty; without
+# this the whole strip would render with nothing selected and the page would
+# look like it had lost its place.
+if st.session_state.get("nav_pills") is None and nav in _PILL_TABS:
+    st.session_state["nav_pills"] = nav
+
+st.segmented_control("Section", _PILL_TABS, key="nav_pills",
+                     on_change=_on_pills, label_visibility="collapsed")
 
 # =========================================================================== #
 # MTD / YTD REPORT — region × store, year-on-year (the executive table)
