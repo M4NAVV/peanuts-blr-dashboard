@@ -246,6 +246,19 @@ def test_single_bill_card_with_no_data_is_a_dash():
     assert SN._single_bill_card({"ty": None, "ly": None})[1] == "—"
 
 
+def test_the_card_and_the_kpi_panel_use_the_same_threshold():
+    """★ Both count single-piece bills, on the same document, and they must not
+    disagree. The panel has used `<= 1` since 18 Aug so a return netting to zero
+    still counts as one; `== 1` differed on ten bills across five stores."""
+    import inspect
+
+    import snapshots as _sn
+    card_src = inspect.getsource(_sn.single_bill_share)
+    panel_src = inspect.getsource(_sn._one_kpi)
+    assert "<= 1" in card_src
+    assert '["q"] <= 1' in panel_src
+
+
 def test_a_bill_of_one_piece_is_single_and_two_pieces_is_not():
     import loader as L
 
@@ -267,5 +280,5 @@ def test_a_bill_of_one_piece_is_single_and_two_pieces_is_not():
 
     sb = SN.single_bill_share(_FakeL, frame, pd.Timestamp("2026-08-20"), "MTD", "S")
     # b1 and b4 are one piece; b2 is two pieces; b3 is two pieces on two lines.
-    assert sb["ty"] == pytest.approx(0.5)
+    assert sb["ty"] == pytest.approx(0.5)   # threshold is <= 1, see above
     assert sb["ly"] is None

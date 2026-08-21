@@ -436,6 +436,14 @@ def single_bill_share(L, df, asof, kind, store):
     lines this month — but "a customer who bought one thing" is what a manager
     means, and it is the figure that pairs with pieces-per-bill.
 
+    ★★ THE THRESHOLD IS `<= 1`, MATCHING `_one_kpi` EXACTLY. The KPI panel at
+    the foot of the same document has counted single-piece bills since 18 Aug,
+    and it uses `<= 1` so that a return or exchange netting to zero or less
+    still counts as one. Using `== 1` here instead differed on ten bills across
+    five stores — a fraction of a percent, and enough to print two different
+    numbers for the same thing on one page. Any change to one of these two must
+    change the other.
+
     ★ LOWER IS BETTER, which is why this needs its own colour rule. Every other
     card on the strip is good when it rises; a single-bill share that climbs
     means more customers leaving with one item, and that is the shortfall the
@@ -451,7 +459,7 @@ def single_bill_share(L, df, asof, kind, store):
         qty = d.groupby(L.COL_BILL_UID)[L.COL_QTY].sum()
         if not len(qty):
             return None
-        return float((qty == 1).mean())
+        return float((qty <= 1).mean())
 
     return {"ty": one(cur), "ly": one(pri)}
 
