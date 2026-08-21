@@ -33,31 +33,64 @@ CARD_GAP = 16
 CARD_PAD_X, CARD_PAD_Y = 22, 18
 
 
+# Above this many cards in a row the value text starts colliding with the card
+# edge on a phone. Nine cards therefore run as two rows, not one squeezed line.
+MAX_CARDS_PER_ROW = 5
+
+
 def _cards_image(cards, width, label_px=22, value_px=44):
-    """`cards` = [(label, value_text), …] laid out in one row across `width`."""
+    """Lay out cards across `width`.
+
+    `cards` is either a flat [(label, value), …] or a LIST OF ROWS,
+    [[(label, value), …], [(label, value), …]].
+
+    ★ ROWS ARE GROUPED BY MEANING, NOT BY WHAT FITS. Nine cards split 5-and-4
+    reads as one arbitrary run that happened to wrap. Split 6-and-3 it reads as
+    two statements: what the target is and where the store stands against it,
+    then what moved. A caller that knows the grouping passes rows; anything else
+    wraps at `MAX_CARDS_PER_ROW`.
+    """
     if not cards:
         return None
     lab_f, _ = PP._ft(label_px)
     _, val_f = PP._ft(value_px)
-    scratch = ImageDraw.Draw(Image.new("RGB", (1, 1)))
 
-    n = len(cards)
-    cw = (width - CARD_GAP * (n - 1)) // n
+    if cards and isinstance(cards[0], (list, tuple)) and cards[0] and \
+            isinstance(cards[0][0], (list, tuple)):
+        rows = [r for r in cards if r]
+    else:
+        n = len(cards)
+        per_row = min(n, MAX_CARDS_PER_ROW)
+        rows = [cards[i:i + per_row] for i in range(0, n, per_row)]
+
+    # One column width across every row, so cards line up down the page even
+    # when the rows hold different numbers of them.
+    per_row = max(len(r) for r in rows)
+    cw = (width - CARD_GAP * (per_row - 1)) // per_row
     lab_h = lab_f.getmetrics()[0] + lab_f.getmetrics()[1]
     val_h = val_f.getmetrics()[0] + val_f.getmetrics()[1]
     ch = CARD_PAD_Y * 2 + lab_h + 8 + val_h
 
-    img = Image.new("RGB", (width, ch), (255, 255, 255))
+    img = Image.new("RGB", (width, ch * len(rows) + CARD_GAP * (len(rows) - 1)),
+                    (255, 255, 255))
     d = ImageDraw.Draw(img)
-    x = 0
-    for label, value in cards:
-        d.rectangle([x, 0, x + cw - 1, ch - 1], fill=CARD_BG, outline=CARD_EDGE,
-                    width=1)
-        d.text((x + CARD_PAD_X, CARD_PAD_Y), str(label), font=lab_f, fill=SUB_INK)
-        # Negative headline figures pick up the same red the tables use.
-        col = PP.NEG_INK if str(value).lstrip("₹ ").startswith("-") else TITLE_INK
-        d.text((x + CARD_PAD_X, CARD_PAD_Y + lab_h + 8), str(value), font=val_f,
-               fill=col)
+    for ri, row in enumerate(rows):
+        y0 = ri * (ch + CARD_GAP)
+        x = 0
+        for card in row:
+            label, value = card[0], card[1]
+            ink = card[2] if len(card) > 2 else None
+            d.rectangle([x, y0, x + cw - 1, y0 + ch - 1], fill=CARD_BG,
+                        outline=CARD_EDGE, width=1)
+            d.text((x + CARD_PAD_X, y0 + CARD_PAD_Y), str(label), font=lab_f,
+                   fill=SUB_INK)
+            # A card may state its own ink. Otherwise the old rule stands:
+            # negative figures pick up the same red the tables use.
+            col = ink or (PP.NEG_INK if str(value).lstrip("₹Rs ").startswith("-")
+                          else TITLE_INK)
+            d.text((x + CARD_PAD_X, y0 + CARD_PAD_Y + lab_h + 8), str(value),
+                   font=val_f, fill=col)
+            x += cw + CARD_GAP
         x += cw + CARD_GAP
     return img
 
@@ -223,6 +256,204 @@ def store_kpis(L, df, asof, kind, store):
     return {"ty": t, "ly": l, "move": t["sale"] - l["sale"],
             "d_bills": d_bills, "d_abs": d_abs, "d_asp": d_asp,
             "asof": pd.Timestamp(asof)}
+
+
+# --------------------------------------------------------------------------- #
+#  Target progress — the six figures a manager is actually measured on          #
+# --------------------------------------------------------------------------- #
+
+def _unit_for(values):
+    """Crore or lakh, chosen from the LARGEST figure a group has to show.
+
+    ★ ONE UNIT PER GROUP OF COMPARABLE FIGURES. A year target of Rs 1,601.25 L
+    runs into the edge of its card, and a flagship's would overflow it — but
+    switching each card independently would print a target in crore beside an
+    achievement in lakh, and a manager comparing them would have to convert in
+    their head. So the target, the achievement and the balance share one unit,
+    chosen from whichever is biggest; the two per-day rates share their own,
+    because a daily figure in crore is all zeros.
+    """
+    big = max((abs(v) for v in values if v is not None), default=0.0)
+    return ("Cr", 1e7) if big >= 1e7 else ("L", 1e5)
+
+
+def _money(v, unit=("L", 1e5)):
+    """Money in the given unit, or an em dash when there is none.
+
+    A missing target must never print as zero: a store with no target entered
+    would read as having been asked for nothing and having beaten it.
+    """
+    if v is None:
+        return "—"
+    suffix, div = unit
+    return f"Rs {v / div:,.2f} {suffix}"
+
+
+def _lakh(v):
+    """Back-compat shim for callers that want lakhs regardless."""
+    return _money(v, ("L", 1e5))
+
+
+def target_progress(L, asof, kind, store, code=None, achieved=0.0, targets=None):
+    """Target · Achieved · Ach % · Avg day sales · Balance · Per day required.
+
+    Manav, 21 Aug: *"Target, Achieved, Ach %, Avg Sales perday, Balance target,
+    Avg required perday … for both Mtd and ytd level."*
+
+    ★ THE RULES ARE LIFTED FROM THE NIGHT SMS (`report_td.tva_exec_rows`), not
+    re-derived, so the morning picture and the night report cannot disagree
+    about what "balance" or "per day required" mean:
+
+      · Measured against the WHOLE period's target — the month's for the month,
+        the YEAR's for the year — not the part of it elapsed.
+      · Balance days EXCLUDE today. Today's takings are already inside the
+        achieved figure, so counting today again would understate the rate.
+      · Average day sales is the store's own turnover over the days IT has been
+        trading, takeover-anchored: South counts from 19 April, East from
+        1 April, and a store that opened mid-month counts from its opening.
+      · A store AHEAD of its target gets no per-day figure. Printing one would
+        read as a demand where none exists.
+    """
+    import calendar
+
+    asof = pd.Timestamp(asof)
+    kind = kind.upper()
+
+    if targets is None:
+        try:
+            import targets as TG
+            targets = TG.for_month(asof)
+        except Exception:
+            targets = {}
+
+    entry = targets.get(int(code)) if code is not None else None
+    tgt = (entry or {}).get("mtd" if kind == "MTD" else "ytd")
+
+    fy = asof.year if asof.month >= 4 else asof.year - 1
+    fy_start = pd.Timestamp(fy, 4, 1)
+    period_start = asof.replace(day=1) if kind == "MTD" else fy_start
+
+    # Each store keeps its own year start, exactly as every other figure in the
+    # pack does.
+    try:
+        tk = L.takeover_map().get(store)
+    except Exception:
+        tk = None
+    if tk is not None and pd.notna(tk):
+        period_start = max(period_start, pd.Timestamp(tk))
+
+    elapsed = max((asof - period_start).days + 1, 1)
+    if kind == "MTD":
+        days_left = calendar.monthrange(asof.year, asof.month)[1] - asof.day
+    else:
+        fy_end = pd.Timestamp(fy + 1, 3, 31)
+        days_left = max((fy_end - asof).days, 0)
+
+    bal = (tgt - achieved) if tgt else None
+    # ★ HOW FAR THROUGH THE PERIOD WE ARE. Without this, "82.8% achieved" looks
+    # like failure on the 20th of a 31-day month, when the store is in fact well
+    # ahead — you would only expect 65% by then. Every store would show red for
+    # thirty days and green on the thirty-first, which is not information.
+    total_days = elapsed + days_left
+    pace_pct = (elapsed / total_days * 100) if total_days else None
+
+    return {
+        "target": tgt,
+        "achieved": achieved,
+        "ach_pct": (achieved / tgt * 100) if tgt else None,
+        "avg_day": achieved / elapsed,
+        "balance": bal,
+        "days_left": days_left,
+        "elapsed": elapsed,
+        "pace_pct": pace_pct,
+        "per_day": (bal / days_left) if (bal and bal > 0 and days_left > 0) else None,
+        "from": period_start,
+    }
+
+
+def target_cards(tp, kind):
+    """The six as card tuples, in the order he listed them.
+
+    ★ COLOUR SAYS GOOD OR BAD, NOT POSITIVE OR NEGATIVE. The card strip used to
+    redden anything whose text began with a minus, which is right for movement
+    and exactly backwards for a balance: a store that has BEATEN its target has
+    a negative balance, and printing that in red tells a manager they have
+    failed at the moment they have succeeded.
+
+    So a beaten target is shown as what it is — "Rs 0.20 Cr ahead", in the same
+    green the night report uses at 100% — and the balance only reddens when
+    there is genuinely something still to find.
+    """
+    pct = tp["ach_pct"]
+    # Comparable figures share a unit; the daily rates get their own.
+    big = _unit_for([tp["target"], tp["achieved"], tp["balance"]])
+    rate = _unit_for([tp["avg_day"], tp["per_day"]])
+
+    # ★ COLOURED AGAINST PACE, NOT AGAINST 100. On the 20th of a 31-day month a
+    # store should be around 65% of the way to its target; 82.8% is comfortably
+    # ahead and must not read as a failure. The label carries the expected
+    # figure so the colour is never magic.
+    pace = tp.get("pace_pct")
+    if pct is None:
+        pct_txt, pct_ink, pct_lab = "—", None, "Achieved %"
+    else:
+        pct_txt = f"{pct:,.1f}%"
+        pct_ink = None if pace is None else (PP.GREEN if pct >= pace else PP.NEG_INK)
+        pct_lab = ("Achieved %" if pace is None
+                   else f"Achieved % (pace {pace:,.0f}%)")
+
+    # ★ ONE CARD CARRIES THE VERDICT, THE REST ARE FACTS. Balance is simply what
+    # is left to sell; on the 20th of the month there is obviously some, and
+    # reddening it says "you are failing" to a store that is ahead of pace.
+    # Achieved-vs-pace above already answers whether they are winning, so the
+    # balance only takes a colour when the target has actually been beaten.
+    bal = tp["balance"]
+    if bal is None:
+        bal_txt, bal_ink = "—", None
+    elif bal <= 0:
+        bal_txt, bal_ink = f"{_money(-bal, big)} ahead", PP.GREEN
+    else:
+        bal_txt, bal_ink = _money(bal, big), None
+
+    return [
+        (f"{kind} target", _money(tp["target"], big)),
+        (f"{kind} achieved", _money(tp["achieved"], big)),
+        (pct_lab, pct_txt, pct_ink),
+        ("Avg day sales", _money(tp["avg_day"], rate)),
+        ("Balance target", bal_txt, bal_ink),
+        (f"Per day reqd ({tp['days_left']}d)",
+         _money(tp["per_day"], rate) if tp["per_day"] is not None
+         else ("on track" if tp["target"] else "—"),
+         PP.GREEN if (tp["target"] and tp["per_day"] is None) else None),
+    ]
+
+
+def single_bill_share(L, df, asof, kind, store):
+    """Share of bills that took exactly ONE piece, this year and last.
+
+    ★ WHAT COUNTS AS SINGLE: one PIECE on the bill, not one line. The two are
+    close on this estate — Jayanagar reads 45.6% by pieces against 43.6% by
+    lines this month — but "a customer who bought one thing" is what a manager
+    means, and it is the figure that pairs with pieces-per-bill.
+
+    ★ LOWER IS BETTER, which is why this needs its own colour rule. Every other
+    card on the strip is good when it rises; a single-bill share that climbs
+    means more customers leaving with one item, and that is the shortfall the
+    coaching notes exist to attack.
+    """
+    cur, pri = L.report_frames(df, kind, asof=asof)
+
+    def one(f):
+        d = f[f[L.COL_STORE_LABEL] == store]
+        d = d[d[L.COL_BILL_UID].notna()]
+        if d.empty:
+            return None
+        qty = d.groupby(L.COL_BILL_UID)[L.COL_QTY].sum()
+        if not len(qty):
+            return None
+        return float((qty == 1).mean())
+
+    return {"ty": one(cur), "ly": one(pri)}
 
 
 def attach_rate(L, df, asof, kind, store):
@@ -688,11 +919,34 @@ def _kpi_pair(which, t, l):
     return t["conv"], l["conv"]
 
 
-def _drivers_table(L, df, asof, kind, store):
-    """One period's drivers table, exactly as it has always been drawn.
+def _single_bill_card(sb):
+    """Single-bill share, with LAST YEAR in the label and the colour inverted.
 
-    Pulled out of `drivers_store_coached_v2` unchanged so the month and the year
-    can sit in one document without either being redrawn differently.
+    Falling is good here. Reusing the growth colour would paint an improving
+    store red at the exact moment its managers had fixed the thing the coaching
+    notes told them to fix.
+    """
+    ty, ly = sb.get("ty"), sb.get("ly")
+    if ty is None:
+        return ("Single-piece bills", "—")
+    # Same precision on both, or a 45.4 shown as "45" beside a 45.6 reads as a
+    # bigger move than it is.
+    label = ("Single-piece bills" if ly is None
+             else f"Single-piece bills (LY {ly * 100:,.1f}%)")
+    ink = None
+    if ly is not None:
+        ink = PP.GREEN if ty < ly else (PP.NEG_INK if ty > ly else None)
+    return (label, f"{ty * 100:,.1f}%", ink)
+
+
+def _drivers_table(L, df, asof, kind, store, code=None, targets=None):
+    """One period's drivers table, with the target block above it.
+
+    ★ THE CARD STRIP NOW LEADS WITH THE TARGET (Manav, 21 Aug). A manager opens
+    this to find out whether they are going to make the number, so the number
+    comes first: what was asked, what has been taken, where that leaves them,
+    and what it costs a day to close the gap. The three movement cards that used
+    to be alone stay, on the second row — they explain the same period.
     """
     drv, types = L.degrowth_drivers(
         df, asof=asof, kind=kind, only_declining=False, stores_only=[store],
@@ -700,15 +954,36 @@ def _drivers_table(L, df, asof, kind, store):
     if drv.empty:
         return None, None
     k = store_kpis(L, df, asof, kind, store)
+    tp = target_progress(L, asof, kind, store, code,
+                         achieved=k["ty"]["sale"], targets=targets)
+    sb = single_bill_share(L, df, asof, kind, store)
+    grow = (PP.GREEN if k["move"] > 0
+            else (PP.NEG_INK if k["move"] < 0 else None))
+
+    # ★ FIVE TO A LINE (Manav, 21 Aug), split by what each line is for: the ask
+    # and where the store stands against it, then how the trading is going.
+    tgt = target_cards(tp, kind)
+    cards = [
+        # target · achieved · achieved% · balance · per day required
+        [tgt[0], tgt[1], tgt[2], tgt[4], tgt[5]],
+        [tgt[3],                                   # avg day sales
+         ("Movement", f"Rs {k['move'] / 1e5:,.2f} L", grow),
+         (f"{kind} vs last year",
+          f"{k['move'] / k['ly']['sale'] * 100:,.2f}%" if k["ly"]["sale"] else "—",
+          grow),
+         # Last year goes in the LABEL, not the value: "660 vs 473 LY" ran
+         # through the right-hand edge of its card.
+         (f"Bills (LY {k['ly']['bills']:,})" if k["ly"]["bills"] else "Bills",
+          f"{k['ty']['bills']:,}",
+          PP.GREEN if k["ty"]["bills"] > k["ly"]["bills"]
+          else (PP.NEG_INK if k["ty"]["bills"] < k["ly"]["bills"] else None)),
+         _single_bill_card(sb)],
+    ]
     png = render(
         drv, title=f"{store} — {kind} performance drivers",
         subtitle=f"Where the movement comes from, by brand and product · "
                  f"as of {asof:%d %b %Y}",
-        cards=[("Movement", f"Rs {k['move'] / 1e5:,.2f} L"),
-               (f"{kind} vs last year",
-                f"{k['move'] / k['ly']['sale'] * 100:,.2f}%"
-                if k["ly"]["sale"] else "—"),
-               ("Bills", f"{k['ty']['bills']:,}")],
+        cards=cards,
         money=L.drivers_money(kind), pct=L.DRIVERS_PCT,
         sign=["Shortfall"] + L.DRIVERS_PCT, row_types=types)
     return Image.open(io.BytesIO(png)), k
@@ -730,6 +1005,21 @@ def _panel_heading(width, asof):
     return img
 
 
+_TARGETS_CACHE = {}
+
+
+def _targets_for(asof):
+    """The month's targets, fetched once per run rather than once per image."""
+    key = pd.Timestamp(asof).strftime("%Y-%m")
+    if key not in _TARGETS_CACHE:
+        try:
+            import targets as TG
+            _TARGETS_CACHE[key] = TG.for_month(asof)
+        except Exception:
+            _TARGETS_CACHE[key] = {}
+    return _TARGETS_CACHE[key]
+
+
 def drivers_store_all(L, df, asof, store, code=None, pf=None, ff=None):
     """★ ONE DOCUMENT PER STORE: the month, then the year, then the KPIs.
 
@@ -747,8 +1037,12 @@ def drivers_store_all(L, df, asof, store, code=None, pf=None, ff=None):
     """
     if ff is None:
         ff = footfall_map(pf) if pf is not None else {}
-    mtd, k_m = _drivers_table(L, df, asof, "MTD", store)
-    ytd, _ = _drivers_table(L, df, asof, "YTD", store)
+    # Loaded once and handed to both periods: the morning set builds one of
+    # these per store, and re-fetching the targets tab per image would be 22
+    # identical downloads.
+    targets = _targets_for(asof)
+    mtd, k_m = _drivers_table(L, df, asof, "MTD", store, code, targets)
+    ytd, _ = _drivers_table(L, df, asof, "YTD", store, code, targets)
     if mtd is None and ytd is None:
         return None
     tables = [t for t in (mtd, ytd) if t is not None]
