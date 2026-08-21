@@ -37,6 +37,8 @@ COL_MWC = "Men/Women/Child"
 COL_DEPARTMENT = "Department"
 COL_SIZE = "Size"
 COL_COLOR = "CATEGORY2"
+# The colour NAME with its range-code prefix removed — see `clean`.
+COL_COLOR_NAME = "color_name"
 COL_STYLE = "CATEGORY1"
 COL_AMOUNT = "Bill Amount"
 COL_QTY = "Bill Quantity"
@@ -192,6 +194,36 @@ def clean(df: pd.DataFrame) -> pd.DataFrame:
     # arrives. Add to this map whenever a division is renamed at source.
     df[COL_DIVISION] = (df[COL_DIVISION].astype(str).str.strip()
                         .replace(DIVISION_ALIASES))
+
+    # ★ SIZE: THE SAME SIZE ARRIVES UNDER TWO LABELS. The export writes both
+    # "L" and " L", "XL" and " XL", "M" and "  M" — every major size has a
+    # whitespace twin, and Rs 101.92 Cr of sales sits in the affected labels.
+    # Grouped as stored, the "Units by size" chart drew L twice (47,880 units
+    # under " L" and 1,909 more under "L") and a buyer reading a size curve off
+    # it would under-order every core size by about 4%. Whitespace carries no
+    # meaning here, so it is folded at source.
+    df[COL_SIZE] = (df[COL_SIZE].astype(str).str.strip().str.upper()
+                    .replace({"NAN": ""}))
+    # ★ AND THE BIGGEST BAR ON THAT CHART WAS BLANK. 58,399 units carry no size
+    # at all — sarees, accessories, lowers — because they genuinely have none.
+    # That is real data and must not be dropped, but an unlabelled bar taller
+    # than every actual size makes the chart unreadable and tells a reader
+    # nothing. Named, it says what it is.
+    df.loc[df[COL_SIZE] == "", COL_SIZE] = "(no size)"
+
+    # ★ COLOUR: ONE COLOUR, SEVERAL RANGE CODES. CATEGORY2 is written
+    # "302-Cream", and the same colour recurs under different numeric prefixes
+    # across ranges — cream alone appears as 302-Cream, 402-CREAM, 102-CREAM and
+    # a bare CREAM, together 38,877 units. That makes cream the single
+    # best-selling colour in the estate, while the chart showed its largest
+    # fragment at 35,034 and split the rest into three more bars.
+    #
+    # The raw code is KEPT, because a range code may matter to a buyer. This is
+    # a second, foldable column for the questions that are about colour rather
+    # than about a season's range.
+    df[COL_COLOR_NAME] = (df[COL_COLOR].astype(str)
+                          .str.replace(r"^\s*\d+\s*-\s*", "", regex=True)
+                          .str.strip().str.upper().replace({"NAN": ""}))
 
     # Brand, derived from Division (Manyavar / Mohey / Twamev / …).
     df[COL_BRAND] = df[COL_DIVISION].map(_brand_of)
@@ -519,7 +551,8 @@ CAT_DIMS: dict[str, str] = {
     "Department": COL_DEPARTMENT,
     "Men/Women/Child": COL_MWC,
     "Size": COL_SIZE,
-    "Color": COL_COLOR,
+    "Color": COL_COLOR_NAME,
+    "Color (with range code)": COL_COLOR,
     "Style code": COL_STYLE,
     "Salesperson": COL_SALESPERSON,
 }
