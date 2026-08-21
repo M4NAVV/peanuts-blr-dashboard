@@ -197,3 +197,56 @@ if __name__ == "__main__":
                 print(f"  FAIL  {name}: {e}")
     print("all passed" if not failed else f"{failed} failed")
     sys.exit(1 if failed else 0)
+
+
+# --------------------------------------------------------------------------- #
+#  identity drift — the warning must not cry wolf on a normal Tuesday          #
+# --------------------------------------------------------------------------- #
+
+def _feed(rows):
+    """rows: (store, date, col_name->value) tuples flattened into a frame."""
+    return pd.DataFrame(rows)
+
+
+def test_a_transactional_column_is_not_mistaken_for_a_rename():
+    """★ THE 21 AUG FALSE ALARM. `brand` in the VFL sales feed is the division of
+    the ITEM SOLD, not the store's fascia: CMH Road carries 7,040 Manyavar lines,
+    9 Mohey and 6 Twamev. Comparing its first row to its last reported eleven
+    stores as renamed because the earliest sale was a Manyavar and the latest a
+    Twamev. Nothing had changed."""
+    rows = []
+    for store in [f"S{i}" for i in range(20)]:
+        rows.append({"store": store, "brand": "Manyavar", "city": "Bengaluru"})
+        rows.append({"store": store, "brand": "Twamev", "city": "Bengaluru"})
+    assert V.identity_drift(_feed(rows), store_col="store") == []
+
+
+def test_a_genuine_rename_of_one_store_still_shows():
+    # The whole point of the check. One store moves; the rest are steady.
+    rows = []
+    for store in [f"S{i}" for i in range(20)]:
+        rows.append({"store": store, "city": "Bengaluru"})
+        rows.append({"store": store, "city": "Bengaluru"})
+    rows.append({"store": "S3", "city": "Mysuru"})
+    out = V.identity_drift(_feed(rows), store_col="store")
+    assert out == ["S3: city was 'Bengaluru', now 'Mysuru'"]
+
+
+def test_a_column_that_is_constant_per_store_is_still_checked():
+    # Portfolio's `brand` IS the fascia and never varies — 0 of 63 stores. It
+    # must keep being watched, or a real fascia change would go unreported.
+    rows = []
+    for store in [f"S{i}" for i in range(20)]:
+        rows.append({"store": store, "brand": "MANYAVAR"})
+        rows.append({"store": store, "brand": "MANYAVAR"})
+    rows.append({"store": "S7", "brand": "MOHEY"})
+    out = V.identity_drift(_feed(rows), store_col="store")
+    assert out == ["S7: brand was 'MANYAVAR', now 'MOHEY'"]
+
+
+def test_a_blank_value_is_not_a_change():
+    rows = [{"store": "S1", "city": "Bengaluru"},
+            {"store": "S1", "city": ""},
+            {"store": "S1", "city": None},
+            {"store": "S1", "city": "Bengaluru"}]
+    assert V.identity_drift(_feed(rows), store_col="store") == []

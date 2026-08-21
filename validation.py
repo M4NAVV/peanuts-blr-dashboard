@@ -282,6 +282,12 @@ def stopped_reporting(df: pd.DataFrame, *, date_col: str, store_col: str,
     return sorted(gone - _closed_codes())
 
 
+# Above this share of stores disagreeing with themselves, a column is not a
+# store attribute at all — it is something that varies transaction by
+# transaction. A rename does not happen to a quarter of the estate at once.
+_IDENTITY_MAX_VARYING = 0.25
+
+
 def identity_drift(df: pd.DataFrame, *, store_col: str,
                    cols=("location", "city", "region", "brand")) -> list:
     """Stores whose name, city, region or brand is not what it first was.
@@ -289,28 +295,48 @@ def identity_drift(df: pd.DataFrame, *, store_col: str,
     ★ Identity everywhere comes from `drop_duplicates("code")` — THE FIRST ROW
     EVER SEEN. That is deliberate and stable, but it means a rename never
     appears and a relocation keeps the old city in every city-grouped report,
-    with nothing to say so. Verified stable for all 63 codes at audit time, so
-    this fires on nothing today; it exists for the first rename, which is the
-    only moment anyone could act on it.
+    with nothing to say so.
 
     A warning, never a refusal: the reports are not wrong, they are behind, and
     which name is the right one is a question for Manav rather than for code.
+
+    ★★ A COLUMN IS ONLY CHECKED IF IT ACTUALLY DESCRIBES THE STORE (21 Aug fix).
+    `brand` means opposite things in the two feeds that share this code. In the
+    portfolio feed it is the store's fascia and is constant — 0 of 63 stores
+    disagree with themselves. In the VFL sales feed it is derived from the
+    DIVISION OF THE ITEM SOLD, so CMH Road carries 7,040 Manyavar lines, 9 Mohey
+    and 6 Twamev, and 19 of its 22 stores "differ".
+
+    Comparing the first row to the last then reported eleven stores as renamed
+    because their earliest sale happened to be a Manyavar and their latest a
+    Twamev. Nothing had changed. A warning that cries wolf on a normal Tuesday
+    is worse than no warning, because the real rename it exists to catch will be
+    read as more of the same noise.
+
+    So each column is tested for whether it behaves like an attribute of the
+    store at all, and one that plainly does not is skipped.
     """
     if df is None or df.empty or store_col not in df:
         return []
     have = [c for c in cols if c in df.columns]
     if not have:
         return []
+
+    keys = df[store_col].astype(str)
+    n_stores = keys.nunique()
     out = []
-    for key, grp in df.groupby(df[store_col].astype(str), sort=True):
-        for c in have:
+    for c in have:
+        varying = df.groupby(keys)[c].nunique(dropna=True)
+        if n_stores and (varying > 1).sum() / n_stores > _IDENTITY_MAX_VARYING:
+            continue                      # transactional here, not identity
+        for key, grp in df.groupby(keys, sort=True):
             vals = grp[c].dropna().astype(str).str.strip()
             vals = vals[vals != ""]
             if vals.nunique() > 1:
                 first, last = vals.iloc[0], vals.iloc[-1]
                 if first != last:
                     out.append(f"{key}: {c} was {first!r}, now {last!r}")
-    return out
+    return sorted(out)
 
 
 def fingerprint(df: pd.DataFrame, *, date_col: str, store_col: str,
