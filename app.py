@@ -565,7 +565,7 @@ def _cr(x) -> str:
 _PF_TABS = ["📈 MW Data", "🧾 GD Sheet", "🏷️ Brand-wise GD", "🗺️ Loc-wise GD",
             "📐 Average", "📊 Executive", "📋 MTD / YTD Report", "📉 Degrowth",
             "🎯 Day Targets", "🥧 Contribution", "🏙️ City-wise G/D", "🏬 Stores",
-            "📅 Monthly", "📄 REPORTS PDF"]
+            "📅 Monthly", "🗓️ Day calendar", "📄 REPORTS PDF"]
 
 
 def render_portfolio():
@@ -716,6 +716,19 @@ def render_portfolio():
               "YTD LY", "YTD TY", "GD YTD Value"]
     _pct = ["GD MTD %", "GD YTD %"]
     _sign = ["GD MTD Value", "GD MTD %", "GD YTD Value", "GD YTD %"]
+
+    # ================= Day calendar ================= #
+    if nav == "🗓️ Day calendar":
+        st.subheader("Last year, day by day")
+        st.caption(
+            "What the rest of this month looked like a year ago, so you know "
+            "what is coming. Pick a store; the calendar shows every day of "
+            "that month."
+        )
+        render_day_calendar(
+            pf, date_col="date", value_col="sales", store_col="location",
+            asof=asof, key="pf_cal", label="store")
+        return
 
     # ===================== Executive ===================== #
     if nav == "📊 Executive":
@@ -1227,6 +1240,118 @@ def _png_degrowth(df, asof, kind):
     bg = ["#FFFFFF" if k % 2 == 0 else "#FAF6EF" for k in range(len(disp))]
     return table_to_png(disp, "", row_bg=bg,
                         signed_cols=["Shortfall", "Degrowth %"])
+
+
+
+def render_day_calendar(df, *, date_col, value_col, store_col, asof,
+                        stores=None, key="cal", label="store"):
+    """Last year's version of the month we are in, day by day.
+
+    Shared by both data views so the two cannot drift apart. See `daycal` for
+    why it is a calendar rather than a line.
+
+    ★ THE HEADLINE IS WHAT IS STILL TO COME. Everything else in this dashboard
+    reports what has happened; the reason to open a calendar mid-month is the
+    part that has not. So the days already traded are shaded flat and the days
+    still ahead are ringed, and the metric row leads with what last year took
+    across exactly those remaining days.
+    """
+    import daycal
+
+    asof = pd.Timestamp(asof)
+    c1, c2, c3 = st.columns([2.4, 1.3, 1.3])
+    opts = ["All stores"] + (stores if stores is not None
+                             else sorted(df[store_col].dropna().unique()))
+    store = c1.selectbox(f"Which {label}", opts, key=f"{key}_store")
+    month = c2.selectbox(
+        "Month", list(range(1, 13)), index=asof.month - 1, key=f"{key}_m",
+        format_func=lambda m: pd.Timestamp(2000, m, 1).strftime("%B"))
+    which = c3.selectbox("Show", ["Last year", "This year so far"], key=f"{key}_yr")
+
+    ref = asof.replace(day=1).replace(month=month)
+    if month > asof.month:
+        ref = ref.replace(year=asof.year - 1)      # a month still ahead of us
+    is_current = (month == asof.month)
+
+    ly_start, ly_end = daycal.month_window(ref, 1)
+    ty_start, ty_end = daycal.month_window(ref, 0)
+    ly = daycal.daily_series(df, date_col, value_col, ly_start, ly_end, store_col, store)
+    ty = daycal.daily_series(df, date_col, value_col, ty_start, ty_end, store_col, store)
+
+    if ly.sum() == 0 and ty.sum() == 0:
+        st.info(f"Nothing recorded for {store} in {ly_start:%B}.")
+        return
+
+    upto = asof.day if is_current else None
+    show_ly = which == "Last year"
+    series = ly if show_ly else ty
+    if series.sum() == 0:
+        st.info(f"Nothing recorded for {store} in {series.index[0]:%B %Y}.")
+        return
+
+    # ---- the numbers, led by what is still ahead
+    stats = []
+    if is_current and upto:
+        done_ly, done_ty = ly.iloc[:upto].sum(), ty.iloc[:upto].sum()
+        left_ly = ly.iloc[upto:].sum()
+        days_left = len(ly) - upto
+        delta = (done_ty / done_ly - 1) * 100 if done_ly else None
+        stats = [
+            (f"Still to come · {days_left} days",
+             inr(left_ly), f"what last year took after the {upto}th"),
+            (f"1–{upto} {ly_start:%b} this year", inr(done_ty),
+             (f"{delta:+.1f}% vs last year" if delta is not None else None)),
+            (f"1–{upto} {ly_start:%b} last year", inr(done_ly), "same days only"),
+            (f"All of {ly_start:%b} last year", inr(ly.sum()),
+             f"{int((ly > 0).sum())} trading days"),
+        ]
+    else:
+        sm = daycal.summary(series)
+        stats = [
+            (f"{series.index[0]:%b %Y} total", inr(sm["total"]), None),
+            ("Trading days", f"{sm['days']}", None),
+            ("Weekend share",
+             f"{sm['weekend']/sm['total']*100:.0f}%" if sm["total"] else "—",
+             "Sat + Sun"),
+            ("Best day",
+             f"{sm['best_day']:%a %d}" if sm["best_day"] is not None else "—",
+             inr(sm["best_val"])),
+        ]
+    st.markdown(daycal.stat_row(stats), unsafe_allow_html=True)
+
+    compare = ly if (not show_ly and is_current) else None
+    st.markdown(
+        daycal.calendar_html(series, compare=compare,
+                             upto=upto if show_ly else None),
+        unsafe_allow_html=True)
+
+    legend = (f"**{series.index[0]:%B %Y}** for **{store}**. Darker is a bigger day · "
+              f"a dash is a day it took nothing")
+    if show_ly and upto:
+        legend += " · **ringed days are the ones still ahead of you this month**"
+    if compare is not None:
+        legend += " · the small figure is that day against the same date last year"
+    st.caption(legend + ".")
+
+    with st.expander("Day by day, as a list"):
+        t = pd.DataFrame({"Date": series.index.strftime("%a %d %b"),
+                          "Sales": series.values})
+        if is_current:
+            other = ly if not show_ly else ty
+            # Same DAY OF THE MONTH, not the same index position: February has
+            # 28 days and the two series are different lengths.
+            other_by_day = pd.Series(other.values, index=other.index.day)
+            t["Same day, other year"] = [
+                other_by_day.get(d, float("nan")) for d in series.index.day]
+            base = t["Same day, other year"]
+            # A day the other year took nothing gives no percentage, not an
+            # infinity.
+            t["Change"] = (t["Sales"] / base.where(base > 0) - 1) * 100
+        st.dataframe(
+            t.style.format({"Sales": lambda v: inr(v),
+                            "Same day, other year": lambda v: inr(v),
+                            "Change": "{:+.0f}%"}, na_rep="—"),
+            use_container_width=True, hide_index=True, height=300)
 
 
 # ---- Top-level data mode: whole-Portfolio breadth vs VFL depth ----
@@ -1884,7 +2009,7 @@ def render_productivity(pr, key):
 _TAB_LABELS = [
     "🧾 VFL G/D", "🧾 VFL Gender", "📄 REPORTS PDF", "🖼️ REPORTS IMAGES",
     "📋 MTD / YTD Report", "📉 Degrowth", "🔎 Degrowth Drivers",
-    "💸 DB REPORTS",
+    "💸 DB REPORTS", "🗓️ Day calendar",
     "🧑‍🤝‍🧑 Gender G/D", "🏷️ Brand G/D", "🏬 Store × Brand G/D",
     "⚖️ Gender Mix",
     "📊 Executive", "🎯 Day Targets", "🏙️ City-wise G/D", "📅 Monthly Contribution",
@@ -1918,6 +2043,21 @@ if st.session_state.get("nav_pills") is None and nav in _PILL_TABS:
 
 st.segmented_control("Section", _PILL_TABS, key="nav_pills",
                      on_change=_on_pills, label_visibility="collapsed")
+
+# =========================================================================== #
+# DAY CALENDAR — last year's version of this month, day by day
+# =========================================================================== #
+if nav == "🗓️ Day calendar":
+    st.subheader("Last year, day by day")
+    st.caption(
+        "What the rest of this month looked like a year ago, so you know what "
+        "is coming. Pick a store; the calendar shows every day of that month."
+    )
+    render_day_calendar(
+        df_all, date_col="date", value_col=L.COL_AMOUNT,
+        store_col=L.COL_STORE_LABEL, asof=pd.Timestamp(end_d),
+        key="vfl_cal", label="store")
+
 
 # =========================================================================== #
 # MTD / YTD REPORT — region × store, year-on-year (the executive table)
