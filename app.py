@@ -2510,6 +2510,15 @@ if nav == "📄 REPORTS PDF":
         picked["db"] = st.checkbox(
             "Women's discount  ·  year to date, the month, and every Mohey store "
             "day by day", key="vrp_db")
+        st.markdown("**Manager morning snapshot**")
+        picked["morning"] = st.checkbox(
+            "One printable A4 sheet per store  ·  every open store, as a zip",
+            key="vrp_morning",
+            help="The month and the year side by side, the target strip for "
+                 "both, and the six measures — everything the WhatsApp image "
+                 "carries, on one sheet a manager can print and brief from. "
+                 "Always the full estate, never the sidebar filters. "
+                 "Takes a couple of minutes to build.")
     with c2:
         st.markdown("**Festive run-ups**")
         _fw = _festive_windows()
@@ -2534,6 +2543,24 @@ if nav == "📄 REPORTS PDF":
                                       basis_label=p_basis)))
                 if "db" in chosen:
                     built.append(DISC.build_pdf(get_data(), p_asof, p_basis))
+                if "morning" in chosen:
+                    import snapshots_a4 as A4
+                    _bar = st.progress(0.0, text="Morning snapshots…")
+                    try:
+                        _ff = A4.SN.footfall_map(_load_portfolio_cached()[0])
+                    except Exception:
+                        _ff = {}          # conversion reads blank, and says so
+                    _sheets, _failed = A4.store_sheets(
+                        L, get_data(), p_asof, ff=_ff,
+                        progress=lambda i, n, st_: _bar.progress(
+                            i / max(n, 1), text=f"Morning snapshot {i} of {n}"
+                                                f" — {st_}"))
+                    _bar.empty()
+                    built += _sheets
+                    # A store that failed must be named, not quietly absent.
+                    if _failed:
+                        st.warning(f"{len(_failed)} store(s) could not be "
+                                   f"built: " + "; ".join(_failed[:5]))
                 for _i, _w in enumerate(_fw):
                     if f"festive_{_i}" in chosen:
                         built.append(FEST.build_festive_pdf(

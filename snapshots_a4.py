@@ -956,3 +956,56 @@ def store_sheet(L, df, asof, store, code=None, pf=None, ff=None, targets=None):
     tag = f"{code}_" if code is not None else ""
     return (f"{asof:%Y-%m-%d}_{tag}{SN._slug(store)}_briefing_a4.pdf",
             sheet.pdf(), font_px, data_pages, used_cap)
+
+
+# --------------------------------------------------------------------------- #
+#  Every store, for the 📄 REPORTS PDF tab                                     #
+# --------------------------------------------------------------------------- #
+
+def open_stores(L, df):
+    """The stores a morning set goes to — closed ones excluded.
+
+    ★ THE SAME RULE AS THE WHATSAPP SET, deliberately shared rather than
+    re-typed: a store that stops appearing in one and not the other is exactly
+    the kind of drift nobody notices until a manager asks why they stopped
+    getting their sheet.
+    """
+    master = L.load_store_master().set_index("tableau_name")
+    closed = L.closed_map()
+    return [s for s in sorted(df[L.COL_STORE_LABEL].dropna().unique())
+            if not (s in master.index and int(master.loc[s, "code"]) in closed)]
+
+
+def store_sheets(L, df, asof, ff=None, pf=None, targets=None, progress=None,
+                 folder="morning-snapshot"):
+    """Every open store's A4 sheet, as [(name, PDF bytes), …].
+
+    `progress(done, total, store)` is called as each sheet lands, because
+    twenty of these take minutes and a download button that simply hangs looks
+    broken. `folder` prefixes the names so they land in their own directory
+    inside the zip rather than scattered among the other reports.
+
+    ★ THE FULL ESTATE, NEVER THE SIDEBAR. These go to individual managers; one
+    built from whatever filter happened to be left set would be quietly wrong
+    and the manager receiving it could not tell.
+    """
+    asof = pd.Timestamp(asof)
+    if ff is None:
+        ff = SN.footfall_map(pf) if pf is not None else {}
+    targets = SN._targets_for(asof) if targets is None else targets
+    master = L.load_store_master().set_index("tableau_name")
+
+    stores = open_stores(L, df)
+    out, failed = [], []
+    for i, s in enumerate(stores, 1):
+        code = int(master.loc[s, "code"]) if s in master.index else None
+        try:
+            made = store_sheet(L, df, asof, s, code, ff=ff, targets=targets)
+        except Exception as e:                  # one store must not sink the run
+            failed.append(f"{s}: {e}")
+            made = None
+        if made:
+            out.append((f"{folder}/{made[0]}" if folder else made[0], made[1]))
+        if progress:
+            progress(i, len(stores), s)
+    return out, failed
