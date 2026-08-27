@@ -31,3 +31,6 @@ store_master_full.csv
 # Scrapped work kept only for reference — Reports Sonu, retired 19 Aug 2026
 # when its one useful report shipped as the DB REPORTS tab. Never pushed.
 _archive/
+
+# A4 morning briefing output — store-level PDFs, never committed
+out_a4/
