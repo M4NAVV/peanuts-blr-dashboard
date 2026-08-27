@@ -658,7 +658,7 @@ GD_SHEET_COLS = [
     "DOO", "Sum of YTD_LY", "Sum of YTD_TY", "Sum of GD_YTD_%", "Sum of MTD_LY",
     "Sum of MTD_TY", "Sum of GD_MTD_%", "Sum of DAY SALE FIGURE",
     "Sum of MONTH SALE LY", "Sum of PROJECTED MTD", "Sum of LY FULL SALES",
-    "Sum of PROJECTED YTD",
+    "Sum of PROJECTED YTD", "Sum of TTM SALES",
 ]
 def _newold_order(asof) -> list:
     """The tag order for this fiscal year, DERIVED — never a frozen list.
@@ -679,7 +679,7 @@ _GD_ATTR_COLS = ["code", "region", "store_name_main", "location_main", "closed",
                  "sba", "ca", "new_old"]
 _GD_VALUE_COLS = ["Sum of YTD_LY", "Sum of YTD_TY", "Sum of MTD_LY", "Sum of MTD_TY",
                   "Sum of DAY SALE FIGURE", "Sum of MONTH SALE LY",
-                  "Sum of PROJECTED MTD", "Sum of LY FULL SALES", "Sum of PROJECTED YTD"]
+                  "Sum of PROJECTED MTD", "Sum of LY FULL SALES", "Sum of PROJECTED YTD", "Sum of TTM SALES"]
 
 
 def gd_store_attrs() -> pd.DataFrame:
@@ -850,6 +850,15 @@ def gd_sheet_report(df: pd.DataFrame, asof=None):
     ly_full = g(df[(df["date"] >= pd.Timestamp(fy_year - 1, 4, 1)) &
                    (df["date"] <= pd.Timestamp(fy_year, 3, 31))])
 
+    # ★ TRAILING 12 MONTHS — rolling 365 days ending today, so it moves daily
+    # like DAY SALE does rather than once a month. It is a SPAN, not a
+    # like-for-like: a store that opened inside the window shows less than a
+    # year and the figure alone cannot say so. South opens 19 Apr 2026 in this
+    # feed, so its TTM covers 130 of 365 days — which is the same reason South
+    # carries no history anywhere else on this sheet.
+    ttm_start = asof - pd.DateOffset(years=1) + pd.Timedelta(days=1)
+    ttm = g(df[(df["date"] >= ttm_start) & (df["date"] <= asof)])
+
     # Projection day-counts.
     fy_start = pd.Timestamp(fy_year, 4, 1)
 
@@ -878,6 +887,7 @@ def gd_sheet_report(df: pd.DataFrame, asof=None):
             "Sum of PROJECTED MTD": proj_mtd,
             "Sum of LY FULL SALES": float(ly_full.get(c, 0.0)),
             "Sum of PROJECTED YTD": proj_ytd,
+            "Sum of TTM SALES": float(ttm.get(c, 0.0)),
         }
 
     # ★★ THE SPLIT (chachu, 16 Aug; built 17 Aug). A store that has only PART of
@@ -1145,7 +1155,11 @@ _MW_REG = (["MONTH", "TOTAL SALE", "East and NE", "South", "MONTHLY CONT  (%)",
 
 
 def mw_data_html(mw: dict) -> str:
-    MAROON, GOLD = "#7A1F2B", "#B99653"
+    # ★ CLIENT WORKBOOK PALETTE, same as every report. This table was still on
+    # the old maroon/gold scheme, so the app and the PDF of the SAME sheet did
+    # not look like the same document.
+    HDR, TOTAL, HALF = "#DAEEF3", "#FFFF00", "#DAEEF3"
+    LINE, BODY, ALT = "#636363", "#FFFFFF", "#FFFFFF"
     def _m(v): return f"{v:,.0f}"
     def _p(v): return f"{v:,.2f}%"
 
@@ -1155,7 +1169,7 @@ def mw_data_html(mw: dict) -> str:
     def _cell(txt, align, bg, bold=False, color="#1f2937"):
         w = "800" if bold else "500"
         return (f'<td style="padding:3px 7px;text-align:{align};color:{color};'
-                f'font-weight:{w};background:{bg};border:1px solid #E7E1D6;'
+                f'font-weight:{w};background:{bg};border:1px solid {LINE};'
                 f'white-space:nowrap;font-variant-numeric:tabular-nums;">{txt}</td>')
 
     def _fmt(v, typ):
@@ -1175,16 +1189,16 @@ def mw_data_html(mw: dict) -> str:
             if gi:
                 title += f"<th {_GAP}></th>"
                 sub += f"<th {_GAP}></th>"
-            title += (f'<th colspan="{len(hdr)}" style="background:{MAROON};color:#fff;'
-                      f'font-weight:800;padding:6px 8px;border:1px solid #E7E1D6;'
+            title += (f'<th colspan="{len(hdr)}" style="background:{HDR};color:#111;'
+                      f'font-weight:800;padding:6px 8px;border:1px solid {LINE};'
                       f'text-align:center;">MONTHLY CONT SHEET FY {fy}</th>')
             for h in hdr:
-                sub += (f'<th style="background:{GOLD};color:#3a2a12;font-weight:700;'
-                        f'font-size:10px;padding:4px 6px;border:1px solid #E7E1D6;'
+                sub += (f'<th style="background:{HDR};color:#111;font-weight:700;'
+                        f'font-size:10px;padding:4px 6px;border:1px solid {LINE};'
                         f'text-align:center;white-space:pre-line;vertical-align:bottom;">{h}</th>')
         body = ""
         for i in range(12):
-            tds, bg = "", ("#FFFFFF" if i % 2 == 0 else "#FAF6EF")
+            tds, bg = "", BODY          # plain white body, no zebra — as the workbook
             for gi, fy in enumerate(fys):
                 if gi:
                     tds += f"<td {_GAP}></td>"
@@ -1209,8 +1223,46 @@ def mw_data_html(mw: dict) -> str:
                         (g["mripl"], "m"), ("", "p")]
             for v, typ in vals:
                 align = "left" if typ == "t" else "right"
-                gtds += _cell(_fmt(v, typ), align, "#CDE8CF", bold=True)
+                gtds += _cell(_fmt(v, typ), align, TOTAL, bold=True)
         body += f"<tr>{gtds}</tr>"
+
+        # ── H1 / H2 ────────────────────────────────────────────────────────
+        # Manav, 27 Aug: the business leans into Q3 and Q4, so the halves go
+        # straight under GRAND TOTAL in this same table. Each FY block gets its
+        # OWN halves — this year's beside last year's — and nothing is compared
+        # across years here.
+        # ★ A HALF IN PROGRESS IS NOT A HALF. On 26 Aug, H1 holds five months of
+        # a six-month period and H2 holds nothing at all. The months already read
+        # 0 for what has not happened, so summing them is right; what would be
+        # wrong is letting the percentage columns imply the halves are finished.
+        # The label carries the state instead.
+        for lo, hi, name in ((0, 6, "H1  Apr-Sep"), (6, 12, "H2  Oct-Mar")):
+            htds = ""
+            for gi, fy in enumerate(fys):
+                if gi:
+                    htds += f"<td {_GAP}></td>"
+                rowsl = mw[fy]["months"][lo:hi]
+                g = mw[fy]["grand"]
+                tot = sum(r.get("total") or 0 for r in rowsl)
+                live = sum(1 for r in rowsl if (r.get("total") or 0) > 0)
+                lbl = name if live in (0, hi - lo) else f"{name} ({live}/{hi-lo} mth)"
+                pct = lambda a, b: (a / b * 100) if b else 0.0
+                if mw[fy]["type"] == "region":
+                    ene = sum(r.get("ene") or 0 for r in rowsl)
+                    sth = sum(r.get("south") or 0 for r in rowsl)
+                    vals = [(lbl, "t"), (tot, "m"), (ene, "m"), (sth, "m"),
+                            (pct(tot, g["total"]), "p"),
+                            (pct(ene, g["ene"]), "p"), (pct(sth, g["south"]), "p"),
+                            (pct(ene, tot), "p"), (pct(sth, tot), "p")]
+                else:
+                    vals = [(lbl, "t"), (tot, "m"),
+                            (sum(r.get("prpl") or 0 for r in rowsl), "m"),
+                            (sum(r.get("mripl") or 0 for r in rowsl), "m"),
+                            (pct(tot, g["total"]), "p")]
+                for v, typ in vals:
+                    align = "left" if typ == "t" else "right"
+                    htds += _cell(_fmt(v, typ), align, HALF, bold=True)
+            body += f"<tr>{htds}</tr>"
         return (f'<table style="border-collapse:collapse;font-family:Inter,Segoe UI,'
                 f'sans-serif;font-size:11px;margin:0 0 26px;">'
                 f'<thead><tr>{title}</tr><tr>{sub}</tr></thead><tbody>{body}</tbody></table>')
@@ -1227,11 +1279,11 @@ BRAND_GD_COLS = [
     "Sum of YTD_LY", "Sum of YTD_TY", "Sum of GD_YTD_%", "Sum of MTD_LY",
     "Sum of MTD_TY", "Sum of GD_MTD_%", "Sum of DAY SALE FIGURE",
     "Sum of MONTH SALE LY", "Sum of PROJECTED MTD", "Sum of LY FULL SALES",
-    "Sum of PROJECTED YTD",
+    "Sum of PROJECTED YTD", "Sum of TTM SALES",
 ]
 _BRAND_VALUE_COLS = ["Sum of YTD_LY", "Sum of YTD_TY", "Sum of MTD_LY", "Sum of MTD_TY",
                      "Sum of DAY SALE FIGURE", "Sum of MONTH SALE LY",
-                     "Sum of PROJECTED MTD", "Sum of LY FULL SALES", "Sum of PROJECTED YTD"]
+                     "Sum of PROJECTED MTD", "Sum of LY FULL SALES", "Sum of PROJECTED YTD", "Sum of TTM SALES"]
 
 
 def _gd_store_metrics(df: pd.DataFrame, asof: pd.Timestamp) -> dict:
@@ -1249,6 +1301,14 @@ def _gd_store_metrics(df: pd.DataFrame, asof: pd.Timestamp) -> dict:
     fy_year = asof.year if asof.month >= 4 else asof.year - 1
     ly_full = g(df[(df["date"] >= pd.Timestamp(fy_year - 1, 4, 1)) &
                    (df["date"] <= pd.Timestamp(fy_year, 3, 31))])
+    # ★ TRAILING 12 MONTHS — a rolling 365 days ending today, so it moves every
+    # day like DAY SALE and PROJECTED YTD do, rather than once a month.
+    # ⚠ It is a SPAN, not a like-for-like: a store that opened inside the window
+    # shows less than a year of trading and there is no way to tell from the
+    # figure alone. South is the standing example in this feed — it opens
+    # 19 Apr 2026, so its TTM covers 130 of 365 days.
+    ttm_start = asof - pd.DateOffset(years=1) + pd.Timedelta(days=1)
+    ttm = g(df[(df["date"] >= ttm_start) & (df["date"] <= asof)])
     fy_start = pd.Timestamp(fy_year, 4, 1)
     out = {}
     for c in attrs.index:
@@ -1266,6 +1326,7 @@ def _gd_store_metrics(df: pd.DataFrame, asof: pd.Timestamp) -> dict:
             "day": float(day.get(c, 0.0)), "month_ly": float(month_ly.get(c, 0.0)),
             "proj_mtd": project_mtd(mty, asof, doo, closed),
             "ly_full": float(ly_full.get(c, 0.0)), "proj_ytd": proj_ytd,
+            "ttm": float(ttm.get(c, 0.0)),
         }
     return out
 
@@ -1292,6 +1353,7 @@ def brand_wise_gd_report(df: pd.DataFrame, asof=None):
             "Sum of MTD_TY": m["mtd_ty"], "Sum of GD_MTD_%": m["gd_mtd"],
             "Sum of DAY SALE FIGURE": m["day"], "Sum of MONTH SALE LY": m["month_ly"],
             "Sum of PROJECTED MTD": m["proj_mtd"], "Sum of LY FULL SALES": m["ly_full"],
+            "Sum of TTM SALES": m["ttm"],
             "Sum of PROJECTED YTD": m["proj_ytd"],
         }
 
@@ -1327,11 +1389,11 @@ LOC_GD_COLS = [
     "Sum of YTD_LY", "Sum of YTD_TY", "Sum of GD_YTD_%", "Sum of MTD_LY",
     "Sum of MTD_TY", "Sum of GD_MTD_%", "Sum of MONTH SALE LY",
     "Sum of PROJECTED MTD", "Sum of LY FULL SALES", "Sum of PROJECTED YTD",
-    "Sum of DAY SALE FIGURE",
+    "Sum of TTM SALES", "Sum of DAY SALE FIGURE",
 ]
 _LOC_VALUE_COLS = ["Sum of YTD_LY", "Sum of YTD_TY", "Sum of MTD_LY", "Sum of MTD_TY",
                    "Sum of MONTH SALE LY", "Sum of PROJECTED MTD", "Sum of LY FULL SALES",
-                   "Sum of PROJECTED YTD", "Sum of DAY SALE FIGURE"]
+                   "Sum of PROJECTED YTD", "Sum of TTM SALES", "Sum of DAY SALE FIGURE"]
 
 
 def loc_wise_gd_report(df: pd.DataFrame, asof=None):
@@ -1356,6 +1418,7 @@ def loc_wise_gd_report(df: pd.DataFrame, asof=None):
             "Sum of MTD_TY": m["mtd_ty"], "Sum of GD_MTD_%": m["gd_mtd"],
             "Sum of MONTH SALE LY": m["month_ly"], "Sum of PROJECTED MTD": m["proj_mtd"],
             "Sum of LY FULL SALES": m["ly_full"], "Sum of PROJECTED YTD": m["proj_ytd"],
+            "Sum of TTM SALES": m["ttm"],
             "Sum of DAY SALE FIGURE": m["day"],
         }
 

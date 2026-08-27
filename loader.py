@@ -1295,7 +1295,7 @@ def brand_line_vfl(df: pd.DataFrame) -> pd.Series:
 # Column layout mirroring the source pivot (BRAND_WISE_GD / VFL tabs).
 GD_VALUE_COLS = ["YTD LY", "YTD TY", "MTD LY", "MTD TY", "Day Sales",
                  "Month Sale LY", "Projected MTD", "LY Full Sales",
-                 "Projected YTD"]
+                 "Projected YTD", "TTM Sales"]
 
 
 def _extra_gd_windows(df: pd.DataFrame, asof=None):
@@ -1309,7 +1309,13 @@ def _extra_gd_windows(df: pd.DataFrame, asof=None):
     fy_year = asof.year if asof.month >= 4 else asof.year - 1
     ly_full = df[(df["date"] >= pd.Timestamp(fy_year - 1, 4, 1)) &
                  (df["date"] <= pd.Timestamp(fy_year, 3, 31))]
-    return asof, day, ly_month, ly_full
+    # ★ TRAILING 12 MONTHS — rolling 365 days ending today, moving daily.
+    # Unlike the portfolio feed, South HAS a full year here: the VFL sheet
+    # carries its previous operator's history, which is the same reason South
+    # shows a real YoY on this pack and none on the portfolio one.
+    ttm_start = asof - pd.DateOffset(years=1) + pd.Timedelta(days=1)
+    ttm = df[(df["date"] >= ttm_start) & (df["date"] <= asof)]
+    return asof, day, ly_month, ly_full, ttm
 
 
 def _gd_by(df: pd.DataFrame, keys, asof=None, anchor_takeover: bool = True,
@@ -1318,7 +1324,7 @@ def _gd_by(df: pd.DataFrame, keys, asof=None, anchor_takeover: bool = True,
     from report_frames (takeover-anchored unless `anchor_takeover=False`); adds
     day-sale, LY same-month, LY full year, run-rate projections and GD% columns.
     `new_store_no_ly=True` zeros last-year for stores opened this FY (report view)."""
-    asof, day, ly_month, ly_full = _extra_gd_windows(df, asof)
+    asof, day, ly_month, ly_full, ttm = _extra_gd_windows(df, asof)
     ycur, ypri = report_frames(df, "YTD", asof=asof, anchor_takeover=anchor_takeover,
                                new_store_no_ly=new_store_no_ly)
     mcur, mpri = report_frames(df, "MTD", asof=asof, anchor_takeover=anchor_takeover,
@@ -1331,7 +1337,7 @@ def _gd_by(df: pd.DataFrame, keys, asof=None, anchor_takeover: bool = True,
         "YTD LY": g(ypri), "YTD TY": g(ycur),
         "MTD LY": g(mpri), "MTD TY": g(mcur),
         "Day Sales": g(day), "Month Sale LY": g(ly_month),
-        "LY Full Sales": g(ly_full),
+        "LY Full Sales": g(ly_full), "TTM Sales": g(ttm),
     }).fillna(0.0)
 
     # Run-rate projections (projections.py). Rows here can be brand-lines rather
@@ -1360,7 +1366,7 @@ def brand_wise_gd(df: pd.DataFrame, asof=None, anchor_takeover: bool = True) -> 
     out = out.sort_values("__o").drop(columns="__o").reset_index(drop=True)
     cols = ["Brand", "YTD LY", "YTD TY", "GD YTD %", "MTD LY", "MTD TY",
             "GD MTD %", "Day Sales", "Month Sale LY", "Projected MTD",
-            "LY Full Sales", "Projected YTD"]
+            "LY Full Sales", "Projected YTD", "TTM Sales"]
     return out[cols]
 
 
@@ -1377,7 +1383,7 @@ def gender_wise_gd(df: pd.DataFrame, asof=None, anchor_takeover: bool = True) ->
     out = out.sort_values(["__r", "__g"]).drop(columns=["__r", "__g"]).reset_index(drop=True)
     cols = ["Region", "Gender", "YTD LY", "YTD TY", "GD YTD %", "MTD LY",
             "MTD TY", "GD MTD %", "Day Sales", "Month Sale LY", "Projected MTD",
-            "LY Full Sales", "Projected YTD"]
+            "LY Full Sales", "Projected YTD", "TTM Sales"]
     return out[cols]
 
 
@@ -1452,7 +1458,7 @@ def gender_store_gd(df: pd.DataFrame, asof=None, anchor_takeover: bool = True) -
     cols = ["Region", "Master Location", "Store Code", "Location", "Gender",
             "YTD LY", "YTD TY", "GD YTD %", "MTD LY", "MTD TY", "GD MTD %",
             "Day Sales", "Projected MTD", "Month Sale LY", "Projected YTD",
-            "LY Full Sales"]
+            "LY Full Sales", "TTM Sales"]
     return out[cols]
 
 
@@ -1483,7 +1489,7 @@ def store_brand_gd(df: pd.DataFrame, asof=None, anchor_takeover: bool = True) ->
     cols = ["Region", "Master Location", "Store Code", "Location", "DOO",
             "Gender", "Brand", "YTD LY", "YTD TY", "GD YTD %", "MTD LY", "MTD TY",
             "GD MTD %", "Day Sales", "Month Sale LY", "Projected MTD",
-            "LY Full Sales", "Projected YTD"]
+            "LY Full Sales", "Projected YTD", "TTM Sales"]
     return out[cols]
 
 
@@ -1501,11 +1507,12 @@ VFL_GD_COLS = [
     "LOCATION", "DOO", "Sum of YTD_LY", "Sum of YTD_TY", "Sum of GD_YTD_%",
     "Sum of MTD_LY", "Sum of MTD_TY", "Sum of GD_MTD_%", "Sum of DAY SALE FIGURE",
     "Sum of PROJECTED MTD", "Sum of MONTH SALE LY", "Sum of PROJECTED YTD",
-    "Sum of LY FULL SALES",
+    "Sum of LY FULL SALES", "Sum of TTM SALES",
 ]
 VFL_GD_MONEY = ["Sum of YTD_LY", "Sum of YTD_TY", "Sum of MTD_LY", "Sum of MTD_TY",
                 "Sum of DAY SALE FIGURE", "Sum of PROJECTED MTD",
-                "Sum of MONTH SALE LY", "Sum of PROJECTED YTD", "Sum of LY FULL SALES"]
+                "Sum of MONTH SALE LY", "Sum of PROJECTED YTD", "Sum of LY FULL SALES",
+                "Sum of TTM SALES"]
 VFL_GD_PCT = ["Sum of GD_YTD_%", "Sum of GD_MTD_%"]
 # brand-line detail column (loader name) -> workbook "Sum of ..." money column
 _VFL_SUM_SRC = {"YTD LY": "Sum of YTD_LY", "YTD TY": "Sum of YTD_TY",
@@ -1514,7 +1521,8 @@ _VFL_SUM_SRC = {"YTD LY": "Sum of YTD_LY", "YTD TY": "Sum of YTD_TY",
                 "Projected MTD": "Sum of PROJECTED MTD",
                 "Month Sale LY": "Sum of MONTH SALE LY",
                 "Projected YTD": "Sum of PROJECTED YTD",
-                "LY Full Sales": "Sum of LY FULL SALES"}
+                "LY Full Sales": "Sum of LY FULL SALES",
+                "TTM Sales": "Sum of TTM SALES"}
 _VFL_SUM_COLS = list(_VFL_SUM_SRC)
 
 
@@ -1795,7 +1803,8 @@ def vfl_gd_report(df: pd.DataFrame, asof=None, gen_date=None):
 VFL_GENDER_COLS = ["Region", "Master Location", "LOCATION", "STORE CODE",
                    "MEN/WOMEN/KIDS", "Sum of MTD_TY", "GENDER CONTRIBUTION MTD",
                    "Sum of YTD_TY", "GENDER CONTRIBUTION YTD"]
-VFL_GENDER_MONEY = ["Sum of MTD_TY", "Sum of YTD_TY"]
+VFL_GENDER_MONEY = ["Sum of MTD_TY", "Sum of YTD_TY",
+                     "Sum of TTM SALES"]
 VFL_GENDER_PCT = ["GENDER CONTRIBUTION MTD", "GENDER CONTRIBUTION YTD"]
 VFL_GSUM_COLS = ["Region", "MEN/WOMEN/KIDS", "Sum of MTD_TY", "GENDER CONTRIBUTION MTD",
                  "Sum of YTD_TY", "GENDER CONTRIBUTION YTD"]

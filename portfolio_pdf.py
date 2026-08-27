@@ -420,10 +420,38 @@ def _mw_image(mw, *, blocks=None, font_px=28, header_px=25, gap=None,
                       (grand["prpl"], "m"), (grand["mripl"], "m"), ("", "p")])
             body = [[fmt(m.get(k, ""), typ) for k, typ in keys] for m in months]
             grow = [fmt(v, typ) for v, typ in gvals]
+            # ── H1 / H2, straight under GRAND TOTAL in the same table ────────
+            # Manav, 27 Aug: the business leans into Q3-Q4, so the halves belong
+            # on this sheet. Each FY block carries its OWN halves; nothing is
+            # compared across years. A half still filling says so in its label —
+            # a bare "H1" beside last year's finished H1 invites a comparison
+            # that is not there.
+            hrows = []
+            for lo, hi, nm in ((0, 6, "H1  Apr-Sep"), (6, 12, "H2  Oct-Mar")):
+                seg = months[lo:hi]
+                tot = sum(x.get("total") or 0 for x in seg)
+                live = sum(1 for x in seg if (x.get("total") or 0) > 0)
+                lbl = nm if live in (0, hi - lo) else f"{nm}  ({live}/{hi - lo} mth)"
+                pc = lambda a, b: (a / b * 100) if b else 0.0
+                if mw[fy]["type"] == "region":
+                    ene = sum(x.get("ene") or 0 for x in seg)
+                    sth = sum(x.get("south") or 0 for x in seg)
+                    hv = [(lbl, "t"), (tot, "m"), (ene, "m"), (sth, "m"),
+                          (pc(tot, grand["total"]), "p"),
+                          (pc(ene, grand["ene"]), "p"), (pc(sth, grand["south"]), "p"),
+                          (pc(ene, tot), "p"), (pc(sth, tot), "p")]
+                else:
+                    hv = [(lbl, "t"), (tot, "m"),
+                          (sum(x.get("prpl") or 0 for x in seg), "m"),
+                          (sum(x.get("mripl") or 0 for x in seg), "m"),
+                          (pc(tot, grand["total"]), "p")]
+                hrows.append([fmt(v, typ) for v, typ in hv])
             cw, hlines = [], []
             for jc, (h, (k, typ)) in enumerate(zip(hdr, keys)):
                 data_w = max([scratch.textlength(r[jc], font=reg) for r in body]
-                             + [scratch.textlength(grow[jc], font=bold)], default=0)
+                             + [scratch.textlength(grow[jc], font=bold)]
+                             + [scratch.textlength(h[jc], font=bold) for h in hrows],
+                             default=0)
                 target = min(max(data_w, _px(30)), COL_CAP)
                 lines = []
                 for seg in str(h).split("\n"):
@@ -431,13 +459,14 @@ def _mw_image(mw, *, blocks=None, font_px=28, header_px=25, gap=None,
                 hw = max(scratch.textlength(ln, font=hbold) for ln in lines)
                 cw.append(int(max(target, hw)) + 2 * PAD_X)
                 hlines.append(lines)
-            specs.append(dict(fy=fy, keys=keys, body=body, grow=grow, cw=cw,
-                              hlines=hlines, is_region=mw[fy]["type"] == "region"))
+            specs.append(dict(fy=fy, keys=keys, body=body, grow=grow, hrows=hrows,
+                              cw=cw, hlines=hlines,
+                              is_region=mw[fy]["type"] == "region"))
 
         title_h = hline_h + 2 * PAD_Y
         sub_h = max(max(len(l) for l in s["hlines"]) for s in specs) * hline_h + 2 * PAD_Y
         block_w = sum(sum(s["cw"]) for s in specs) + gap * (len(specs) - 1)
-        block_h = title_h + sub_h + (12 + 1) * row_h
+        block_h = title_h + sub_h + (12 + 1 + 2) * row_h   # +2: H1 and H2
         img = Image.new("RGB", (block_w, block_h), WHITE)
         d = ImageDraw.Draw(img)
 
@@ -462,15 +491,17 @@ def _mw_image(mw, *, blocks=None, font_px=28, header_px=25, gap=None,
                 x += s["cw"][jc]
             # body rows + grand
             y = title_h + sub_h
-            for ri in range(13):
+            for ri in range(15):
                 is_grand = ri == 12
-                cells = s["grow"] if is_grand else s["body"][ri]
-                bg = TOTAL_BG if is_grand else _BODY_BG
+                is_half = ri > 12
+                cells = (s["hrows"][ri - 13] if is_half
+                         else s["grow"] if is_grand else s["body"][ri])
+                bg = TOTAL_BG if is_grand else (HDR_BG if is_half else _BODY_BG)
                 d.rectangle([x0, y, x0 + gw, y + row_h], fill=bg)
                 x = x0
                 for jc, (k, typ) in enumerate(s["keys"]):
                     val = cells[jc]
-                    f = bold if is_grand else reg
+                    f = bold if (is_grand or is_half) else reg
                     if typ == "t":
                         d.text((x + PAD_X, y + PAD_Y), val, font=f, fill=INK)
                     else:
@@ -481,7 +512,7 @@ def _mw_image(mw, *, blocks=None, font_px=28, header_px=25, gap=None,
                 y += row_h
             # full grid on the block
             gy0 = title_h
-            for ri in range(14):
+            for ri in range(16):
                 gy = gy0 + sub_h + (ri - 1) * row_h if ri else gy0
                 d.line([x0, gy, x0 + gw, gy], fill=GRID, width=1)
             gx = x0
@@ -633,10 +664,11 @@ def _cover(page_w, asof, basis_label, scope_rows,
 # --------------------------------------------------------------------------- #
 _MONEY = ["Sum of YTD_LY", "Sum of YTD_TY", "Sum of MTD_LY", "Sum of MTD_TY",
           "Sum of DAY SALE FIGURE", "Sum of MONTH SALE LY", "Sum of PROJECTED MTD",
-          "Sum of LY FULL SALES", "Sum of PROJECTED YTD"]
+          "Sum of LY FULL SALES", "Sum of PROJECTED YTD", "Sum of TTM SALES"]
 _PCT = ["Sum of GD_YTD_%", "Sum of GD_MTD_%"]
 _AVG_MONEY = ["SBA", "CA", "Sum of YTD_LY", "Sum of YTD_TY", "Average of OPERATION",
-              "Sum of AVG DAY SALE", "Sum of AVG MONTH SALE", "Sum of PSFPD"]
+              "Sum of AVG DAY SALE", "Sum of AVG MONTH SALE", "Sum of PSFPD",
+              "Sum of TTM SALES"]
 
 
 def _prep_gd(df, money=_MONEY):
