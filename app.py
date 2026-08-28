@@ -2191,12 +2191,12 @@ if nav == "🖼️ REPORTS IMAGES" and _img_what == "Morning set (ZIP)":
     # One document per store now carries BOTH periods, so it is no longer one
     # file per period. `is_consolidated` is what says so — see snapshots.PANEL.
     _one_doc = SN.is_consolidated()
-    _per_store = 1 if _one_doc else 2
+    _per_store = 1          # the A4 sheet is one image per store, always
     want_drivers = c3.checkbox(
         "Per-store drivers", value=True,
-        help=(f"{len(_stores)} stores, one document each — MTD, YTD and the "
-              f"KPIs together." if _one_doc
-              else f"{len(_stores)} stores × MTD and YTD."))
+        help=f"{len(_stores)} stores, one sheet each — the month and the year "
+             f"side by side, falling and growing told apart, with the six "
+             f"measures. Same layout as the printable driver sheet.")
 
     _n = (1 if want_store_wise else 0) + (4 if want_degrowth else 0) \
         + (len(_stores) * _per_store if want_drivers else 0)
@@ -2234,17 +2234,25 @@ if nav == "🖼️ REPORTS IMAGES" and _img_what == "Morning set (ZIP)":
                         _ff = SN.footfall_map(_load_portfolio_cached()[0])
                     except Exception:
                         _ff = {}
+                    # ★ THE PER-STORE IMAGE IS NOW THE DRIVER SHEET (28 Aug):
+                    # same layout as the printable one, still delivered as PNG.
+                    # One layout, two containers — snapshots_a4 composes the
+                    # page once and only saves it differently, so they cannot
+                    # drift. The image is NOT held to A4: it grows to fit, which
+                    # is what lets it keep every Twamev section at a readable
+                    # size where the fixed page could not.
+                    import snapshots_a4 as A4
+                    _tg = SN._targets_for(_asof)
                     for _st in _stores:
                         _code = (int(_master.loc[_st, "code"])
                                  if _st in _master.index else None)
-                        for _k in (("MTD",) if _one_doc else ("MTD", "YTD")):
-                            try:
-                                _add("by-store",
-                                     SN.drivers(L, _src, _asof, _k, _st,
-                                                _code, ff=_ff))
-                            except Exception as e:      # one store must not
-                                failed.append(f"{_st} {_k}: {e}")  # sink the run
-                                done[0] += 1
+                        try:
+                            _made = A4.store_sheet(L, _src, _asof, _st, _code,
+                                                   ff=_ff, targets=_tg, fmt="png")
+                            _add("by-store", (_made[0], _made[1]))
+                        except Exception as e:          # one store must not
+                            failed.append(f"{_st}: {e}")  # sink the run
+                            done[0] += 1
             except Exception as e:
                 st.error(f"Could not finish the ZIP: {e}")
                 bar.empty()

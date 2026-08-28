@@ -127,7 +127,8 @@ def _measure(drv, money, pct, sign, px):
     return m
 
 
-def _fit(tables, money_of, pct, max_w, max_h=None, side_by_side=False):
+def _fit(tables, money_of, pct, max_w, max_h=None, side_by_side=False,
+         stacked_pairs=False):
     """Largest type at which every table fits `max_w`, and the pair fits `max_h`.
 
     ★ SIDE BY SIDE MEASURES THE TALLER, NOT THE SUM. The month and the year sit
@@ -140,12 +141,18 @@ def _fit(tables, money_of, pct, max_w, max_h=None, side_by_side=False):
     sizes on one page, which reads as a mistake even when both are legible.
     """
     def total(px):
-        ms = [_measure(d, money_of(k), pct, ["Shortfall"] + list(pct), px)
+        ms = [_measure(d, money_of(k), pct,
+                       ["Shortfall", "Gain"] + list(pct), px)
               for k, d in tables]
         w = max(m["W"] for m in ms)
         each = [m["head_h"] + m["row_h"] * len(d)
                 for (k, d), m in zip(tables, ms)]
-        return ms, w, (max(each) if side_by_side else sum(each))
+        if stacked_pairs:            # [d,u,d,u] -> two columns of two
+            cols = [each[0] + each[1], each[2] + each[3]] if len(each) == 4 else each
+            h = max(cols)
+        else:
+            h = max(each) if side_by_side else sum(each)
+        return ms, w, h
 
     lo, hi, best = FONT_MIN, FONT_MAX, None
     while lo <= hi:
@@ -211,14 +218,30 @@ def _note_section(width, head, paras):
 # --------------------------------------------------------------------------- #
 
 class _Sheet:
-    """Pages of a fixed A4, filled top to bottom, with a running footer."""
+    """Pages of a fixed A4 — or, for the morning image, one page as tall as it
+    needs to be.
 
-    def __init__(self, store, asof, context):
+    ★ THE A4 CONSTRAINT IS THE PDF'S, NOT THE IMAGE'S. Manav, 28 Aug: *"for the
+    png images, not necessary to stick to the a4 constraint, thats only
+    important for the pdfs."* That resolves a real conflict: with four tables
+    and the Twamev sections spliced in, fitting a fixed page dropped the type to
+    3.6pt or silently dropped the Twamev breakdown to keep it legible. An image
+    has no page to overflow, so it keeps every line at a readable size and
+    simply grows. The PDF still paginates exactly as before.
+    """
+
+    TALL = PAGE_H * 4          # working canvas for the unbounded case
+
+    def __init__(self, store, asof, context, bounded=True):
         self.store, self.asof, self.context = store, asof, context
+        self.bounded = bounded
         self.pages, self._img, self._y = [], None, 0
 
+    def _page_h(self):
+        return PAGE_H if self.bounded else self.TALL
+
     def _new(self):
-        self._img = Image.new("RGB", (PAGE_W, PAGE_H), (255, 255, 255))
+        self._img = Image.new("RGB", (PAGE_W, self._page_h()), (255, 255, 255))
         self._y = MARGIN
         self.pages.append(self._img)
         if len(self.pages) > 1:
@@ -227,7 +250,7 @@ class _Sheet:
                               self.context))
 
     def room(self):
-        return PAGE_H - MARGIN - int(round(9 / 25.4 * DPI)) - self._y
+        return self._page_h() - MARGIN - int(round(9 / 25.4 * DPI)) - self._y
 
     def put(self, img, gap=26):
         if self._img is None or img.height > self.room():
@@ -238,9 +261,14 @@ class _Sheet:
     def _footers(self):
         f, _ = _ft(24)
         n = len(self.pages)
+        if not self.bounded:
+            # crop the working canvas to what was actually drawn, then foot it
+            end = self._y + MARGIN + _h(f) + 14
+            self.pages = [p.crop((0, 0, PAGE_W, min(end, p.height)))
+                          for p in self.pages]
         for i, p in enumerate(self.pages, 1):
             d = ImageDraw.Draw(p)
-            y = PAGE_H - MARGIN - _h(f)
+            y = p.height - MARGIN - _h(f)
             d.line([(MARGIN, y - 14), (PAGE_W - MARGIN, y - 14)], fill=RULE, width=2)
             d.text((MARGIN, y), f"{self.store} · as of {self.asof:%d %b %Y}",
                    font=f, fill=SUB)
@@ -249,6 +277,20 @@ class _Sheet:
                 t = f"Page {i} of {n}"
                 d.text((PAGE_W - MARGIN - d.textlength(t, font=f), y), t,
                        font=f, fill=SUB)
+
+    def png(self, page=0):
+        """One composed page as PNG bytes.
+
+        ★ THE MORNING SET SENDS IMAGES, NOT PDFs. Manav, 28 Aug: the report
+        images should carry this layout rather than the old stacked one, while
+        still downloading as PNGs. The page is already composed as a PIL image
+        for the PDF path, so this is the same pixels saved differently — the two
+        outputs cannot drift, because there is only one layout.
+        """
+        self._footers()
+        buf = io.BytesIO()
+        self.pages[page].save(buf, format="PNG", optimize=True)
+        return buf.getvalue()
 
     def pdf(self):
         self._footers()
@@ -680,6 +722,7 @@ TWAMEV_SECTIONS = 5
 # densest stores; this stops the Twamev detail dragging it lower still.
 TWAMEV_MIN_PX = 23           # 23/300*72 = 5.5pt
 
+
 # ★ AT LEAST ONE LINE PER TWAMEV DIVISION. Manav, 26 Aug: *"for twamev, why
 # cant i see womens?"* Because M.G. Road barely sells it — its only womenswear
 # line this month is stitched suit at Rs 12,999 falling to nil, which ranked
@@ -796,14 +839,12 @@ def _with_cap(base, btypes, ranked, kind, cap):
                                  f"{_short_sec(r['Section'])}",
                      ly: r[ly], ty: r[ty], "Shortfall": r["Shortfall"],
                      "Degrowth %": r["Degrowth %"]})
-    if len(rest):
-        # Rolled up rather than dropped, so the shown lines plus this one still
-        # add to the Twamev total printed underneath them.
-        r_ly, r_ty = float(rest[ly].sum()), float(rest[ty].sum())
-        made.append({**ident, "Brand": TWAMEV_BRAND,
-                     "Division": f"other sections ({len(rest)})",
-                     ly: r_ly, ty: r_ty, "Shortfall": r_ty - r_ly,
-                     "Degrowth %": ((r_ty - r_ly) / r_ly * 100) if r_ly else None})
+    # ★ NO ROLLUP LINE. Manav, 28 Aug: *"dont do the other sections up (2), its
+    # too vague to be useful … just show defined categories, so the manager can
+    # focus."* A line that says "other sections" names nothing anyone can act
+    # on. With the image unbounded there is no reason to hide any of them, so
+    # the PNG asks for every section and nothing is rolled up; the totals then
+    # tie to the named lines because the named lines are all of them.
 
     idx = list(b.index[mask])
     out = pd.concat([b.iloc[:idx[0]].drop(columns="_t"),
@@ -812,6 +853,62 @@ def _with_cap(base, btypes, ranked, kind, cap):
     types = (list(btypes[:idx[0]]) + ["store"] * len(made)
              + list(btypes[idx[-1] + 1:]))
     return out, types
+
+
+
+# --------------------------------------------------------------------------- #
+#  Falling and rising, told apart                                              #
+# --------------------------------------------------------------------------- #
+# Manav, 28 Aug: *"the column says shortfall and degrowth, but there are a lot
+# of entries which are in growth."* He is right — a +75% line under a heading
+# that says "Degrowth %" is simply mislabelled, and a reader scanning the column
+# has to check the sign of every row to know what they are looking at.
+#
+# So each period becomes TWO tables: what fell, and what grew. The headings then
+# mean what they say — Shortfall / Degrowth % on one, Gain / Growth % on the
+# other — and no row has to be read against a label that contradicts it.
+#
+# ★ EACH TABLE TOTALS ITSELF. Brand subtotals are rebuilt from the lines
+# actually shown, so every figure adds up on the page rather than referring to
+# rows that are now in the other table. The two totals still sum to the store's
+# net movement, which is the check that they are a partition and not a filter.
+
+def _split_drivers(drv, types, kind):
+    """(falling, rising) as (frame, row_types) pairs, each totalling itself."""
+    ly, ty = f"{kind} LY", f"{kind} TY"
+    d = drv.assign(_t=list(types)).reset_index(drop=True)
+    det = d[d["_t"] == "store"].copy()
+    det["_sh"] = pd.to_numeric(det["Shortfall"], errors="coerce").fillna(0.0)
+    ident = {c: (det[c].iloc[0] if len(det) else "")
+             for c in det.columns if c in ("DATE", "Region", "STORE CODE", "LOCATION")}
+
+    out = []
+    for falling in (True, False):
+        sub = det[det["_sh"] < 0] if falling else det[det["_sh"] > 0]
+        sub = sub.sort_values("_sh", ascending=falling)
+        rows, rt = [], []
+        for brand in dict.fromkeys(sub["Brand"].astype(str)):
+            g = sub[sub["Brand"].astype(str) == brand]
+            for _, r in g.iterrows():
+                rows.append({c: r[c] for c in drv.columns}); rt.append("store")
+            b_ly, b_ty = float(g[ly].sum()), float(g[ty].sum())
+            rows.append({**ident, "Brand": brand, "Division": "Total",
+                         ly: b_ly, ty: b_ty, "Shortfall": b_ty - b_ly,
+                         "Degrowth %": ((b_ty - b_ly) / b_ly * 100) if b_ly else None})
+            rt.append("subtotal")
+        t_ly, t_ty = float(sub[ly].sum()), float(sub[ty].sum())
+        rows.append({**ident, "Brand": "TOTAL", "Division": "",
+                     ly: t_ly, ty: t_ty, "Shortfall": t_ty - t_ly,
+                     "Degrowth %": ((t_ty - t_ly) / t_ly * 100) if t_ly else None})
+        rt.append("block")
+        f = pd.DataFrame(rows, columns=list(drv.columns))
+        if not falling:
+            # the headings now say what the numbers are
+            f = f.rename(columns={"Shortfall": "Gain", "Degrowth %": "Growth %"})
+            base = pd.to_numeric(f[ly], errors="coerce")
+            f.loc[base <= 0, "Growth %"] = None
+        out.append((f, rt))
+    return out
 
 
 def _period_block(L, df, asof, store, code, kind, targets, drv, types):
@@ -838,15 +935,20 @@ def _period_block(L, df, asof, store, code, kind, targets, drv, types):
           else (PP.NEG_INK if k["ty"]["bills"] < k["ly"]["bills"] else None)),
          SN._single_bill_card(sb)],
     ]
+    (down, dt), (up, ut) = _split_drivers(drv, types, kind)
     lean, lifted = _lift_constants(drv)
+    d_lean, _ = _lift_constants(down)
+    u_lean, _ = _lift_constants(up)
     label = "the month so far" if kind == "MTD" else "the year to date"
     return dict(kind=kind, drv=lean, types=types, lifted=lifted,
+                down=(d_lean, dt), up=(u_lean, ut),
                 cap=_caption(CONTENT_W, f"{kind} — {label}",
                              "target, achievement and how the trading is going"),
                 cards=SN._cards_image(rows, CONTENT_W, label_px=23, value_px=42))
 
 
-def store_sheet(L, df, asof, store, code=None, pf=None, ff=None, targets=None):
+def store_sheet(L, df, asof, store, code=None, pf=None, ff=None, targets=None,
+                fmt="pdf"):
     """One store → (filename, PDF bytes).
 
     ★ EVERY DATA POINT ON SHEET ONE. Manav, 23 Aug: *"atleast all the data
@@ -890,7 +992,12 @@ def store_sheet(L, df, asof, store, code=None, pf=None, ff=None, targets=None):
     prep = {k: _twamev_ranked(L, df, asof, k, store) for k in ("MTD", "YTD")}
     built = measures = font_px = None
     used_cap = 0
-    for cap in [c for c in (TWAMEV_SECTIONS, 4, 3, 0) if c <= TWAMEV_SECTIONS]:
+    # ★ An image has no page to overflow, so there is nothing to trade the
+    # Twamev breakdown against: it takes EVERY section and the sheet grows.
+    # The PDF still steps the cap down to protect type size on a fixed page.
+    _caps = ([10_000] if fmt == "png"
+             else [c for c in (TWAMEV_SECTIONS, 4, 3, 0) if c <= TWAMEV_SECTIONS])
+    for cap in _caps:
         tabs = {k: _with_cap(b, bt, r, k, cap) for k, (b, bt, r) in prep.items()}
         built = [x for x in (_period_block(L, df, asof, store, code, k, targets,
                                            *tabs[k]) for k in ("MTD", "YTD"))
@@ -902,14 +1009,25 @@ def store_sheet(L, df, asof, store, code=None, pf=None, ff=None, targets=None):
         fixed = (title_h + GAP
                  + sum(b["cap"].height + 8 + b["cards"].height + GAP
                        for b in built)
-                 + tcap_h + 8 + kpi.height + GAP + GAP)
-        measures, font_px = _fit([(b["kind"], b["drv"]) for b in built],
-                                 L.drivers_money, L.DRIVERS_PCT, half,
-                                 max(usable - fixed, 300), side_by_side=True)
+                 + 2 * (tcap_h + 8) + 24 + kpi.height + GAP + GAP)
+        # ★ FOUR TABLES NOW, sized as one so the page never shows two type
+        # sizes. `stacked_pairs` measures each PERIOD'S COLUMN — falling over
+        # rising — and takes the taller of the two columns.
+        pairs = []
+        for b in built:
+            pairs.append((b["kind"], b["down"][0]))
+            pairs.append((b["kind"], b["up"][0]))
+        _money_of = lambda k: list(L.drivers_money(k)) + ["Gain"]
+        _pct_all = list(L.DRIVERS_PCT) + ["Growth %"]
+        measures, font_px = _fit(pairs, _money_of, _pct_all, half,
+                                 None if fmt == "png" else max(usable - fixed, 300),
+                                 stacked_pairs=True)
         # Report what was actually spliced, not what was asked for: a store
         # whose Twamev has one section per division is skipped inside
         # `_with_cap`, and saying "5 sections" of it would be a lie.
-        used_cap = cap if any(r is not None for _b, _t, r in prep.values()) else 0
+        used_cap = (0 if not any(r is not None for _b, _t, r in prep.values())
+                    else min(cap, max((len(r) for _b, _t, r in prep.values()
+                                       if r is not None), default=0)))
         if font_px >= TWAMEV_MIN_PX or cap == 0:
             break
 
@@ -923,16 +1041,29 @@ def store_sheet(L, df, asof, store, code=None, pf=None, ff=None, targets=None):
              for b in built]
     measures = [_widen(m, half) for m in measures]
 
-    sheet = _Sheet(store, asof, context)
+    sheet = _Sheet(store, asof, context, bounded=(fmt != "png"))
     sheet.put(title, gap=GAP)
     for b in built:
         sheet.put(b["cap"], gap=8)
         sheet.put(b["cards"], gap=GAP)
 
     cols = []
-    for b, m, cap in zip(built, measures, tcaps):
-        tbl = PP._render_chunk(m, b["types"], list(range(len(b["drv"]))))
-        cols.append(_stack([cap, tbl], gap=8))
+    for i, b in enumerate(built):
+        parts = []
+        for j, (key, word) in enumerate((("down", "is falling"), ("up", "is growing"))):
+            frame, rt = b[key]
+            m = measures[i * 2 + j]
+            cap = _caption(half, f"{b['kind']} — what {word}",
+                           "by brand and product, this year against last")
+            if len(frame) <= 1:      # only the TOTAL row: nothing moved that way
+                parts.append(_stack([cap, _text_block(
+                    half, [(f"Nothing {word.replace('is ', '')} this "
+                            f"{'month' if b['kind'] == 'MTD' else 'year'}.",
+                            _ft(30)[0], SUB)])], gap=8))
+                continue
+            tbl = PP._render_chunk(m, rt, list(range(len(frame))))
+            parts.append(_stack([cap, tbl], gap=8))
+        cols.append(_stack(parts, gap=24))
     sheet.put(_beside(cols[0], cols[1] if len(cols) > 1 else None, GUT), gap=GAP)
     sheet.put(kpi, gap=GAP)
     # ★ THE CONTRACT OF THIS SHEET, CHECKED RATHER THAN ASSUMED. If a store
@@ -954,8 +1085,12 @@ def store_sheet(L, df, asof, store, code=None, pf=None, ff=None, targets=None):
             sheet.put(_point_block(CONTENT_W, i, headline, body), gap=16)
 
     tag = f"{code}_" if code is not None else ""
-    return (f"{asof:%Y-%m-%d}_{tag}{SN._slug(store)}_briefing_a4.pdf",
-            sheet.pdf(), font_px, data_pages, used_cap)
+    stem = f"{asof:%Y-%m-%d}_{tag}{SN._slug(store)}_briefing_a4"
+    if fmt == "png":
+        # page one only: with INCLUDE_BRIEFING off that IS the whole sheet, and
+        # a morning image is one picture by definition.
+        return (f"{stem}.png", sheet.png(0), font_px, data_pages, used_cap)
+    return (f"{stem}.pdf", sheet.pdf(), font_px, data_pages, used_cap)
 
 
 # --------------------------------------------------------------------------- #
