@@ -1119,7 +1119,31 @@ def mw_data(df: pd.DataFrame, asof=None) -> dict:
                     "ene_contrib": _pct(ene[i], g_ene), "south_contrib": _pct(sth[i], g_sth),
                     "ene_pct": _pct(ene[i], tot[i]), "south_pct": _pct(sth[i], tot[i]),
                 } for i in range(12)]
-                out[fy] = {"type": "region", "months": months,
+                # ★ LAST YEAR ON THE CURRENT BLOCK. The prior FY has its own
+                # block further down, but it is a "std" one — TOTAL/PRPL/MRIPL,
+                # no region split — so its halves cannot be read against these.
+                # Manav, 28 Aug: he wants last year's halves beside this year's,
+                # in the same columns. That means recomputing the prior year on
+                # THIS block's shape rather than borrowing the other block's rows.
+                # South reads 0 across last year because it opens 19 Apr 2026;
+                # the row label carries the year so a zero is read as "not there
+                # yet" and not as "traded nothing".
+                prior = None
+                p_pers = _fy_periods(start_year - 1)
+                if pd.notna(feed_from) and feed_from <= pd.Timestamp(start_year - 1, 4, 1):
+                    p_ene = [float(monthly.loc[q, "East & NE"]) if q in monthly.index else 0.0
+                             for q in p_pers]
+                    p_sth = [float(monthly.loc[q, "South"]) if q in monthly.index else 0.0
+                             for q in p_pers]
+                    p_tot = [e + s for e, s in zip(p_ene, p_sth)]
+                    prior = {
+                        "fy": _fy_label(start_year - 1),
+                        "months": [{"total": p_tot[i], "ene": p_ene[i], "south": p_sth[i]}
+                                   for i in range(12)],
+                        "grand": {"total": sum(p_tot), "ene": sum(p_ene),
+                                  "south": sum(p_sth)},
+                    }
+                out[fy] = {"type": "region", "months": months, "prior": prior,
                            "grand": {"total": g_tot, "ene": g_ene, "south": g_sth,
                                      "ene_contrib": _pct(g_ene, g_tot),
                                      "south_contrib": _pct(g_sth, g_tot)}}
@@ -1263,6 +1287,33 @@ def mw_data_html(mw: dict) -> str:
                     align = "left" if typ == "t" else "right"
                     htds += _cell(_fmt(v, typ), align, HALF, bold=True)
             body += f"<tr>{htds}</tr>"
+
+        # last year's halves, on the current block's own columns
+        for lo, hi, name in ((0, 6, "H1  Apr-Sep"), (6, 12, "H2  Oct-Mar")):
+            ptds, any_prior = "", False
+            for gi, fy in enumerate(fys):
+                if gi:
+                    ptds += f"<td {_GAP}></td>"
+                pr = mw[fy].get("prior")
+                n = len(_cols(fy)[0])
+                if not pr:
+                    ptds += "".join(_cell("", "right", BODY) for _ in range(n))
+                    continue
+                any_prior = True
+                seg = pr["months"][lo:hi]; pg = pr["grand"]
+                tot = sum(x["total"] for x in seg)
+                ene = sum(x["ene"] for x in seg)
+                sth = sum(x["south"] for x in seg)
+                pc = lambda a, b: (a / b * 100) if b else 0.0
+                vals = [(f"{name}  {pr['fy']}", "t"), (tot, "m"), (ene, "m"), (sth, "m"),
+                        (pc(tot, pg["total"]), "p"), (pc(ene, pg["ene"]), "p"),
+                        (pc(sth, pg["south"]), "p"), (pc(ene, tot), "p"),
+                        (pc(sth, tot), "p")]
+                for v, typ in vals:
+                    align = "left" if typ == "t" else "right"
+                    ptds += _cell(_fmt(v, typ), align, BODY, bold=True)
+            if any_prior:
+                body += f"<tr>{ptds}</tr>"
         return (f'<table style="border-collapse:collapse;font-family:Inter,Segoe UI,'
                 f'sans-serif;font-size:11px;margin:0 0 26px;">'
                 f'<thead><tr>{title}</tr><tr>{sub}</tr></thead><tbody>{body}</tbody></table>')

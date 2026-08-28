@@ -446,11 +446,30 @@ def _mw_image(mw, *, blocks=None, font_px=28, header_px=25, gap=None,
                           (sum(x.get("mripl") or 0 for x in seg), "m"),
                           (pc(tot, grand["total"]), "p")]
                 hrows.append([fmt(v, typ) for v, typ in hv])
+            # last year's halves, on this block's own columns (see mw_data).
+            # The prior FY has its own block, but it is a "std" one — no region
+            # split — so its rows cannot be read against these columns.
+            prior = mw[fy].get("prior")
+            prows = []
+            if prior:
+                pg = prior["grand"]
+                for lo, hi, nm in ((0, 6, "H1  Apr-Sep"), (6, 12, "H2  Oct-Mar")):
+                    seg = prior["months"][lo:hi]
+                    tot = sum(x["total"] for x in seg)
+                    ene = sum(x["ene"] for x in seg)
+                    sth = sum(x["south"] for x in seg)
+                    pc = lambda a, b: (a / b * 100) if b else 0.0
+                    pv = [(f"{nm}  {prior['fy']}", "t"), (tot, "m"), (ene, "m"),
+                          (sth, "m"), (pc(tot, pg["total"]), "p"),
+                          (pc(ene, pg["ene"]), "p"), (pc(sth, pg["south"]), "p"),
+                          (pc(ene, tot), "p"), (pc(sth, tot), "p")]
+                    prows.append([fmt(v, typ) for v, typ in pv])
             cw, hlines = [], []
             for jc, (h, (k, typ)) in enumerate(zip(hdr, keys)):
                 data_w = max([scratch.textlength(r[jc], font=reg) for r in body]
                              + [scratch.textlength(grow[jc], font=bold)]
-                             + [scratch.textlength(h[jc], font=bold) for h in hrows],
+                             + [scratch.textlength(h[jc], font=bold) for h in hrows]
+                             + [scratch.textlength(h[jc], font=bold) for h in prows],
                              default=0)
                 target = min(max(data_w, _px(30)), COL_CAP)
                 lines = []
@@ -460,13 +479,14 @@ def _mw_image(mw, *, blocks=None, font_px=28, header_px=25, gap=None,
                 cw.append(int(max(target, hw)) + 2 * PAD_X)
                 hlines.append(lines)
             specs.append(dict(fy=fy, keys=keys, body=body, grow=grow, hrows=hrows,
-                              cw=cw, hlines=hlines,
+                              prows=prows, cw=cw, hlines=hlines,
                               is_region=mw[fy]["type"] == "region"))
 
         title_h = hline_h + 2 * PAD_Y
         sub_h = max(max(len(l) for l in s["hlines"]) for s in specs) * hline_h + 2 * PAD_Y
         block_w = sum(sum(s["cw"]) for s in specs) + gap * (len(specs) - 1)
-        block_h = title_h + sub_h + (12 + 1 + 2) * row_h   # +2: H1 and H2
+        nx = max(len(s['hrows']) + len(s['prows']) for s in specs)
+        block_h = title_h + sub_h + (12 + 1 + nx) * row_h
         img = Image.new("RGB", (block_w, block_h), WHITE)
         d = ImageDraw.Draw(img)
 
@@ -491,12 +511,17 @@ def _mw_image(mw, *, blocks=None, font_px=28, header_px=25, gap=None,
                 x += s["cw"][jc]
             # body rows + grand
             y = title_h + sub_h
-            for ri in range(15):
+            allx = s["hrows"] + s["prows"]
+            for ri in range(13 + len(allx)):
                 is_grand = ri == 12
                 is_half = ri > 12
-                cells = (s["hrows"][ri - 13] if is_half
+                # this year's halves in the header blue; last year's plain, so
+                # the eye separates the two without a second colour
+                is_prior = is_half and (ri - 13) >= len(s["hrows"])
+                cells = (allx[ri - 13] if is_half
                          else s["grow"] if is_grand else s["body"][ri])
-                bg = TOTAL_BG if is_grand else (HDR_BG if is_half else _BODY_BG)
+                bg = TOTAL_BG if is_grand else (
+                    _BODY_BG if (is_prior or not is_half) else HDR_BG)
                 d.rectangle([x0, y, x0 + gw, y + row_h], fill=bg)
                 x = x0
                 for jc, (k, typ) in enumerate(s["keys"]):
@@ -512,7 +537,7 @@ def _mw_image(mw, *, blocks=None, font_px=28, header_px=25, gap=None,
                 y += row_h
             # full grid on the block
             gy0 = title_h
-            for ri in range(16):
+            for ri in range(14 + len(allx)):
                 gy = gy0 + sub_h + (ri - 1) * row_h if ri else gy0
                 d.line([x0, gy, x0 + gw, gy], fill=GRID, width=1)
             gx = x0
