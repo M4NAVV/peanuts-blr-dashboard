@@ -446,10 +446,8 @@ def _mw_image(mw, *, blocks=None, font_px=28, header_px=25, gap=None,
                           (sum(x.get("mripl") or 0 for x in seg), "m"),
                           (pc(tot, grand["total"]), "p")]
                 hrows.append([fmt(v, typ) for v, typ in hv])
-            # last year's halves, on this block's own columns (see mw_data).
-            # The prior FY has its own block, but it is a "std" one — no region
-            # split — so its rows cannot be read against these columns.
-            prior = mw[fy].get("prior")
+            # last year's halves, on this block's own columns (see mw_data)
+            prior = mw[fy].get("vfl")   # the VFL slice, not last year
             prows = []
             if prior:
                 pg = prior["grand"]
@@ -459,7 +457,7 @@ def _mw_image(mw, *, blocks=None, font_px=28, header_px=25, gap=None,
                     ene = sum(x["ene"] for x in seg)
                     sth = sum(x["south"] for x in seg)
                     pc = lambda a, b: (a / b * 100) if b else 0.0
-                    pv = [(f"{nm}  {prior['fy']}", "t"), (tot, "m"), (ene, "m"),
+                    pv = [(f"{nm}  {prior['label']}", "t"), (tot, "m"), (ene, "m"),
                           (sth, "m"), (pc(tot, pg["total"]), "p"),
                           (pc(ene, pg["ene"]), "p"), (pc(sth, pg["south"]), "p"),
                           (pc(ene, tot), "p"), (pc(sth, tot), "p")]
@@ -471,6 +469,8 @@ def _mw_image(mw, *, blocks=None, font_px=28, header_px=25, gap=None,
                              + [scratch.textlength(h[jc], font=bold) for h in hrows]
                              + [scratch.textlength(h[jc], font=bold) for h in prows],
                              default=0)
+                # This grid is its own renderer with its own type scale, so it
+                # keeps the module-level cap.
                 target = min(max(data_w, _px(30)), COL_CAP)
                 lines = []
                 for seg in str(h).split("\n"):
@@ -764,16 +764,33 @@ def build(pf, pf_all, asof, basis_label="", vfl_df=None):
         # whole grid render far larger. Older years follow on a history page.
         tbl_w = max(c.width for _, c in contents)
         tbl_h = max(c.height for _, c in contents)
-        _mw = mw_data(pf_all)
+        _mw = mw_data(pf_all, asof, vfl_df=vfl_df)
         _layout = mw_layout(_mw)
-        _recent, _older = _layout[0], _layout[1:]
-        _cur, _prior = [_recent[-1]], _recent[:-1]
-        mw_pages = [(f"MW Data — Monthly Contribution · {_recent[0]} – {_recent[-1]}",
-                     _fit_mw(_mw, [_cur, _prior] if _prior else [_cur], tbl_w, tbl_h))]
-        if _older:
-            _hist = f"{_older[-1][-1]} – {_older[0][0]}"
+        # ★ PAGE ONE IS LAST YEAR AND THIS YEAR, NOTHING ELSE (Manav, 28 Aug).
+        # The current block now carries four half-year rows and the VFL slice
+        # beneath it; sharing the page with 2024-25 squeezed all three. Every
+        # earlier year moves to the history page, which takes them three to a
+        # row.
+        _recent, _rest = _layout[0], _layout[1:]
+        _cur = [_recent[-1]]
+        _prior = [_recent[-2]] if len(_recent) > 1 else []
+        _spill = _recent[:-2]                       # 2024-25 and anything older
+        _flat = _spill + [fy for row in _rest for fy in row]
+        # ★ FOUR TO A ROW on the history page — two rows instead of three, so
+        # each block gets more of the page and the type comes up with it.
+        _older = [_flat[i:i + 4] for i in range(0, len(_flat), 4)]
+        # ★ SIDE BY SIDE on page one. Stacked, two blocks used half the width
+        # and were sized down to fit the height they did not need. One row of
+        # two spends the page on legibility instead. Last year on the left, so
+        # it reads left to right in time.
+        _first = [_prior + _cur] if _prior else [_cur]
+        mw_pages = [(f"MW Data — Monthly Contribution · "
+                     f"{(_prior or _cur)[0]} – {_cur[-1]}",
+                     _fit_mw(_mw, _first, tbl_w, tbl_h))]
+        if _flat:
             mw_pages.append((f"MW Data — Monthly Contribution · earlier years "
-                             f"({_hist})", _fit_mw(_mw, _older, tbl_w, tbl_h)))
+                             f"({_flat[-1]} – {_flat[0]})",
+                             _fit_mw(_mw, _older, tbl_w, tbl_h)))
         contents = mw_pages + contents
 
         # 1) Executive Snapshot — replaces the cover. Built last because it is

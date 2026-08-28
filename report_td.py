@@ -1804,10 +1804,10 @@ TVA_COLS = [
     ("YTD TARGET", "r"), ("YTD ACHIEVED", "r"), ("YTD ACHIEVED %", "r"),
     ("YTD BALANCE", "r"),
     ("YEAR TARGET", "r"), ("YEAR ACHIEVED %", "r"),
-    ("AVG DAY SALES", "r"),
+    ("AVG DAY SALES", "r"), ("TTM SALES", "r"),
 ]
 _TVA_VALUES = ("mtd_target", "mtd", "mtd_bal", "ytd_target", "ytd", "ytd_bal",
-               "year_target")
+               "year_target", "ttm")
 
 
 def _tva_months(asof):
@@ -1850,6 +1850,13 @@ def target_vs_ach(pf_df, asof=None, targets_df=None) -> dict:
     frm = upto["code"].map(lambda c: start_of.get(int(c), fy_start)
                            if pd.notna(c) else fy_start)
     ytd = upto[upto["date"] >= frm].groupby("code")["sales"].sum()
+    # ★ TRAILING 12 MONTHS — the same rolling 365 days as the GD sheets, so a
+    # figure carrying that name means one thing across the whole pack. It is a
+    # SPAN and not a like-for-like: a store that opened inside the window shows
+    # less than a year, which in this feed is every South store (they open
+    # 19 Apr 2026), and their TTM therefore equals their YTD.
+    ttm_start = asof - pd.DateOffset(years=1) + pd.Timedelta(days=1)
+    ttm = p[(p["date"] >= ttm_start) & (p["date"] <= asof)].groupby("code")["sales"].sum()
 
     tgt = {} if t is None else t.set_index("code").to_dict("index")
     rows = []
@@ -1865,7 +1872,7 @@ def target_vs_ach(pf_df, asof=None, targets_df=None) -> dict:
             "code": c, "city": str(m["city"]).upper(),
             "name": str(m["location"]), "brand": str(m.get("brand", "") or ""),
             "region": str(m["region"]), "from": start_of.get(c, fy_start),
-            "mtd": a_m, "ytd": a_y,
+            "mtd": a_m, "ytd": a_y, "ttm": float(ttm.get(c, 0.0)),
             "mtd_target": float(mt) if mt is not None and pd.notna(mt) else None,
             "ytd_target": float(yt) if yt else None,
             "year_target": float(yr) if yr is not None and pd.notna(yr) else None,
@@ -2065,7 +2072,7 @@ def render_target_vs_ach(sheet, region=None) -> "Image":
             _money(r["ytd_target"]), _money(r["ytd"]),
             pct(r["ytd"], r["ytd_target"]), _money(r["ytd_bal"]),
             _money(r["year_target"]), pct(r["ytd"], r["year_target"]),
-            _money(_avg_day(r))]
+            _money(_avg_day(r)), _money(r.get("ttm"))]
 
     def _avg_day(r):
         """Year to date ÷ the CALENDAR days this row has been trading.

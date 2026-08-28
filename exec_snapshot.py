@@ -795,7 +795,13 @@ def vfl_metrics(df, asof, gen_date=None, basis_label="", region=None) -> dict:
     ly_full_by = df[(df["date"] >= pd.Timestamp(fy_year - 1, 4, 1))
                     & (df["date"] <= pd.Timestamp(fy_year, 3, 31))] \
         .groupby(L.COL_STORE_LABEL)[amt].sum()
-    proj = proj_open = proj_open_all = ly_full = 0.0
+    # Trailing twelve months, on the same rolling 365-day window the GD sheets
+    # and the target pack print — as-of back a year plus a day, so the window is
+    # 365 days inclusive and the anniversary is not counted twice.
+    ttm_start = asof - pd.DateOffset(years=1) + pd.Timedelta(days=1)
+    ttm_by = df[(df["date"] >= ttm_start) & (df["date"] <= asof)] \
+        .groupby(L.COL_STORE_LABEL)[amt].sum()
+    proj = proj_open = proj_open_all = ly_full = ttm = 0.0
     import master_lookup as _ML
     carpet_by_code = _ML.carpet()
     for _, r in sy.iterrows():
@@ -811,6 +817,7 @@ def vfl_metrics(df, asof, gen_date=None, basis_label="", region=None) -> dict:
                              None if pd.isna(cl) else cl)
         proj += p
         ly_full += float(ly_full_by.get(s, 0.0))
+        ttm += float(ttm_by.get(s, 0.0))
         if s not in closed_labels:
             proj_open_all += p
             if (carpet_by_code.get(c) or 0) > 0:      # see the portfolio site
@@ -861,7 +868,8 @@ def vfl_metrics(df, asof, gen_date=None, basis_label="", region=None) -> dict:
              "key": ("vs same weekday", _pct(_growth(d_ty, d_wday)))},
             {"label": "Projected year", "value": f"Rs {_cr(proj)} Cr",
              "sub": f"last full year Rs {_cr(ly_full)} Cr",
-             "rows": [("Run-rate", "x365 op-days")],
+             "rows": [("Run-rate", "x365 op-days"),
+                      ("TTM", f"Rs {_cr(ttm)} Cr")],
              "key": ("Implied", _pct(_growth(proj, ly_full)))},
             {"label": "Breadth  LTL",
              "value": (f"{int((ml['shortfall'] > 0).sum())} up  "
@@ -1240,7 +1248,9 @@ def _plan(m):
     # The tile band holds label strip + value + sub + a row + the ruled key, each
     # now stepping by its font's real height; 178 was sized for the old fixed
     # steps and the key row would sit on the frame.
-    tiles_h, traj_h = _p(192), _p(360)
+    _tile_rows = max([len(t.get("rows", ())) for t in m.get("tiles", [])] or [1])
+    tiles_h = _p(192) + _p(21) * max(0, _tile_rows - 1)
+    traj_h = _p(360)
     strip_h = max(_p(44), _p(21) * len(m["stamp"]))
     body_rows = max(len(t["rows"]) for t in m["tables"])
     body_h = _p(26) + head_h + body_rows * row_h

@@ -1075,7 +1075,7 @@ def _fy_periods(start_year):
             [pd.Period(f"{start_year + 1}-{m:02d}", "M") for m in range(1, 4)])
 
 
-def mw_data(df: pd.DataFrame, asof=None) -> dict:
+def mw_data(df: pd.DataFrame, asof=None, vfl_df=None) -> dict:
     """Per-FY monthly totals for the MW_DATA grid. Returns {fy: {type, months,
     grand}}. type 'region' (FY26-27: East&NE/South split) or 'std' (TOTAL/PRPL/
     MRIPL). FY25-26 & FY26-27 live from the data; older FYs from the snapshot."""
@@ -1119,31 +1119,40 @@ def mw_data(df: pd.DataFrame, asof=None) -> dict:
                     "ene_contrib": _pct(ene[i], g_ene), "south_contrib": _pct(sth[i], g_sth),
                     "ene_pct": _pct(ene[i], tot[i]), "south_pct": _pct(sth[i], tot[i]),
                 } for i in range(12)]
-                # ★ LAST YEAR ON THE CURRENT BLOCK. The prior FY has its own
-                # block further down, but it is a "std" one — TOTAL/PRPL/MRIPL,
-                # no region split — so its halves cannot be read against these.
-                # Manav, 28 Aug: he wants last year's halves beside this year's,
-                # in the same columns. That means recomputing the prior year on
-                # THIS block's shape rather than borrowing the other block's rows.
-                # South reads 0 across last year because it opens 19 Apr 2026;
-                # the row label carries the year so a zero is read as "not there
-                # yet" and not as "traded nothing".
-                prior = None
-                p_pers = _fy_periods(start_year - 1)
-                if pd.notna(feed_from) and feed_from <= pd.Timestamp(start_year - 1, 4, 1):
-                    p_ene = [float(monthly.loc[q, "East & NE"]) if q in monthly.index else 0.0
-                             for q in p_pers]
-                    p_sth = [float(monthly.loc[q, "South"]) if q in monthly.index else 0.0
-                             for q in p_pers]
-                    p_tot = [e + s for e, s in zip(p_ene, p_sth)]
-                    prior = {
-                        "fy": _fy_label(start_year - 1),
-                        "months": [{"total": p_tot[i], "ene": p_ene[i], "south": p_sth[i]}
-                                   for i in range(12)],
-                        "grand": {"total": sum(p_tot), "ene": sum(p_ene),
-                                  "south": sum(p_sth)},
-                    }
-                out[fy] = {"type": "region", "months": months, "prior": prior,
+                # ★ THE VFL SLICE ON THE CURRENT BLOCK. Manav, 28 Aug: last
+                # year's halves come off and the Manyavar/Mohey half-year goes
+                # on instead — the portfolio block is every brand, and what he
+                # wants beside it is how much of that is VFL, split by half.
+                # Percentages are against VFL'S OWN total, not the portfolio's:
+                # these rows answer "how is VFL's year shaped", not "how big is
+                # VFL" — the money columns already answer that.
+                vfl = None
+                if vfl_df is not None and len(vfl_df):
+                    v = vfl_df.copy()
+                    v["m"] = v["date"].dt.to_period("M")
+                    amt = "Sales" if "Sales" in v.columns else None
+                    if amt is None:
+                        import loader as _L
+                        amt = _L.COL_AMOUNT
+                    reg = "Region" if "Region" in v.columns else None
+                    if reg is None:
+                        import loader as _L
+                        reg = _L.COL_REGION
+                    vm = v.groupby(["m", reg])[amt].sum().unstack(fill_value=0)
+                    for _r in REGION_ORDER:
+                        if _r not in vm.columns:
+                            vm[_r] = 0.0
+                    v_ene = [float(vm.loc[q, "East & NE"]) if q in vm.index else 0.0
+                             for q in pers]
+                    v_sth = [float(vm.loc[q, "South"]) if q in vm.index else 0.0
+                             for q in pers]
+                    v_tot = [e + s_ for e, s_ in zip(v_ene, v_sth)]
+                    vfl = {"label": "VFL",
+                           "months": [{"total": v_tot[i], "ene": v_ene[i],
+                                       "south": v_sth[i]} for i in range(12)],
+                           "grand": {"total": sum(v_tot), "ene": sum(v_ene),
+                                     "south": sum(v_sth)}}
+                out[fy] = {"type": "region", "months": months, "vfl": vfl,
                            "grand": {"total": g_tot, "ene": g_ene, "south": g_sth,
                                      "ene_contrib": _pct(g_ene, g_tot),
                                      "south_contrib": _pct(g_sth, g_tot)}}
@@ -1288,13 +1297,13 @@ def mw_data_html(mw: dict) -> str:
                     htds += _cell(_fmt(v, typ), align, HALF, bold=True)
             body += f"<tr>{htds}</tr>"
 
-        # last year's halves, on the current block's own columns
+        # the VFL slice's halves, on the current block's own columns
         for lo, hi, name in ((0, 6, "H1  Apr-Sep"), (6, 12, "H2  Oct-Mar")):
             ptds, any_prior = "", False
             for gi, fy in enumerate(fys):
                 if gi:
                     ptds += f"<td {_GAP}></td>"
-                pr = mw[fy].get("prior")
+                pr = mw[fy].get("vfl")
                 n = len(_cols(fy)[0])
                 if not pr:
                     ptds += "".join(_cell("", "right", BODY) for _ in range(n))
@@ -1305,7 +1314,7 @@ def mw_data_html(mw: dict) -> str:
                 ene = sum(x["ene"] for x in seg)
                 sth = sum(x["south"] for x in seg)
                 pc = lambda a, b: (a / b * 100) if b else 0.0
-                vals = [(f"{name}  {pr['fy']}", "t"), (tot, "m"), (ene, "m"), (sth, "m"),
+                vals = [(f"{name}  {pr['label']}", "t"), (tot, "m"), (ene, "m"), (sth, "m"),
                         (pc(tot, pg["total"]), "p"), (pc(ene, pg["ene"]), "p"),
                         (pc(sth, pg["south"]), "p"), (pc(ene, tot), "p"),
                         (pc(sth, tot), "p")]
