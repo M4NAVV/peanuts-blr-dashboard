@@ -565,14 +565,22 @@ def portfolio_metrics(pf, asof, basis_label="", region=None) -> dict:
              "sub": f"last full year Rs {_cr(ly_full)} Cr",
              "rows": [("Run-rate", "x365 op-days")],
              "key": ("Implied", _pct(_growth(proj, ly_full)))},
+            # ★ A PERIOD'S TWO HALVES STAY ON ONE LINE (Manav, 29 Aug — he read
+            # this tile as saying up and down were swapped). The year used to
+            # print "3 up" on its row and its "5 down" ALONE under the ruled
+            # key, where every other tile puts its labelled conclusion. Split
+            # like that, the unlabelled 5 read as the tile's bottom line and
+            # flatly contradicted the "5 up" headline above it. Both figures
+            # were correct; the layout made them unreadable, which on a sheet
+            # that goes to directors is the same as being wrong.
             {"label": "Breadth  LTL",
              "value": (f"{int((ml['shortfall'] > 0).sum())} up  "
                        f"{int((ml['shortfall'] < 0).sum())} dn") if len(ml) else "—",
-             "sub": (f"this month, of {len(ml)}" if len(ml)
-                     else "no comparable stores"),
+             "sub": "this month" if len(ml) else "no comparable stores",
              "rows": [("Year to date",
-                       f"{int((yl['shortfall'] > 0).sum())} up" if len(yl) else "—")],
-             "key": ("", f"{int((yl['shortfall'] < 0).sum())} down" if len(yl) else "")},
+                       (f"{int((yl['shortfall'] > 0).sum())} up  "
+                        f"{int((yl['shortfall'] < 0).sum())} dn") if len(yl) else "—")],
+             "key": ("Like to like", f"{len(yl)} stores" if len(yl) else "—")},
             {"label": "Estate", "value": f"{n_open} open",
              "sub": f"{len(closed)} closed, excluded",
              # A store still waiting on its CARPET cell is named here rather
@@ -877,14 +885,22 @@ def vfl_metrics(df, asof, gen_date=None, basis_label="", region=None) -> dict:
              "rows": [("Run-rate", "x365 op-days"),
                       ("TTM", f"Rs {_cr(ttm)} Cr")],
              "key": ("Implied", _pct(_growth(proj, ly_full)))},
+            # ★ A PERIOD'S TWO HALVES STAY ON ONE LINE (Manav, 29 Aug — he read
+            # this tile as saying up and down were swapped). The year used to
+            # print "3 up" on its row and its "5 down" ALONE under the ruled
+            # key, where every other tile puts its labelled conclusion. Split
+            # like that, the unlabelled 5 read as the tile's bottom line and
+            # flatly contradicted the "5 up" headline above it. Both figures
+            # were correct; the layout made them unreadable, which on a sheet
+            # that goes to directors is the same as being wrong.
             {"label": "Breadth  LTL",
              "value": (f"{int((ml['shortfall'] > 0).sum())} up  "
                        f"{int((ml['shortfall'] < 0).sum())} dn") if len(ml) else "—",
-             "sub": (f"this month, of {len(ml)}" if len(ml)
-                     else "no comparable stores"),
+             "sub": "this month" if len(ml) else "no comparable stores",
              "rows": [("Year to date",
-                       f"{int((yl['shortfall'] > 0).sum())} up" if len(yl) else "—")],
-             "key": ("", f"{int((yl['shortfall'] < 0).sum())} down" if len(yl) else "")},
+                       (f"{int((yl['shortfall'] > 0).sum())} up  "
+                        f"{int((yl['shortfall'] < 0).sum())} dn") if len(yl) else "—")],
+             "key": ("Like to like", f"{len(yl)} stores" if len(yl) else "—")},
             {"label": "Estate", "value": f"{n_open} open",
              "sub": f"{len(closed_labels)} closed, excluded",
              # A store still waiting on its CARPET cell is named here rather
