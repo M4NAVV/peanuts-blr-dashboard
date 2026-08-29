@@ -545,8 +545,16 @@ def portfolio_metrics(pf, asof, basis_label="", region=None) -> dict:
         "stamp": [
             f"As of {asof:%d %b %Y}",
             basis_label or f"Live to {asof:%d %b %Y}",
-            f"{len(y)} trading  |  {len(closed)} closed  |  {n_open} open",
-            f"Like to like = {len(lfl)} stores, each over its comparable span",
+            # ★ ONE VOCABULARY FOR THESE THREE NUMBERS, ON BOTH PACKS. This
+            # line read "53 trading | 3 closed | 50 open" — which says 53 are
+            # trading and, three words later, that 50 are. The total is
+            # "stores"; the ones still open are "trading". Same wording as the
+            # VFL pack, so the same three numbers are never described two ways.
+            f"{len(y)} stores  |  {len(closed)} closed  |  {n_open} trading",
+            # And the like-to-like count is the YEAR's — said so, because the
+            # Breadth tile now prints a different one for the month.
+            f"Like to like = {len(lfl)} stores this year, each over its "
+            f"comparable span",
         ],
         "tiles": [
             {"label": "Year to date", "value": f"Rs {_cr(ytd_all)} Cr",
@@ -580,7 +588,15 @@ def portfolio_metrics(pf, asof, basis_label="", region=None) -> dict:
              "rows": [("Year to date",
                        (f"{int((yl['shortfall'] > 0).sum())} up  "
                         f"{int((yl['shortfall'] < 0).sum())} dn") if len(yl) else "—")],
-             "key": ("Like to like", f"{len(yl)} stores" if len(yl) else "—")},
+             # ★ EACH PERIOD CARRIES ITS OWN BASE, because they differ and a
+             # reader adds the pair up. The month has 20 comparable stores and
+             # the year 21 — Roodraksh Mall closed, so it is inside the year's
+             # window and outside this month's. Quoting ONE total beside both
+             # pairs made the month read 9 + 11 = 20 against a stated 21, which
+             # is the same unreconcilable-figure fault as the one this tile was
+             # just fixed for. Stated in the order the tile reads: month first.
+             "key": ("Like to like",
+                     f"{len(ml)} month · {len(yl)} year" if len(yl) or len(ml) else "—")},
             {"label": "Estate", "value": f"{n_open} open",
              "sub": f"{len(closed)} closed, excluded",
              # A store still waiting on its CARPET cell is named here rather
@@ -858,7 +874,8 @@ def vfl_metrics(df, asof, gen_date=None, basis_label="", region=None) -> dict:
             f"As of {asof:%d %b %Y}",
             basis_label or f"Live to {asof:%d %b %Y}",
             f"{len(sy)} stores  |  {len(closed_labels)} closed  |  {n_open} trading",
-            f"Like to like = {len(lfl)} stores, each over its comparable span",
+            f"Like to like = {len(lfl)} stores this year, each over its "
+            f"comparable span",
         ],
         # The portfolio pack's six, definition for definition — see the block
         # above. Bills & basket loses its tile and is not replaced (Manav,
@@ -900,7 +917,15 @@ def vfl_metrics(df, asof, gen_date=None, basis_label="", region=None) -> dict:
              "rows": [("Year to date",
                        (f"{int((yl['shortfall'] > 0).sum())} up  "
                         f"{int((yl['shortfall'] < 0).sum())} dn") if len(yl) else "—")],
-             "key": ("Like to like", f"{len(yl)} stores" if len(yl) else "—")},
+             # ★ EACH PERIOD CARRIES ITS OWN BASE, because they differ and a
+             # reader adds the pair up. The month has 20 comparable stores and
+             # the year 21 — Roodraksh Mall closed, so it is inside the year's
+             # window and outside this month's. Quoting ONE total beside both
+             # pairs made the month read 9 + 11 = 20 against a stated 21, which
+             # is the same unreconcilable-figure fault as the one this tile was
+             # just fixed for. Stated in the order the tile reads: month first.
+             "key": ("Like to like",
+                     f"{len(ml)} month · {len(yl)} year" if len(yl) or len(ml) else "—")},
             {"label": "Estate", "value": f"{n_open} open",
              "sub": f"{len(closed_labels)} closed, excluded",
              # A store still waiting on its CARPET cell is named here rather
