@@ -1281,10 +1281,21 @@ def render_day_calendar(df, *, date_col, value_col, store_col, asof,
         format_func=lambda m: pd.Timestamp(2000, m, 1).strftime("%B"))
     which = c3.selectbox("Show", ["Last year", "This year so far"], key=f"{key}_yr")
 
-    ref = asof.replace(day=1).replace(month=month)
-    if month > asof.month:
-        ref = ref.replace(year=asof.year - 1)      # a month still ahead of us
-    is_current = (month == asof.month)
+    # ★ THE MONTH IS PLACED IN THE FISCAL YEAR, NOT THE CALENDAR ONE (Manav,
+    # 29 Aug: October showed "Nothing recorded ... in October 2024"). This
+    # dashboard's year runs April to March, so with an as-of in Aug 2026 the
+    # October of THIS year is Oct 2026 and its last year is Oct 2025 — while
+    # February of this year is Feb 2027, in the next calendar year entirely.
+    #
+    # The old rule read the calendar instead: it moved any month later than the
+    # current one back a year, and `month_window(ref, 1)` then took off a
+    # second. October landed on 2024, which the feed has never covered. It was
+    # wrong for SEVEN of the twelve — Sep to Dec by that double step, and Jan to
+    # Mar by being put in 2026 when this fiscal year's are in 2027. Only the
+    # five months already traded this year, April to August, came out right.
+    fy = asof.year if asof.month >= 4 else asof.year - 1
+    ref = pd.Timestamp(fy if month >= 4 else fy + 1, month, 1)
+    is_current = (month == asof.month and ref.year == asof.year)
 
     ly_start, ly_end = daycal.month_window(ref, 1)
     ty_start, ty_end = daycal.month_window(ref, 0)
@@ -1292,7 +1303,8 @@ def render_day_calendar(df, *, date_col, value_col, store_col, asof,
     ty = daycal.daily_series(df, date_col, value_col, ty_start, ty_end, store_col, store)
 
     if ly.sum() == 0 and ty.sum() == 0:
-        st.info(f"Nothing recorded for {store} in {ly_start:%B}.")
+        st.info(f"Nothing recorded for {store} in {ly_start:%B %Y} "
+                f"or {ty_start:%B %Y}.")
         return
 
     upto = asof.day if is_current else None
