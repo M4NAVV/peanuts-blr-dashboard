@@ -549,6 +549,19 @@ def _gate(df, kind, *, date_col, store_col, value_col, expect_stores=None):
         st.caption(f"What arrived: {rep.summary()}"
                    + (f" · last good load: {rep.baseline['rows']:,} rows through "
                       f"{rep.baseline['max_date']}" if rep.baseline else ""))
+        # ★ THE RECOVERY HAS TO BE ON THE REFUSAL SCREEN (Manav, 29 Aug). The
+        # feed is cached for six hours, and `st.stop()` below halts the script
+        # 165 lines before the sidebar's "Refresh data now" button is created —
+        # so a source that had ALREADY been fixed still showed the old refusal,
+        # with no control on screen able to clear the cache. A gate that
+        # refuses must offer the retry, or it holds the dashboard shut for six
+        # hours after the problem is gone.
+        st.caption("Fixed the source already? The feed is cached for 6 hours — "
+                   "reload it here.")
+        if st.button("🔄 Re-read the feed now", key=f"gate_reload_{kind}"):
+            _load_cached.clear()
+            _load_portfolio_cached.clear()
+            st.rerun()
         if not st.checkbox("Show it anyway (numbers are unverified)",
                            key=f"override_{kind}"):
             st.stop()
