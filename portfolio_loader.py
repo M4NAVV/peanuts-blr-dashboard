@@ -824,6 +824,33 @@ def _gd_frac(ty, ly):
     return ((ty - ly) / ly) if ly else None
 
 
+def ttm_by_store(df, asof):
+    """Trailing 12 months per store — but ONLY where the feed covers all twelve.
+
+    Manav, 29 Aug: *"if you dont have data for last year fully, then give the
+    TTM as a 0, instead of giving it as the ytd figure."*
+
+    A store that began trading inside the window sums to a PART year that reads
+    on the page as a whole one. In this feed that is every South store: they
+    open 19 Apr 2026, so the window's first 233 days are empty and their TTM
+    came out equal to their YTD to the rupee — sitting in a column headed
+    "TTM SALES" beside East's real twelve months. A zero says "we do not have
+    this"; a part year dressed as a year says something false.
+
+    Coverage is read off the DATA, not off a `doo` attribute, for the same
+    reason `l2l_bounds` reads it there: the curated date for South is a
+    takeover, and this feed simply has no rows before it. A store's first sale
+    here IS its left edge. A store that CLOSED inside the window keeps its
+    figure — it traded the span it is being credited with.
+    """
+    ttm_start = asof - pd.DateOffset(years=1) + pd.Timedelta(days=1)
+    win = df[(df["date"] >= ttm_start) & (df["date"] <= asof)]
+    ttm = win.groupby("code")["sales"].sum()
+    first = df.groupby("code")["date"].min()
+    covered = set(first[first <= ttm_start].index)
+    return ttm.where(ttm.index.isin(covered), 0.0)
+
+
 def gd_sheet_report(df: pd.DataFrame, asof=None):
     """The GROWTH DEGROWTH SHEET, matching the workbook 1:1. Returns
     (display_df, row_types). Figures are live; identity from gd_store_attrs."""
@@ -851,13 +878,11 @@ def gd_sheet_report(df: pd.DataFrame, asof=None):
                    (df["date"] <= pd.Timestamp(fy_year, 3, 31))])
 
     # ★ TRAILING 12 MONTHS — rolling 365 days ending today, so it moves daily
-    # like DAY SALE does rather than once a month. It is a SPAN, not a
-    # like-for-like: a store that opened inside the window shows less than a
-    # year and the figure alone cannot say so. South opens 19 Apr 2026 in this
-    # feed, so its TTM covers 130 of 365 days — which is the same reason South
-    # carries no history anywhere else on this sheet.
-    ttm_start = asof - pd.DateOffset(years=1) + pd.Timedelta(days=1)
-    ttm = g(df[(df["date"] >= ttm_start) & (df["date"] <= asof)])
+    # like DAY SALE does rather than once a month. A store whose history does
+    # not reach back across the whole window prints 0 rather than a part year:
+    # see `ttm_by_store`. That is every South store on this feed, which is the
+    # same reason South carries no history anywhere else on this sheet.
+    ttm = ttm_by_store(df, asof)
 
     # Projection day-counts.
     fy_start = pd.Timestamp(fy_year, 4, 1)
@@ -1362,13 +1387,9 @@ def _gd_store_metrics(df: pd.DataFrame, asof: pd.Timestamp) -> dict:
     ly_full = g(df[(df["date"] >= pd.Timestamp(fy_year - 1, 4, 1)) &
                    (df["date"] <= pd.Timestamp(fy_year, 3, 31))])
     # ★ TRAILING 12 MONTHS — a rolling 365 days ending today, so it moves every
-    # day like DAY SALE and PROJECTED YTD do, rather than once a month.
-    # ⚠ It is a SPAN, not a like-for-like: a store that opened inside the window
-    # shows less than a year of trading and there is no way to tell from the
-    # figure alone. South is the standing example in this feed — it opens
-    # 19 Apr 2026, so its TTM covers 130 of 365 days.
-    ttm_start = asof - pd.DateOffset(years=1) + pd.Timedelta(days=1)
-    ttm = g(df[(df["date"] >= ttm_start) & (df["date"] <= asof)])
+    # day like DAY SALE and PROJECTED YTD do, rather than once a month. Stores
+    # the window outruns print 0, not a part year — see `ttm_by_store`.
+    ttm = ttm_by_store(df, asof)
     fy_start = pd.Timestamp(fy_year, 4, 1)
     out = {}
     for c in attrs.index:

@@ -1313,8 +1313,24 @@ def _extra_gd_windows(df: pd.DataFrame, asof=None):
     # Unlike the portfolio feed, South HAS a full year here: the VFL sheet
     # carries its previous operator's history, which is the same reason South
     # shows a real YoY on this pack and none on the portfolio one.
+    #
+    # ★★ A STORE THE WINDOW OUTRUNS CONTRIBUTES NOTHING (Manav, 29 Aug — the
+    # portfolio rule, brought across: "if you dont have data for last year
+    # fully, then give the TTM as a 0"). Its rows are dropped from the window
+    # BEFORE any grouping, so the rule holds however the sheet is cut — by
+    # store, by brand line, by region — and a part year can never be summed
+    # into a figure headed TTM. On this feed that is Dibrugarh alone: it opens
+    # 23 Jan 2026, and every other store, South included, reaches back past the
+    # window's left edge. Coverage is read off the DATA, not off a `doo`
+    # attribute, for the reason `l2l_bounds` gives — South's recorded date is a
+    # takeover, and here its history predates it.
     ttm_start = asof - pd.DateOffset(years=1) + pd.Timedelta(days=1)
     ttm = df[(df["date"] >= ttm_start) & (df["date"] <= asof)]
+    if COL_STORE_LABEL in df.columns:
+        first = df.groupby(COL_STORE_LABEL)["date"].min()
+        short = set(first[first > ttm_start].index)
+        if short:
+            ttm = ttm[~ttm[COL_STORE_LABEL].isin(short)]
     return asof, day, ly_month, ly_full, ttm
 
 

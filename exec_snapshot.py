@@ -797,9 +797,15 @@ def vfl_metrics(df, asof, gen_date=None, basis_label="", region=None) -> dict:
         .groupby(L.COL_STORE_LABEL)[amt].sum()
     # Trailing twelve months, on the same rolling 365-day window the GD sheets
     # and the target pack print — as-of back a year plus a day, so the window is
-    # 365 days inclusive and the anniversary is not counted twice.
+    # 365 days inclusive and the anniversary is not counted twice. A store whose
+    # history does not reach the window's left edge contributes 0 rather than a
+    # part year, exactly as it does on the sheets (see `_extra_gd_windows`);
+    # here that is Dibrugarh, which opens 23 Jan 2026.
     ttm_start = asof - pd.DateOffset(years=1) + pd.Timedelta(days=1)
-    ttm_by = df[(df["date"] >= ttm_start) & (df["date"] <= asof)] \
+    _first = df.groupby(L.COL_STORE_LABEL)["date"].min()
+    _short = set(_first[_first > ttm_start].index)
+    ttm_by = df[(df["date"] >= ttm_start) & (df["date"] <= asof)
+                & ~df[L.COL_STORE_LABEL].isin(_short)] \
         .groupby(L.COL_STORE_LABEL)[amt].sum()
     proj = proj_open = proj_open_all = ly_full = ttm = 0.0
     import master_lookup as _ML

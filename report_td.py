@@ -1850,13 +1850,12 @@ def target_vs_ach(pf_df, asof=None, targets_df=None) -> dict:
     frm = upto["code"].map(lambda c: start_of.get(int(c), fy_start)
                            if pd.notna(c) else fy_start)
     ytd = upto[upto["date"] >= frm].groupby("code")["sales"].sum()
-    # ★ TRAILING 12 MONTHS — the same rolling 365 days as the GD sheets, so a
-    # figure carrying that name means one thing across the whole pack. It is a
-    # SPAN and not a like-for-like: a store that opened inside the window shows
-    # less than a year, which in this feed is every South store (they open
-    # 19 Apr 2026), and their TTM therefore equals their YTD.
-    ttm_start = asof - pd.DateOffset(years=1) + pd.Timedelta(days=1)
-    ttm = p[(p["date"] >= ttm_start) & (p["date"] <= asof)].groupby("code")["sales"].sum()
+    # ★ TRAILING 12 MONTHS — the GD sheets' own function, so a figure carrying
+    # that name means one thing across the whole pack, INCLUDING its rule that a
+    # store the window outruns prints 0 rather than a part year. Every South
+    # store is one: they open 19 Apr 2026 on this feed, and their TTM was
+    # coming out equal to their YTD.
+    ttm = PL.ttm_by_store(p, asof)
 
     tgt = {} if t is None else t.set_index("code").to_dict("index")
     rows = []
