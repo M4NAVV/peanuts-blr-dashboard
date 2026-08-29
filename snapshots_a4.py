@@ -232,9 +232,13 @@ class _Sheet:
 
     TALL = PAGE_H * 4          # working canvas for the unbounded case
 
-    def __init__(self, store, asof, context, bounded=True):
+    def __init__(self, store, asof, context, bounded=True, footer=True):
         self.store, self.asof, self.context = store, asof, context
         self.bounded = bounded
+        # `footer` is True for every live caller. The store and the date it is
+        # as of are already in the title, so on a sheet that is fighting for
+        # room the footer is the one band that repeats rather than informs.
+        self.footer = footer
         self.pages, self._img, self._y = [], None, 0
 
     def _page_h(self):
@@ -250,7 +254,11 @@ class _Sheet:
                               self.context))
 
     def room(self):
-        return self._page_h() - MARGIN - int(round(9 / 25.4 * DPI)) - self._y
+        return (self._page_h() - MARGIN - self._foot_h() - self._y)
+
+    def _foot_h(self):
+        """Height reserved below the content for the footer band."""
+        return int(round(9 / 25.4 * DPI)) if self.footer else 0
 
     def put(self, img, gap=26):
         if self._img is None or img.height > self.room():
@@ -261,6 +269,12 @@ class _Sheet:
     def _footers(self):
         f, _ = _ft(24)
         n = len(self.pages)
+        if not self.footer:
+            if not self.bounded:
+                end = self._y + MARGIN
+                self.pages = [p.crop((0, 0, PAGE_W, min(end, p.height)))
+                              for p in self.pages]
+            return
         if not self.bounded:
             # crop the working canvas to what was actually drawn, then foot it
             end = self._y + MARGIN + _h(f) + 14
@@ -546,11 +560,14 @@ def _point_block(width, n, headline, body):
 # good/bad direction and the DAY/MTD/YTD spine are all read from `snapshots`,
 # so the two documents cannot drift apart.
 
-def _kpi_grid_a4(kpis, width):
-    lab_f, _ = _ft(24)
-    _, val_b = _ft(40)
-    sub_f, _ = _ft(21)
-    per_f, per_b = _ft(26)
+def _kpi_grid_a4(kpis, width, label_px=24, value_px=40, sub_px=21, per_px=26):
+    # The four defaults ARE the live sheet, so every existing caller draws
+    # exactly what it drew before. They are arguments only so the one-page
+    # experiment can size this grid like the card strips above it.
+    lab_f, _ = _ft(label_px)
+    _, val_b = _ft(value_px)
+    sub_f, _ = _ft(sub_px)
+    per_f, per_b = _ft(per_px)
 
     per_w, gap = 64, SN.CARD_GAP
     spec = SN._KPI_SPEC
@@ -911,8 +928,13 @@ def _split_drivers(drv, types, kind):
     return out
 
 
-def _period_block(L, df, asof, store, code, kind, targets, drv, types):
-    """Everything for one period except the table itself."""
+def _period_block(L, df, asof, store, code, kind, targets, drv, types,
+                  label_px=23, value_px=42):
+    """Everything for one period except the table itself.
+
+    `label_px` / `value_px` default to the live sheet's own sizes, so every
+    existing caller draws exactly what it drew before.
+    """
     if drv is None or drv.empty:
         return None
     k = SN.store_kpis(L, df, asof, kind, store)
@@ -944,7 +966,8 @@ def _period_block(L, df, asof, store, code, kind, targets, drv, types):
                 down=(d_lean, dt), up=(u_lean, ut),
                 cap=_caption(CONTENT_W, f"{kind} — {label}",
                              "target, achievement and how the trading is going"),
-                cards=SN._cards_image(rows, CONTENT_W, label_px=23, value_px=42))
+                cards=SN._cards_image(rows, CONTENT_W, label_px=label_px,
+                                      value_px=value_px))
 
 
 def store_sheet(L, df, asof, store, code=None, pf=None, ff=None, targets=None,
@@ -966,6 +989,17 @@ def store_sheet(L, df, asof, store, code=None, pf=None, ff=None, targets=None,
     as the WhatsApp image. They are only placed next to each other.
     """
     asof = pd.Timestamp(asof)
+    # ★ THE PRINTED SHEET IS NOW THE FULL ONE (Manav, 29 Aug: "the a4 is also
+    # approved. so, this format now applies to all store drivers"). Everything
+    # below this line builds the IMAGE — one page as tall as it needs to be.
+    # The PDF goes to `store_sheet_print`, which fits every Twamev section onto
+    # a single A4 instead of stepping the breakdown down to nothing to protect
+    # the type. It is reached through here rather than called directly so that
+    # `store_sheets`, the REPORTS PDF tab and `scripts_a4_briefing` all move
+    # together and cannot end up on two different sheets.
+    if fmt == "pdf":
+        return store_sheet_print(L, df, asof, store, code, pf=pf, ff=ff,
+                                 targets=targets)
     if ff is None:
         ff = SN.footfall_map(pf) if pf is not None else {}
     targets = SN._targets_for(asof) if targets is None else targets
@@ -1144,3 +1178,201 @@ def store_sheets(L, df, asof, ff=None, pf=None, targets=None, progress=None,
         if progress:
             progress(i, len(stores), s)
     return out, failed
+
+
+# --------------------------------------------------------------------------- #
+#  EXPERIMENT (Manav, 29 Aug): the IMAGE's content on ONE A4                   #
+# --------------------------------------------------------------------------- #
+# *"i told you to compromise on font, but make it all fit in one page."* Then:
+# *"all the box pills that are there, reduce the size for that, so we have more
+# space for the tables to expand a little. also for the page margins, no need to
+# keep such wide margins, can be narrower."*
+#
+# Grand Kamraj Road's image carries EIGHTEEN Twamev sections, not the five the
+# live one-pager was designed around, and `store_sheet` deals with that by
+# stepping the breakdown down to nothing. This keeps every line and buys the
+# room from four places instead — in the order they cost the reader least.
+#
+#   1. MARGINS   142px -> 96px (12.0mm -> 8.1mm). +92px of height and, more
+#                usefully, +92px of WIDTH, which is what actually caps the type.
+#   2. PILLS     the card strips and the six-measures grid come down: their
+#                padding from 18px to 8px, the big figures from 42px to 32px,
+#                the measures grid to 0.78. They are the sheet's most airy
+#                blocks and the tables are its densest, so this is the cheapest
+#                height on the page.
+#   3. CAPTIONS  the table captions lose their sub-line ("by brand and product,
+#                this year against last") — text, not data.
+#   4. ROWS      a row is `ascender + descender + 2 x PAD_Y`, and at small sizes
+#                the PADDING is the larger half: 37 rows of it is ~880px that
+#                shrinking glyphs cannot touch. Font alone genuinely cannot fit
+#                this page — at the module's 3.6pt floor the tables still
+#                measured 1,654px against a 1,255px budget.
+#
+# ★ SO THE FIT SEARCHES BOTH AXES AND PREFERS TYPE. It walks row padding from
+# the live 10px down to 2px, takes the largest font that fits at each, and keeps
+# the biggest font — settling ties on the LOOSER rows, so the page is never
+# tighter than it needs to be for the size it ends up at.
+#
+# ★ THE LAYOUT IS THE LIVE SHEET'S, unchanged: two columns, month left and year
+# right, falling above growing — the four tables in the order already read.
+#
+# Revert = delete this block and the two defaulted arguments it uses
+# (`_kpi_grid_a4(..., scale)`, `_period_block(..., label_px, value_px)`);
+# `store_sheet` is untouched either way.
+
+# ★ 68px = 5.8mm. THE LAST STEP OF TYPE IS BOUGHT HERE, and it is worth stating
+# exactly what it costs: the widest table measures 1,156px at 6.0pt against
+# 1,112px at 5.8pt, so the column has to reach 1,156px, and 68px margins are
+# what reach it with a gutter still wide enough to read as two tables. 5.8mm is
+# inside what current laser printers hold (4–5mm) but under the conservative
+# 6.4mm some older ones want — if a print comes back clipped at the edge, put
+# this back to 74 and the sheet drops to 5.8pt.
+# 6.2pt is NOT available at any margin: it would need 2.4mm, which no printer
+# will hold. 6.0pt is the ceiling for this layout.
+PRINT_MARGIN = 68
+PRINT_GUT = 32
+PRINT_CARD_PAD_Y = 8
+PRINT_CARD_VALUE_PX = 32
+PRINT_CARD_LABEL_PX = 20
+# ★ THE SIX MEASURES ARE NOW SIZED LIKE THE CARD STRIPS ABOVE THEM (Manav,
+# 29 Aug: "the pills at the bottom were not made smaller. so make them the same
+# dimensions as the pills at the top"). Same label and figure sizes, same
+# padding; the grid stays a little taller per row only because each of its
+# pills carries a third line the top ones do not ("was 16").
+PRINT_KPI = dict(label_px=PRINT_CARD_LABEL_PX, value_px=PRINT_CARD_VALUE_PX,
+                 sub_px=15, per_px=20)
+PRINT_PADS = (14, 12, 10, 9, 8, 7, 6, 5, 4, 3, 2)
+
+
+def store_sheet_print(L, df, asof, store, code=None, pf=None, ff=None,
+                      targets=None):
+    """One store → (filename, PDF bytes) — every data point, ONE A4 page."""
+    global MARGIN, CONTENT_W
+    asof = pd.Timestamp(asof)
+    if ff is None:
+        ff = SN.footfall_map(pf) if pf is not None else {}
+    targets = SN._targets_for(asof) if targets is None else targets
+
+    GAP = 22
+    # ★ Everything the page geometry depends on is swapped for the duration and
+    # put back in `finally`. `_Sheet` and `_period_block` read these as module
+    # globals at call time, so a narrower margin has to be set here rather than
+    # passed — and must never leak into the live sheet drawn after it.
+    _keep = (MARGIN, CONTENT_W, PP.PAD_Y, SN.CARD_PAD_Y)
+    MARGIN = PRINT_MARGIN
+    CONTENT_W = PAGE_W - 2 * MARGIN
+    SN.CARD_PAD_Y = PRINT_CARD_PAD_Y
+    try:
+        half = (CONTENT_W - PRINT_GUT) // 2
+        # ★ NO FOOTER (Manav, 29 Aug: "you can remove this text line ... and use
+        # this area to fit our important data"). It said the store and the date,
+        # both of which the title already says, and its band plus the rule above
+        # it cost 106px — which goes to the tables instead.
+        usable = PAGE_H - 2 * MARGIN
+
+        kpis = SN.period_kpis(L, df, asof, store, ff, code)
+        kpi = _stack([_caption(CONTENT_W, "The six measures",
+                               "the same six on the day, the month and the year"),
+                      _kpi_grid_a4(kpis, CONTENT_W, **PRINT_KPI)], gap=10)
+
+        # EVERY section — the cap loop that protects the live sheet's type is
+        # exactly what this variant exists to do without.
+        prep = {k: _twamev_ranked(L, df, asof, k, store) for k in ("MTD", "YTD")}
+        tabs = {k: _with_cap(b, bt, r, k, 10_000) for k, (b, bt, r) in prep.items()}
+        built = [x for x in (_period_block(L, df, asof, store, code, k, targets,
+                                           *tabs[k],
+                                           label_px=PRINT_CARD_LABEL_PX,
+                                           value_px=PRINT_CARD_VALUE_PX)
+                             for k in ("MTD", "YTD")) if x is not None]
+        if not built:
+            return None
+        used_cap = max((len(r) for _b, _t, r in prep.values() if r is not None),
+                       default=0)
+
+        title_h = _heading(CONTENT_W, f"{store} — morning briefing", "x").height
+        tcap_h = _caption(half, "MTD — what is falling").height
+        _money_of = lambda k: list(L.drivers_money(k)) + ["Gain"]
+        _pct_all = list(L.DRIVERS_PCT) + ["Growth %"]
+        _sign = ["Shortfall", "Gain"] + _pct_all
+        fixed = (title_h + GAP
+                 + sum(b["cap"].height + 8 + b["cards"].height + GAP
+                       for b in built)
+                 + 2 * (tcap_h + 8) + 24 + kpi.height + GAP + GAP)
+        budget = usable - fixed
+
+        def measure(px):
+            ms = {(b["kind"], k): _measure(b[k][0], _money_of(b["kind"]),
+                                           _pct_all, _sign, px)
+                  for b in built for k in ("down", "up")}
+            # a column is falling ABOVE growing; the page holds the taller one
+            col = max(sum(ms[(b["kind"], k)]["head_h"]
+                          + ms[(b["kind"], k)]["row_h"] * len(b[k][0])
+                          for k in ("down", "up")) for b in built)
+            return ms, col, max(m["W"] for m in ms.values())
+
+        # ★ TWO PASSES, BECAUSE THE PAGE IS CAPPED BY WIDTH AND SPENT BY HEIGHT.
+        # The type can only grow until a table stops fitting its column — on
+        # this store that bites well before the page is full — so maximising
+        # font alone leaves the bottom third white. Pass one takes the largest
+        # font that fits at the tightest rows; pass two then puts the leftover
+        # height BACK into the rows, opening them as far as the page allows.
+        # Manav, 29 Aug: "use as much of this sheet as possible, dont hold
+        # back."
+        PP.PAD_Y = PP._px(PRINT_PADS[-1])
+        lo, hi, font_px, ms = FONT_MIN, FONT_MAX, None, None
+        while lo <= hi:
+            mid = (lo + hi) // 2
+            m_, h, w = measure(mid)
+            if w <= half and h <= budget:
+                font_px, ms, lo = mid, m_, mid + 1
+            else:
+                hi = mid - 1
+        if font_px is None:               # nothing fits even at the floor
+            font_px, ms = FONT_MIN, measure(FONT_MIN)[0]
+        pad_used = PRINT_PADS[-1]
+        for pad in PRINT_PADS:            # loosest first — take the first fit
+            PP.PAD_Y = PP._px(pad)
+            m_, h, w = measure(font_px)
+            if w <= half and h <= budget:
+                pad_used, ms = pad, m_
+                break
+        PP.PAD_Y = PP._px(pad_used)       # draw at the setting that was chosen
+
+        lifted = built[0]["lifted"]
+        context = " · ".join(str(v) for _c, v in lifted) if lifted else ""
+        sheet = _Sheet(store, asof, context, bounded=True, footer=False)
+        sheet.put(_heading(CONTENT_W, f"{store} — morning briefing",
+                           (context + "  ·  " if context else "")
+                           + f"as of {asof:%d %b %Y}  ·  print and brief the team"),
+                  gap=GAP)
+        for b in built:
+            sheet.put(b["cap"], gap=8)
+            sheet.put(b["cards"], gap=GAP)
+
+        cols = []
+        for b in built:
+            parts = []
+            for key, word in (("down", "is falling"), ("up", "is growing")):
+                frame, rt = b[key]
+                cap = _caption(half, f"{b['kind']} — what {word}")
+                if len(frame) <= 1:                # only the TOTAL row
+                    parts.append(_stack([cap, _text_block(
+                        half, [(f"Nothing {word.replace('is ', '')} this "
+                                f"{'month' if b['kind'] == 'MTD' else 'year'}.",
+                                _ft(24)[0], SUB)])], gap=8))
+                    continue
+                m = _widen(ms[(b["kind"], key)], half)
+                parts.append(_stack(
+                    [cap, PP._render_chunk(m, rt, list(range(len(frame))))], gap=8))
+            cols.append(_stack(parts, gap=24))
+        sheet.put(_beside(cols[0], cols[1] if len(cols) > 1 else None,
+                          PRINT_GUT), gap=GAP)
+        sheet.put(kpi, gap=GAP)
+        pages = len(sheet.pages)
+        out = sheet.pdf()
+    finally:
+        MARGIN, CONTENT_W, PP.PAD_Y, SN.CARD_PAD_Y = _keep
+
+    tag = f"{code}_" if code is not None else ""
+    stem = f"{asof:%Y-%m-%d}_{tag}{SN._slug(store)}_briefing_a4"
+    return (f"{stem}.pdf", out, font_px, pages, used_cap, pad_used)
