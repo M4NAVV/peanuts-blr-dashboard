@@ -105,3 +105,86 @@ if __name__ == "__main__":
                 print(f"  FAIL  {name}: {e}")
     print("all passed" if not failed else f"{failed} failed")
     sys.exit(1 if failed else 0)
+
+
+# --------------------------------------------------------------------------- #
+#  The VFL halves under every block                                            #
+# --------------------------------------------------------------------------- #
+# Manav, 29 Aug: the VFL H1/H2 rows, added to the current year in August, now
+# go on every prior year we have a figure for. The tests below pin the two
+# things that were actually wrong on the first attempt.
+
+def _vfl_frame(start_year, ene_per_month, south_per_month):
+    """A minimal VFL feed: one row per month per region, for one fiscal year."""
+    import loader as L
+    rows = []
+    for i in range(12):
+        p = pd.Timestamp(start_year, 4, 1) + pd.DateOffset(months=i)
+        for region, amt in (("East & NE", ene_per_month), ("South", south_per_month)):
+            if amt:
+                rows.append({"date": p, L.COL_REGION: region, L.COL_AMOUNT: float(amt)})
+    return pd.DataFrame(rows)
+
+
+def _pers(start_year):
+    return [pd.Period(pd.Timestamp(start_year, 4, 1) + pd.DateOffset(months=i), "M")
+            for i in range(12)]
+
+
+def test_the_slice_is_restricted_to_the_blocks_own_regions():
+    """★ THE BUG THIS EXISTS FOR. The portfolio has no South history for
+    FY2025-26 (it opened this year), but the VFL feed HAS South's
+    previous-operator year. Taken whole, VFL came out at Rs 107 Cr under a
+    portfolio block of Rs 69 Cr — a subset larger than its parent."""
+    v = _vfl_frame(2025, 100, 900)
+    vhist = pd.DataFrame(columns=["fy", "month_idx", "total"])
+    whole = PL._vfl_slice("2025-26", _pers(2025), v, vhist)
+    east_only = PL._vfl_slice("2025-26", _pers(2025), v, vhist, regions=["East & NE"])
+    assert round(whole["grand"]["total"]) == 12000
+    assert round(east_only["grand"]["total"]) == 1200
+    assert east_only["grand"]["south"] == 0
+
+
+def test_the_history_file_answers_for_years_the_feed_cannot_reach():
+    v = _vfl_frame(2025, 100, 0)                      # feed starts Apr 2025
+    vhist = pd.DataFrame([{"fy": "2023-24", "month_idx": i, "total": 50.0}
+                          for i in range(1, 13)])
+    s = PL._vfl_slice("2023-24", _pers(2023), v, vhist)
+    assert s["source"] == "history"
+    assert round(s["grand"]["total"]) == 600
+    # East & NE was the whole estate then, so the split is stated, not blank
+    assert round(s["grand"]["ene"]) == 600 and s["grand"]["south"] == 0
+
+
+def test_the_feed_wins_over_history_where_it_reaches():
+    v = _vfl_frame(2025, 100, 0)
+    vhist = pd.DataFrame([{"fy": "2025-26", "month_idx": i, "total": 999.0}
+                          for i in range(1, 13)])
+    s = PL._vfl_slice("2025-26", _pers(2025), v, vhist)
+    assert s["source"] == "feed" and round(s["grand"]["total"]) == 1200
+
+
+def test_a_year_neither_source_covers_gets_no_rows_not_zeroes():
+    """An unanswered year must look unanswered, not look like nil."""
+    v = _vfl_frame(2025, 100, 0)
+    vhist = pd.DataFrame(columns=["fy", "month_idx", "total"])
+    assert PL._vfl_slice("2019-20", _pers(2019), v, vhist) is None
+
+
+def test_the_halves_add_up_to_the_year():
+    v = _vfl_frame(2025, 100, 50)
+    s = PL._vfl_slice("2025-26", _pers(2025), v,
+                      pd.DataFrame(columns=["fy", "month_idx", "total"]))
+    h1 = sum(x["total"] for x in s["months"][:6])
+    h2 = sum(x["total"] for x in s["months"][6:])
+    assert round(h1 + h2, 2) == round(s["grand"]["total"], 2)
+
+
+def test_the_history_file_ships_with_the_repo_and_parses():
+    """It is committed data, like mw_data_historical.csv — so CI must see it."""
+    import os
+    p = os.path.join(os.path.dirname(PL.__file__), "vfl_history_monthly.csv")
+    h = pd.read_csv(p)
+    assert set(h.columns) == {"fy", "month_idx", "total"}
+    assert set(h["fy"].astype(str)) == {"2023-24", "2024-25"}
+    assert len(h) == 24 and h["total"].gt(0).all()

@@ -1100,6 +1100,67 @@ def _fy_periods(start_year):
             [pd.Period(f"{start_year + 1}-{m:02d}", "M") for m in range(1, 4)])
 
 
+def _vfl_slice(fy, pers, vfl_df, vhist, regions=None):
+    """The Manyavar/Mohey months for one fiscal year, or None if unknown.
+
+    ★ EVERY BLOCK GETS THESE ROWS, NOT JUST THE CURRENT ONE (Manav, 29 Aug:
+    *"now u can do that for all the prior years too"*). The portfolio block is
+    every brand; what sits under it is how much of that is VFL, split by half.
+    Percentages are against VFL'S OWN total — these rows answer "how is VFL's
+    year shaped", not "how big is VFL", which the money columns already answer.
+
+    ★ TWO SOURCES, AND THE FEED WINS WHERE IT REACHES. The VFL feed begins on
+    1 April 2025, so it can answer for 2025-26 onwards and gives a region split
+    as well. Before that the workbook's history tab carries a monthly total and
+    nothing else — East & NE only, which in those years WAS the whole estate.
+    Older years than the tab covers get no rows at all rather than zeroes: a
+    year we have no VFL figure for must look unanswered, not look like nil.
+
+    ★★ THE SLICE MUST COVER THE SAME ESTATE AS THE BLOCK IT SITS UNDER, which
+    is what `regions` is for. The two feeds disagree about FY2025-26: the
+    portfolio has East & NE only, because South opened this year and carries no
+    history there, while the VFL feed HAS South's previous-operator year. Taken
+    whole, VFL came out at Rs 107.28 Cr under a portfolio block of Rs 69.33 Cr
+    — a subset larger than its parent, and a percentage against a denominator
+    that did not contain it. Restricted to the block's own regions it is
+    Rs 38.64 Cr, 55.7% of that block, and the money nests.
+    """
+    start = int(fy.split("-")[0])
+    if vfl_df is not None and len(vfl_df):
+        v = vfl_df.copy()
+        if v["date"].min() <= pd.Timestamp(start, 4, 1):
+            import loader as _L
+            amt = "Sales" if "Sales" in v.columns else _L.COL_AMOUNT
+            reg = "Region" if "Region" in v.columns else _L.COL_REGION
+            v["m"] = v["date"].dt.to_period("M")
+            vm = v.groupby(["m", reg])[amt].sum().unstack(fill_value=0)
+            for _r in REGION_ORDER:
+                if _r not in vm.columns:
+                    vm[_r] = 0.0
+            keep = set(regions) if regions else set(REGION_ORDER)
+            ene = [float(vm.loc[q, "East & NE"]) if q in vm.index else 0.0
+                   for q in pers] if "East & NE" in keep else [0.0] * 12
+            sth = [float(vm.loc[q, "South"]) if q in vm.index else 0.0
+                   for q in pers] if "South" in keep else [0.0] * 12
+            tot = [a + b for a, b in zip(ene, sth)]
+            return {"label": "VFL", "source": "feed",
+                    "months": [{"total": tot[i], "ene": ene[i], "south": sth[i]}
+                               for i in range(12)],
+                    "grand": {"total": sum(tot), "ene": sum(ene), "south": sum(sth)}}
+
+    h = vhist[vhist["fy"] == fy]
+    if h.empty:
+        return None
+    h = h.set_index("month_idx")
+    tot = [float(h.loc[i, "total"]) if i in h.index else 0.0 for i in range(1, 13)]
+    # East & NE was the whole estate in these years, so the region split is not
+    # unknown — it is entirely East & NE. Said explicitly rather than left 0.
+    return {"label": "VFL", "source": "history",
+            "months": [{"total": tot[i], "ene": tot[i], "south": 0.0}
+                       for i in range(12)],
+            "grand": {"total": sum(tot), "ene": sum(tot), "south": 0.0}}
+
+
 def mw_data(df: pd.DataFrame, asof=None, vfl_df=None) -> dict:
     """Per-FY monthly totals for the MW_DATA grid. Returns {fy: {type, months,
     grand}}. type 'region' (FY26-27: East&NE/South split) or 'std' (TOTAL/PRPL/
@@ -1107,6 +1168,14 @@ def mw_data(df: pd.DataFrame, asof=None, vfl_df=None) -> dict:
     asof = as_of(df) if asof is None else pd.Timestamp(asof)
     hist = pd.read_csv(os.path.join(_DIR, "mw_data_historical.csv"))
     hist["fy"] = hist["fy"].astype(str)
+    # ★ VFL BEFORE THE FEED BEGINS. The VFL feed starts 1 Apr 2025, so it can
+    # answer for two years and no more; this file carries the monthly totals
+    # for the years before that, from the workbook's own tab (gid 863964456).
+    # Peanuts traded only East & NE in those years, so the region's total IS
+    # the VFL total — checked against the feed on the one year they overlap,
+    # where they agree to within Rs 7,529 across twelve months.
+    vhist = pd.read_csv(os.path.join(_DIR, "vfl_history_monthly.csv"))
+    vhist["fy"] = vhist["fy"].astype(str)
     d = df.copy()
     d["m"] = d["date"].dt.to_period("M")
     monthly = d.groupby(["m", "region"])["sales"].sum().unstack(fill_value=0)
@@ -1132,6 +1201,11 @@ def mw_data(df: pd.DataFrame, asof=None, vfl_df=None) -> dict:
             pers = _fy_periods(start_year)
             labels = [p.strftime("%b-%y") for p in pers]
             live = pd.notna(feed_from) and feed_from <= pd.Timestamp(start_year, 4, 1)
+            # The estate THIS block covers, read off the portfolio data rather
+            # than assumed — see `_vfl_slice` on why it has to match.
+            here = [r for r in REGION_ORDER
+                    if r in monthly.columns
+                    and float(monthly.reindex(pers)[r].fillna(0).sum()) > 0]
 
             if live and fy == cur_fy:  # region split, live
                 ene = [float(monthly.loc[p, "East & NE"]) if p in monthly.index else 0.0 for p in pers]
@@ -1151,32 +1225,7 @@ def mw_data(df: pd.DataFrame, asof=None, vfl_df=None) -> dict:
                 # Percentages are against VFL'S OWN total, not the portfolio's:
                 # these rows answer "how is VFL's year shaped", not "how big is
                 # VFL" — the money columns already answer that.
-                vfl = None
-                if vfl_df is not None and len(vfl_df):
-                    v = vfl_df.copy()
-                    v["m"] = v["date"].dt.to_period("M")
-                    amt = "Sales" if "Sales" in v.columns else None
-                    if amt is None:
-                        import loader as _L
-                        amt = _L.COL_AMOUNT
-                    reg = "Region" if "Region" in v.columns else None
-                    if reg is None:
-                        import loader as _L
-                        reg = _L.COL_REGION
-                    vm = v.groupby(["m", reg])[amt].sum().unstack(fill_value=0)
-                    for _r in REGION_ORDER:
-                        if _r not in vm.columns:
-                            vm[_r] = 0.0
-                    v_ene = [float(vm.loc[q, "East & NE"]) if q in vm.index else 0.0
-                             for q in pers]
-                    v_sth = [float(vm.loc[q, "South"]) if q in vm.index else 0.0
-                             for q in pers]
-                    v_tot = [e + s_ for e, s_ in zip(v_ene, v_sth)]
-                    vfl = {"label": "VFL",
-                           "months": [{"total": v_tot[i], "ene": v_ene[i],
-                                       "south": v_sth[i]} for i in range(12)],
-                           "grand": {"total": sum(v_tot), "ene": sum(v_ene),
-                                     "south": sum(v_sth)}}
+                vfl = _vfl_slice(fy, pers, vfl_df, vhist, regions=here)
                 out[fy] = {"type": "region", "months": months, "vfl": vfl,
                            "grand": {"total": g_tot, "ene": g_ene, "south": g_sth,
                                      "ene_contrib": _pct(g_ene, g_tot),
@@ -1187,6 +1236,7 @@ def mw_data(df: pd.DataFrame, asof=None, vfl_df=None) -> dict:
                 months = [{"month": labels[i], "total": tot[i], "prpl": tot[i],
                            "mripl": 0.0, "cont": _pct(tot[i], g)} for i in range(12)]
                 out[fy] = {"type": "std", "months": months,
+                           "vfl": _vfl_slice(fy, pers, vfl_df, vhist, regions=here),
                            "grand": {"total": g, "prpl": g, "mripl": 0.0}}
             else:  # static from snapshot
                 h = hist[hist["fy"] == fy].set_index("month_idx")
@@ -1197,6 +1247,7 @@ def mw_data(df: pd.DataFrame, asof=None, vfl_df=None) -> dict:
                 months = [{"month": labels[i], "total": tot[i], "prpl": prpl[i],
                            "mripl": mripl[i], "cont": _pct(tot[i], g)} for i in range(12)]
                 out[fy] = {"type": "std", "months": months,
+                           "vfl": _vfl_slice(fy, pers, vfl_df, vhist, regions=here),
                            "grand": {"total": g, "prpl": sum(prpl), "mripl": sum(mripl)}}
     return out
 
@@ -1336,13 +1387,21 @@ def mw_data_html(mw: dict) -> str:
                 any_prior = True
                 seg = pr["months"][lo:hi]; pg = pr["grand"]
                 tot = sum(x["total"] for x in seg)
-                ene = sum(x["ene"] for x in seg)
-                sth = sum(x["south"] for x in seg)
                 pc = lambda a, b: (a / b * 100) if b else 0.0
-                vals = [(f"{name}  {pr['label']}", "t"), (tot, "m"), (ene, "m"), (sth, "m"),
-                        (pc(tot, pg["total"]), "p"), (pc(ene, pg["ene"]), "p"),
-                        (pc(sth, pg["south"]), "p"), (pc(ene, tot), "p"),
-                        (pc(sth, tot), "p")]
+                # The row takes the SHAPE OF THE BLOCK IT SITS IN — nine region
+                # columns on the current year, five standard ones on an older
+                # block, where PRPL and MRIPL read "—" because neither source
+                # divides VFL that way. See `_mw_image`, which does the same.
+                if mw[fy]["type"] == "region":
+                    ene = sum(x["ene"] for x in seg)
+                    sth = sum(x["south"] for x in seg)
+                    vals = [(f"{name}  {pr['label']}", "t"), (tot, "m"), (ene, "m"),
+                            (sth, "m"), (pc(tot, pg["total"]), "p"),
+                            (pc(ene, pg["ene"]), "p"), (pc(sth, pg["south"]), "p"),
+                            (pc(ene, tot), "p"), (pc(sth, tot), "p")]
+                else:
+                    vals = [(f"{name}  {pr['label']}", "t"), (tot, "m"),
+                            ("—", "t"), ("—", "t"), (pc(tot, pg["total"]), "p")]
                 for v, typ in vals:
                     align = "left" if typ == "t" else "right"
                     ptds += _cell(_fmt(v, typ), align, BODY, bold=True)

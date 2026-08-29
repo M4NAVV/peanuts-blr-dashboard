@@ -446,21 +446,35 @@ def _mw_image(mw, *, blocks=None, font_px=28, header_px=25, gap=None,
                           (sum(x.get("mripl") or 0 for x in seg), "m"),
                           (pc(tot, grand["total"]), "p")]
                 hrows.append([fmt(v, typ) for v, typ in hv])
-            # last year's halves, on this block's own columns (see mw_data)
-            prior = mw[fy].get("vfl")   # the VFL slice, not last year
+            # ── the VFL halves, under this block's own halves ───────────────
+            # ★ ON EVERY YEAR WE HAVE A FIGURE FOR, not only the current one
+            # (Manav, 29 Aug). A block whose year predates both the feed and
+            # the history tab simply has no VFL rows — an unanswered year must
+            # look unanswered, not look like nil.
+            #
+            # The row takes the SHAPE OF THE BLOCK IT SITS IN. On the current
+            # year that is the nine region columns; on an older block it is the
+            # five standard ones, where PRPL and MRIPL read "—" because VFL is
+            # not divided that way in either source. Inventing a split to fill
+            # a cell would be worse than an em dash.
+            prior = mw[fy].get("vfl")
             prows = []
             if prior:
                 pg = prior["grand"]
+                pc = lambda a, b: (a / b * 100) if b else 0.0
                 for lo, hi, nm in ((0, 6, "H1  Apr-Sep"), (6, 12, "H2  Oct-Mar")):
                     seg = prior["months"][lo:hi]
                     tot = sum(x["total"] for x in seg)
-                    ene = sum(x["ene"] for x in seg)
-                    sth = sum(x["south"] for x in seg)
-                    pc = lambda a, b: (a / b * 100) if b else 0.0
-                    pv = [(f"{nm}  {prior['label']}", "t"), (tot, "m"), (ene, "m"),
-                          (sth, "m"), (pc(tot, pg["total"]), "p"),
-                          (pc(ene, pg["ene"]), "p"), (pc(sth, pg["south"]), "p"),
-                          (pc(ene, tot), "p"), (pc(sth, tot), "p")]
+                    if mw[fy]["type"] == "region":
+                        ene = sum(x["ene"] for x in seg)
+                        sth = sum(x["south"] for x in seg)
+                        pv = [(f"{nm}  {prior['label']}", "t"), (tot, "m"), (ene, "m"),
+                              (sth, "m"), (pc(tot, pg["total"]), "p"),
+                              (pc(ene, pg["ene"]), "p"), (pc(sth, pg["south"]), "p"),
+                              (pc(ene, tot), "p"), (pc(sth, tot), "p")]
+                    else:
+                        pv = [(f"{nm}  {prior['label']}", "t"), (tot, "m"),
+                              ("—", "t"), ("—", "t"), (pc(tot, pg["total"]), "p")]
                     prows.append([fmt(v, typ) for v, typ in pv])
             cw, hlines = [], []
             for jc, (h, (k, typ)) in enumerate(zip(hdr, keys)):
