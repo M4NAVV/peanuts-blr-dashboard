@@ -408,8 +408,9 @@ def briefing_points(L, df, asof, store, code=None, ff=None, targets=None):
     att = SN.attach_rate(L, df, asof, "MTD", store)
     drv, types = L.degrowth_drivers(df, asof=asof, kind="MTD",
                                     only_declining=False, stores_only=[store],
-                                    products_under="every", top_products=6,
-                                    level="division")
+                                    products_under="every",
+                                    top_products=DRIVER_DIVISIONS,
+                                    level="division", both_ways=True)
     ty, ly = k["ty"], k["ly"]
     days = max(tp["days_left"], 1)
     out = []
@@ -726,6 +727,15 @@ def _beside(a, b, gutter=64):
 # Twamev's product rows are lifted out of it. The Twamev brand total and the
 # store TOTAL still come from the division-level call, so every figure ties to
 # the WhatsApp image exactly as before. Manyavar and Mohey are untouched.
+# ★ HOW MANY DIVISIONS A BRAND GETS ON THE SHEET, by size of move. Six was
+# chosen when the page was fighting for room and could hold five Twamev
+# sections at best; the A4 print sheet now carries eighteen at 6.0pt, so the
+# constraint that set this number is gone. At six, only 64% of the estate's
+# division movement reached a row — and at the thinnest store, City Centre GHY,
+# six rows carried 14% of the month. The totals were always right; what was
+# missing was the line explaining them.
+DRIVER_DIVISIONS = 10
+
 TWAMEV_DETAIL = True
 TWAMEV_BRAND = "Twamev"
 # ★ FIVE IS FREE, SIX IS NOT. Measured against the fitter on the three stores
@@ -798,7 +808,8 @@ def _twamev_ranked(L, df, asof, kind, store):
     """
     base, btypes = L.degrowth_drivers(
         df, asof=asof, kind=kind, only_declining=False, stores_only=[store],
-        products_under="every", top_products=6, level="division")
+        products_under="every", top_products=DRIVER_DIVISIONS, level="division",
+        both_ways=True)   # this sheet prints a growing table — see loader
     base, btypes = _drop_noise(base, btypes)
     if base.empty or not TWAMEV_DETAIL:
         return base, btypes, None
