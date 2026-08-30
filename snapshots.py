@@ -241,7 +241,7 @@ def store_kpis(L, df, asof, kind, store):
     def one(f):
         d = f[f[L.COL_STORE_LABEL] == store]
         sale = float(d[L.COL_AMOUNT].sum())
-        bills = L.bill_count(d)          # an exchange is two memos — see loader
+        bills = L.bill_count(d)          # distinct bill numbers — see loader
         units = float(d[L.COL_QTY].sum())
         return {"sale": sale, "bills": bills, "units": units,
                 "abv": sale / bills if bills else 0.0,
@@ -736,7 +736,7 @@ def _one_kpi(L, d, ff, code, days):
     """Every figure the panel prints, for one slice."""
     sale = float(d[L.COL_AMOUNT].sum())
     units = float(d[L.COL_QTY].sum())
-    bills = L.bill_count(d)              # an exchange is two memos — see loader
+    bills = L.bill_count(d)              # distinct bill numbers — see loader
     out = {"sale": sale, "units": units, "bills": bills,
            "abv": sale / bills if bills else 0.0,
            "abs": units / bills if bills else 0.0,

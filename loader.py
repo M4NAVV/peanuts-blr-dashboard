@@ -706,7 +706,7 @@ def _sply(start: pd.Timestamp, end: pd.Timestamp):
 def _window_metrics(df: pd.DataFrame, start: pd.Timestamp, end: pd.Timestamp) -> dict:
     sub = df[(df["date"] >= start) & (df["date"] <= end)]
     sales = sub[COL_AMOUNT].sum()
-    bills = bill_count(sub)              # an exchange is two memos
+    bills = bill_count(sub)
     units = sub[COL_QTY].sum()
     return {
         "sales": sales,
@@ -991,7 +991,7 @@ def _frame_metrics(f: pd.DataFrame) -> dict:
                if "_provisional" in f.columns else f)
     sales = f[COL_AMOUNT].sum()
     units = f[COL_QTY].sum()
-    bills = bill_count(settled)          # an exchange is two memos
+    bills = bill_count(settled)
     s_sales = settled[COL_AMOUNT].sum()
     return {"sales": sales, "bills": bills, "units": int(units),
             "atv": s_sales / bills if bills else 0.0,
@@ -1193,7 +1193,7 @@ def all_scalar_kpis(df: pd.DataFrame) -> dict[str, tuple[float, bool]]:
     sales = df[COL_AMOUNT].sum()
     net = df["net_amount"].sum()
     units = df[COL_QTY].sum()
-    bills = bill_count(df)               # an exchange is two memos
+    bills = bill_count(df)
     customers = df["mobile_clean"].nunique()
     stores = df[COL_STORE_LABEL].nunique()
     discount = df[COL_PROMO].sum()
