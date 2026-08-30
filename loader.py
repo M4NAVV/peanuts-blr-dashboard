@@ -348,40 +348,36 @@ def _apply_takeover_filter(df: pd.DataFrame) -> pd.DataFrame:
 # --------------------------------------------------------------------------- #
 
 def bill_count(df: pd.DataFrame) -> int:
-    """Bills, counted the way the store's own till counts them.
+    """Bills — the distinct bill numbers in the frame.
 
-    ★ AN EXCHANGE IS ONE BILL NUMBER HERE AND TWO MEMOS IN GINESYS (Manav,
-    30 Aug, auditing Orion Mall against the POS). When a customer returns
-    something and buys something else, the till raises a SALE memo and a
-    CREDIT memo; our feed records both on one bill number, with the return as
-    a negative line:
+    ★ THIS WAS BRIEFLY SOMETHING CLEVERER AND IT WAS WRONG. On 30 Aug, auditing
+    Orion Mall's 1-29 August against the GINESYS POS, the sales agreed to Rs 78
+    but the bill count read 430 against the POS's 451. Twenty-two bills in that
+    window carried both sale lines and a return line, and 430 + 22 = 452 — one
+    away from 451. So a rule was written that counted an exchange as two memos,
+    a sale and a credit, and it shipped.
 
-        PM/01389/Aug-26  MOHEY-SAREE  +1,500
-        PM/01389/Aug-26  MOHEY-SAREE  +1,500
-        PM/01389/Aug-26  KURTA SET    +4,499
-        PM/01389/Aug-26  KURTA SET    -4,999   <- the return, its own memo
+    ⚠ THE 21 MISSING BILLS WERE NOT EXCHANGES. THE DAY WAS NOT FINISHED.
+    The feed's 29 August was still filling when the comparison was made; the
+    POS report had been printed on the 30th against a settled day. Once the
+    feed completed, the SAME window gave 451 distinct bills — the POS's number,
+    exactly — and the clever rule was counting the twenty-two exchanges twice,
+    pushing Orion's ABV to Rs 8,073 against the POS's Rs 8,467. It made the
+    error it was written to fix, in the opposite direction.
 
-    Counting that as one bill made the DENOMINATOR too small and every average
-    bill value too high — Orion printed Rs 8,880 against the POS's Rs 8,467 on
-    sales that agreed to Rs 78. The manager checks the sheet against the till
-    they are standing at, so the till's convention is the one that has to win.
+    ★ NEVER RECONCILE AGAINST THE FEED'S MOST RECENT DAY. It is the one day
+    that can still change, and a shortfall in it will find a plausible
+    explanation among whatever else is nearby — here, a count of exchanges that
+    happened to sit one away from the gap. Compare on a settled window, or the
+    coincidence does the reasoning for you.
 
-    So: a bill counts once for having sale lines, and once more for having
-    return lines.
-
-    ⚠ ON ORION'S AUGUST THIS GIVES 452 AGAINST THE POS'S 451. Twenty-six
-    negative lines fall in twenty-two bills, and one of them is not a credit
-    note — most likely the -299 accessories line, which looks like an
-    adjustment, or a return whose credit note the POS dated outside the window.
-    One bill in 451 is 0.2%, and the honest thing is to leave the residue
-    visible rather than tune a rule until one store's month happens to match.
+    The function is kept, rather than the five `nunique()` calls it replaced,
+    because one definition in one place is still right — and a test fails if a
+    sixth caller starts counting bills its own way.
     """
     if COL_BILL_UID not in df.columns or df.empty:
         return 0
-    amt = pd.to_numeric(df[COL_AMOUNT], errors="coerce")
-    sold = df.loc[amt > 0, COL_BILL_UID].nunique()
-    credited = df.loc[amt < 0, COL_BILL_UID].nunique()
-    return int(sold + credited)
+    return int(df[COL_BILL_UID].nunique())
 
 
 def headline_kpis(df: pd.DataFrame) -> dict:
@@ -2149,7 +2145,8 @@ DRIVERS_LEVELS = {"division": [COL_DIVISION],
 def degrowth_drivers(df: pd.DataFrame, asof=None, kind: str = "YTD",
                      top_products: int = 3, products_under: str = "worst",
                      level: str = "division", only_declining: bool = True,
-                     stores_only=None, anchor_takeover: bool = True):
+                     stores_only=None, anchor_takeover: bool = True,
+                     both_ways: bool = False):
     """Every declining store, decomposed: products, then brand totals, then the
     store total beneath them.
 
@@ -2172,6 +2169,18 @@ def degrowth_drivers(df: pd.DataFrame, asof=None, kind: str = "YTD",
     `products_under`: "every" breaks out every brand including those that GREW
     (so an offsetting gain is visible, not just its net effect); "all" only
     declining brands; "worst" only the worst-declining one.
+
+    ★ `both_ways` — TAKE THE TOP `top_products` IN EACH DIRECTION, not just the
+    worst. The rows are sorted most-negative-first and truncated with `head`,
+    so `top_products` has always meant "the N worst", never "the N biggest
+    movers". For a sheet that prints ONE table of losses that is right. For the
+    driver sheet, which prints a falling table AND a growing table, it starves
+    the second one: growth could only appear if it survived a worst-first cut.
+    Measured on 30 Aug, at ten per brand, the month hid Rs 36.1 lakh of growth
+    at Jayanagar and Rs 11.1 lakh at Commercial Street — invisible, while the
+    losses beside them were listed in full.
+
+    Off by default, because every other caller wants exactly the worst.
 
     Returns (display_df, row_types) — products plain, brand totals 'subtotal',
     store totals 'block'.
@@ -2249,7 +2258,17 @@ def degrowth_drivers(df: pd.DataFrame, asof=None, kind: str = "YTD",
                     or (products_under == "worst" and brand == worst
                         and b["short"] < 0))
             if show:
-                for div, d in _frame(dv_c, dv_p, (store, brand)).head(top_products).iterrows():
+                _dv = _frame(dv_c, dv_p, (store, brand))
+                if both_ways and len(_dv) > top_products:
+                    # the worst N and the best N — sorted ascending, so head
+                    # and tail. A division cannot be both, and `head`/`tail`
+                    # overlapping is why the length is checked first.
+                    _dv = pd.concat([_dv.head(top_products),
+                                     _dv.tail(top_products)])
+                    _dv = _dv[~_dv.index.duplicated()].sort_values("short")
+                else:
+                    _dv = _dv.head(top_products)
+                for div, d in _dv.iterrows():
                     # Under "every" a growing brand is shown too, so its rows
                     # are whatever moved most — that is how an offset becomes
                     # visible rather than just its net effect.
