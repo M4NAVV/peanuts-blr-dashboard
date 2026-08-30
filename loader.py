@@ -347,11 +347,48 @@ def _apply_takeover_filter(df: pd.DataFrame) -> pd.DataFrame:
 # KPI helpers — all operate on the cleaned frame.
 # --------------------------------------------------------------------------- #
 
+def bill_count(df: pd.DataFrame) -> int:
+    """Bills, counted the way the store's own till counts them.
+
+    ★ AN EXCHANGE IS ONE BILL NUMBER HERE AND TWO MEMOS IN GINESYS (Manav,
+    30 Aug, auditing Orion Mall against the POS). When a customer returns
+    something and buys something else, the till raises a SALE memo and a
+    CREDIT memo; our feed records both on one bill number, with the return as
+    a negative line:
+
+        PM/01389/Aug-26  MOHEY-SAREE  +1,500
+        PM/01389/Aug-26  MOHEY-SAREE  +1,500
+        PM/01389/Aug-26  KURTA SET    +4,499
+        PM/01389/Aug-26  KURTA SET    -4,999   <- the return, its own memo
+
+    Counting that as one bill made the DENOMINATOR too small and every average
+    bill value too high — Orion printed Rs 8,880 against the POS's Rs 8,467 on
+    sales that agreed to Rs 78. The manager checks the sheet against the till
+    they are standing at, so the till's convention is the one that has to win.
+
+    So: a bill counts once for having sale lines, and once more for having
+    return lines.
+
+    ⚠ ON ORION'S AUGUST THIS GIVES 452 AGAINST THE POS'S 451. Twenty-six
+    negative lines fall in twenty-two bills, and one of them is not a credit
+    note — most likely the -299 accessories line, which looks like an
+    adjustment, or a return whose credit note the POS dated outside the window.
+    One bill in 451 is 0.2%, and the honest thing is to leave the residue
+    visible rather than tune a rule until one store's month happens to match.
+    """
+    if COL_BILL_UID not in df.columns or df.empty:
+        return 0
+    amt = pd.to_numeric(df[COL_AMOUNT], errors="coerce")
+    sold = df.loc[amt > 0, COL_BILL_UID].nunique()
+    credited = df.loc[amt < 0, COL_BILL_UID].nunique()
+    return int(sold + credited)
+
+
 def headline_kpis(df: pd.DataFrame) -> dict:
     """Top-line KPIs for the overview cards."""
     total_sales = df[COL_AMOUNT].sum()
     total_units = df[COL_QTY].sum()
-    bills = df[COL_BILL_UID].nunique()
+    bills = bill_count(df)
     customers = df[COL_MOBILE].replace("", pd.NA).nunique()
     discount = df[COL_PROMO].sum()
 
@@ -673,7 +710,7 @@ def _sply(start: pd.Timestamp, end: pd.Timestamp):
 def _window_metrics(df: pd.DataFrame, start: pd.Timestamp, end: pd.Timestamp) -> dict:
     sub = df[(df["date"] >= start) & (df["date"] <= end)]
     sales = sub[COL_AMOUNT].sum()
-    bills = sub[COL_BILL_UID].nunique()
+    bills = bill_count(sub)              # an exchange is two memos
     units = sub[COL_QTY].sum()
     return {
         "sales": sales,
@@ -958,7 +995,7 @@ def _frame_metrics(f: pd.DataFrame) -> dict:
                if "_provisional" in f.columns else f)
     sales = f[COL_AMOUNT].sum()
     units = f[COL_QTY].sum()
-    bills = int(settled[COL_BILL_UID].nunique())
+    bills = bill_count(settled)          # an exchange is two memos
     s_sales = settled[COL_AMOUNT].sum()
     return {"sales": sales, "bills": bills, "units": int(units),
             "atv": s_sales / bills if bills else 0.0,
@@ -1160,7 +1197,7 @@ def all_scalar_kpis(df: pd.DataFrame) -> dict[str, tuple[float, bool]]:
     sales = df[COL_AMOUNT].sum()
     net = df["net_amount"].sum()
     units = df[COL_QTY].sum()
-    bills = df[COL_BILL_UID].nunique()
+    bills = bill_count(df)               # an exchange is two memos
     customers = df["mobile_clean"].nunique()
     stores = df[COL_STORE_LABEL].nunique()
     discount = df[COL_PROMO].sum()
