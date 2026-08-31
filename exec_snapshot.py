@@ -428,6 +428,7 @@ def portfolio_metrics(pf, asof, basis_label="", region=None) -> dict:
     _day_set = {c for c in lfl
                 if _b_start.get(c) is not None and _b_start[c] <= asof <= _b_end[c]}
     day_all = pf[pf["date"] == asof]["sales"].sum()
+    _d_open = int(pf[pf["date"] == asof]["code"].nunique())
     dl = pf[pf["code"].isin(_day_set)]
     d_ty = dl[dl["date"] == asof]["sales"].sum()
     d_date = dl[dl["date"] == asof - pd.DateOffset(years=1)]["sales"].sum()
@@ -565,10 +566,36 @@ def portfolio_metrics(pf, asof, basis_label="", region=None) -> dict:
              "sub": f"LY Rs {_cr(mtd_ly)} Cr",
              "rows": [("Overall", _pct(_growth(mtd_all, mtd_ly)))],
              "key": ("Like to like", _pct(_growth(mtd_l, mtd_ll)))},
-            {"label": f"Day {asof:%d %b}", "value": f"Rs {_cr(day_all)} Cr",
-             "sub": f"Like to like Rs {_cr(d_ty)} Cr",
-             "rows": [("vs same date", _pct(_growth(d_ty, d_date)))],
-             "key": ("vs same weekday", _pct(_growth(d_ty, d_wday)))},
+            # ★ REDESIGNED FOR READING, NOT FOR COMPACTNESS (Manav, 31 Aug:
+            # "its confusing to read it and understand what it means"). Three
+            # things were being left to the reader:
+            #
+            #   THE HEADLINE AND THE RATES ARE DIFFERENT ESTATES. Rs 0.46 Cr is
+            #   every store trading; -47.9% is the 41 that have a last year to
+            #   be compared against. The tile said "Like to like Rs 0.14 Cr"
+            #   and left you to notice that 0.14 is not 0.46, and to guess how
+            #   many stores that was. It now states the count: 41 of 49.
+            #
+            #   "SAME DATE" AND "SAME WEEKDAY" NAMED NOTHING. Today is a
+            #   Sunday; the same date last year was a Saturday and the same
+            #   weekday was 31 Aug. Both rows now name the actual day and date
+            #   they compare against, so the two figures explain their own
+            #   difference instead of looking like a contradiction.
+            #
+            #   AND THE HONEST ONE IS THE CONCLUSION. A single date a year ago
+            #   lands on a different weekday and its year-on-year is mostly
+            #   trading pattern, which is why the same-WEEKDAY figure sits
+            #   under the rule where the tile's conclusion goes.
+            {"label": f"Day  {asof:%a %d %b}",
+             "value": f"Rs {_cr(day_all)} Cr",
+             "sub": (f"all {_d_open} stores trading" if _d_open
+                     else "nothing trading"),
+             "rows": [(f"Comparable {len(_day_set)} of {_d_open}",
+                       f"Rs {_cr(d_ty)} Cr" if _day_set else "no last year"),
+                      (f"vs {asof - pd.DateOffset(years=1):%a %d %b}",
+                       _pct(_growth(d_ty, d_date)))],
+             "key": (f"vs {asof - pd.Timedelta(days=364):%a %d %b}",
+                     _pct(_growth(d_ty, d_wday)))},
             {"label": "Projected year", "value": f"Rs {_cr(proj)} Cr",
              "sub": f"last full year Rs {_cr(ly_full)} Cr",
              "rows": [("Run-rate", "x365 op-days")],
@@ -803,6 +830,7 @@ def vfl_metrics(df, asof, gen_date=None, basis_label="", region=None) -> dict:
                 if s in _vb_start and _vb_start[s] <= asof <= _vb_end[s]}
     dl = df[df[L.COL_STORE_LABEL].astype(str).isin(_day_set)]
     day_all = float(cur[cur["date"] == asof][amt].sum())
+    _d_open = int(cur[cur["date"] == asof][L.COL_STORE_LABEL].nunique())
     d_ty = float(dl[dl["date"] == asof][amt].sum())
     d_date = float(dl[dl["date"] == asof - pd.DateOffset(years=1)][amt].sum())
     d_wday = float(dl[dl["date"] == asof - pd.Timedelta(days=364)][amt].sum())
@@ -893,10 +921,36 @@ def vfl_metrics(df, asof, gen_date=None, basis_label="", region=None) -> dict:
              "rows": [("Overall", _pct(_growth(m_ty, m_ly)))],
              "key": ("Like to like",
                      _pct(_growth(ml["cur"].sum(), ml["prior"].sum())))},
-            {"label": f"Day {asof:%d %b}", "value": f"Rs {_cr(day_all)} Cr",
-             "sub": f"Like to like Rs {_cr(d_ty)} Cr",
-             "rows": [("vs same date", _pct(_growth(d_ty, d_date)))],
-             "key": ("vs same weekday", _pct(_growth(d_ty, d_wday)))},
+            # ★ REDESIGNED FOR READING, NOT FOR COMPACTNESS (Manav, 31 Aug:
+            # "its confusing to read it and understand what it means"). Three
+            # things were being left to the reader:
+            #
+            #   THE HEADLINE AND THE RATES ARE DIFFERENT ESTATES. Rs 0.46 Cr is
+            #   every store trading; -47.9% is the 41 that have a last year to
+            #   be compared against. The tile said "Like to like Rs 0.14 Cr"
+            #   and left you to notice that 0.14 is not 0.46, and to guess how
+            #   many stores that was. It now states the count: 41 of 49.
+            #
+            #   "SAME DATE" AND "SAME WEEKDAY" NAMED NOTHING. Today is a
+            #   Sunday; the same date last year was a Saturday and the same
+            #   weekday was 31 Aug. Both rows now name the actual day and date
+            #   they compare against, so the two figures explain their own
+            #   difference instead of looking like a contradiction.
+            #
+            #   AND THE HONEST ONE IS THE CONCLUSION. A single date a year ago
+            #   lands on a different weekday and its year-on-year is mostly
+            #   trading pattern, which is why the same-WEEKDAY figure sits
+            #   under the rule where the tile's conclusion goes.
+            {"label": f"Day  {asof:%a %d %b}",
+             "value": f"Rs {_cr(day_all)} Cr",
+             "sub": (f"all {_d_open} stores trading" if _d_open
+                     else "nothing trading"),
+             "rows": [(f"Comparable {len(_day_set)} of {_d_open}",
+                       f"Rs {_cr(d_ty)} Cr" if _day_set else "no last year"),
+                      (f"vs {asof - pd.DateOffset(years=1):%a %d %b}",
+                       _pct(_growth(d_ty, d_date)))],
+             "key": (f"vs {asof - pd.Timedelta(days=364):%a %d %b}",
+                     _pct(_growth(d_ty, d_wday)))},
             {"label": "Projected year", "value": f"Rs {_cr(proj)} Cr",
              "sub": f"last full year Rs {_cr(ly_full)} Cr",
              "rows": [("Run-rate", "x365 op-days"),
