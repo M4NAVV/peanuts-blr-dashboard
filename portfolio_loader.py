@@ -1009,10 +1009,30 @@ def gd_sheet_report(df: pd.DataFrame, asof=None):
                     rows.append({**whole, "NEW/OLD": "TOTAL"})
                     types.append("storetotal")
                 else:
-                    rows.append(whole)
+                    # ★ A STORE WITH NO COMPARABLE SPAN AT ALL SAYS SO, in the
+                    # same words as a store with only part of one (Manav,
+                    # 1 Sep). Silchar opened last June, so its non-comparable
+                    # months are spelled out as "— no L2L" on their own line.
+                    # Dibrugarh opened this January and has NO comparable span,
+                    # so the split never fires and it used to print as a plain
+                    # line with a blank growth cell — the store with more of a
+                    # problem labelled less than the one with less. The tag
+                    # (2526PY) and the empty percentage both said it, and
+                    # neither said it out loud.
+                    one = dict(whole)
+                    if not _comparable_throughout(a, _l2l_start, _l2l_end):
+                        non_l2l_rows.append(whole)
+                        _c = int(a["code"])
+                        _s, _e = _l2l_start.get(_c), _l2l_end.get(_c)
+                        # exactly the condition that makes `_split_rows` give
+                        # up — no comparable span, so nothing to split and
+                        # nothing to compare
+                        if _s is None or _e is None or _s > _e:
+                            one["LOCATION"] = f'{a["location_main"]} — no L2L'
+                    else:
+                        l2l_rows.append(whole)
+                    rows.append(one)
                     types.append("store")
-                    (l2l_rows if _comparable_throughout(a, _l2l_start, _l2l_end)
-                     else non_l2l_rows).append(whole)
                 srows.append(whole)
             sdf = pd.DataFrame(srows)
             region_rows.append(sdf)
