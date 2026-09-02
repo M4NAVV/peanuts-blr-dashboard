@@ -1780,7 +1780,21 @@ def vfl_gd_report(df: pd.DataFrame, asof=None, gen_date=None):
 
     l2l_rows, non_l2l_rows = [], []       # for the footer summary
 
+    def _summary_row(label, part):
+        """One LIKE TO LIKE / NO L2L line, from a list of store-level halves."""
+        d = dict.fromkeys(VFL_GD_COLS, "")
+        for c in VFL_GD_MONEY:
+            d[c] = float("nan")
+        d["Region"] = label
+        tot = {k: sum(float(p.get(k, 0.0) or 0.0) for p in part) for k in _split_src}
+        for src in _split_src:
+            d[_VFL_SUM_SRC[src]] = tot[src]
+        d["Sum of GD_YTD_%"] = _vfl_gd_frac(tot["YTD TY"], tot["YTD LY"])
+        d["Sum of GD_MTD_%"] = _vfl_gd_frac(tot["MTD TY"], tot["MTD LY"])
+        return d
+
     for region in [r for r in _REGION_ORDER if r in sb["Region"].unique()]:
+        r_l2l, r_non = [], []             # this region's own halves
         rdf = sb[sb["Region"] == region]
         r_pend = region
         for mloc in sorted(rdf["Master Location"].dropna().unique()):
@@ -1809,9 +1823,11 @@ def vfl_gd_report(df: pd.DataFrame, asof=None, gen_date=None):
                 for _tag, _vals in _halves:
                     emit_split(_tag, str(cdf["Location"].iloc[0]), _vals)
                     (non_l2l_rows if _tag == "NO L2L" else l2l_rows).append(_vals)
+                    (r_non if _tag == "NO L2L" else r_l2l).append(_vals)
                 if not _halves:
-                    (l2l_rows if comparable_throughout(_label)
-                     else non_l2l_rows).append(_whole)
+                    _ok = comparable_throughout(_label)
+                    (l2l_rows if _ok else non_l2l_rows).append(_whole)
+                    (r_l2l if _ok else r_non).append(_whole)
                 emit("", "", f"{int(code)} Total", "", "", "", "", _whole, "subtotal")
             # Location totals get their own type so consumers can tell them
             # apart from the {code} Total rows above (both used to be
@@ -1819,6 +1835,17 @@ def vfl_gd_report(df: pd.DataFrame, asof=None, gen_date=None):
             # under-50k day-sale rule must fire on the STORE total only.
             emit("", f"{mloc} Total", "", "", "", "", "", sums(mdf), "loctotal")
         emit(f"{region} Total", "", "", "", "", "", "", sums(rdf), "block")
+        # ★★ EACH REGION SAYS ITS OWN LIKE TO LIKE (Manav, 2 Sep: the split was
+        # "not happening for east and ne"). The two footer lines below existed,
+        # but only for the whole estate — and every rupee of the non-comparable
+        # trade is in ONE region, so the East & NE block total read +6.19% where
+        # its comparable stores were -3.03%. Nine points, in the direction that
+        # flatters. The region total keeps its meaning and the honest figure now
+        # sits directly beneath it.
+        for _lab, _part in (("LIKE TO LIKE", r_l2l), ("NO L2L", r_non)):
+            if _part:
+                rows.append(_summary_row(f"{region} — {_lab}", _part))
+                types.append("summary")
     emit("Grand Total", "", "", "", "", "", "", sums(sb), "grand")
 
     # ★ THE FOOTER THAT MAKES THE SHEET SAY ITS OWN LIKE TO LIKE. Summing the
@@ -1828,16 +1855,7 @@ def vfl_gd_report(df: pd.DataFrame, asof=None, gen_date=None):
     for label, part in (("LIKE TO LIKE", l2l_rows), ("NO L2L", non_l2l_rows)):
         if not part:
             continue
-        d = dict.fromkeys(VFL_GD_COLS, "")
-        for c in VFL_GD_MONEY:
-            d[c] = float("nan")
-        d["Region"] = label
-        tot = {k: sum(float(p.get(k, 0.0) or 0.0) for p in part)
-               for k in _split_src}
-        for src in _split_src:
-            d[_VFL_SUM_SRC[src]] = tot[src]
-        d["Sum of GD_YTD_%"] = _vfl_gd_frac(tot["YTD TY"], tot["YTD LY"])
-        d["Sum of GD_MTD_%"] = _vfl_gd_frac(tot["MTD TY"], tot["MTD LY"])
+        d = _summary_row(label, part)
         rows.append(d)
         types.append("summary")
 
