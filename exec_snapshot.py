@@ -94,7 +94,14 @@ PORTFOLIO_DAY_FLOOR = 10_000
 VFL_DAY_FLOOR = 50_000
 
 MOVERS_N = 6
-TRAJ_MONTHS = 5
+# ★ EVERY MONTH THE YEAR HAS TRADED, NEVER A ROLLING WINDOW (Manav, 3 Sep:
+# "the month of april dissapeared when september started"). This was 5, and
+# `months[-n:]` silently dropped the oldest month the moment a sixth began —
+# on a page whose whole subject is the fiscal year to date. Twelve is the most
+# a fiscal year can hold, so the trajectory now never truncates: the band grows
+# a column a month and is complete by March. The plot already sized itself from
+# the month count (`gw = w / n`), so nothing else had to change.
+TRAJ_MONTHS = 12
 
 # Brands that are one brand seen from the store master's point of view. Manav,
 # 13 Aug: "some stores are Manyavar only and some are Manyavar and Mohey — from
@@ -355,7 +362,7 @@ def l2l_store_table(cur, pri, bounds, ident, key, amt):
 
 
 def _monthly(cur, pri, asof, value_col, month_col="date", n=TRAJ_MONTHS):
-    """Last `n` months of the fiscal year to date, this year against last.
+    """The fiscal year to date, month by month, this year against last.
 
     Both frames are the report's own windows, so the months line up: the prior
     frame is the same calendar span a year earlier, already takeover-anchored and
