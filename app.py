@@ -578,7 +578,7 @@ def _cr(x) -> str:
 _PF_TABS = ["📈 MW Data", "🧾 GD Sheet", "🏷️ Brand-wise GD", "🗺️ Loc-wise GD",
             "📐 Average", "📊 Executive", "📋 MTD / YTD Report", "📉 Degrowth",
             "🎯 Day Targets", "🥧 Contribution", "🏙️ City-wise G/D", "🏬 Stores",
-            "📅 Monthly", "🗓️ Day calendar", "📄 REPORTS PDF"]
+            "📅 Monthly", "🗓️ Day calendar", "🧾 Samir Report", "📄 REPORTS PDF"]
 
 
 def render_portfolio():
@@ -729,6 +729,39 @@ def render_portfolio():
               "YTD LY", "YTD TY", "GD YTD Value"]
     _pct = ["GD MTD %", "GD YTD %"]
     _sign = ["GD MTD Value", "GD MTD %", "GD YTD Value", "GD YTD %"]
+
+    # ================= Samir Report ================= #
+    if nav == "🧾 Samir Report":
+        st.subheader("Samir report")
+        st.caption(
+            "The month in one card, per region — the workbook block, built from "
+            "the feed and rebuilt every day. **East reads the portfolio, South "
+            "reads the VFL feed**: South opened this April and has no last year "
+            "in the portfolio sheet, so its comparison exists only there.")
+        import month_brief as MB
+        try:
+            _both = MB.build(L, PL, get_data(), pf_all)
+            _east = MB.build(L, PL, get_data(), pf_all, only="East")
+            _south = MB.build(L, PL, get_data(), pf_all, only="South")
+        except Exception as e:
+            st.error(f"Could not build the card: {e}")
+        else:
+            st.image(_both[1], use_container_width=True)
+            c1, c2 = st.columns(2)
+            # ★ ONE BUILD, THREE IMAGES. Each download comes from the same call
+            # that drew what is on screen, so a region card cannot disagree with
+            # the pair above it.
+            c1.download_button("⬇ East & NE  (PNG)", _east[1], file_name=_east[0],
+                               mime="image/png", use_container_width=True)
+            c2.download_button("⬇ South  (PNG)", _south[1], file_name=_south[0],
+                               mime="image/png", use_container_width=True)
+            st.caption(
+                "ℹ️ **Mtd G/D compares the same days**, not this month against "
+                "the whole of last — two days of September against thirty would "
+                "read South at -94.87% where it is up 14.13%. "
+                "**Yesterday** is the feed's latest day; early in a month that "
+                "day may still be the night fill, with takings in and bills not "
+                "yet.")
 
     # ================= Day calendar ================= #
     if nav == "🗓️ Day calendar":
