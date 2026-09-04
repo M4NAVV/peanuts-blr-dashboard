@@ -13,13 +13,18 @@ the workbook on 31 Aug 2026:
     South       Aug-26  5,71,22,940  vs ours 5,71,22,940    exact
                 31 Aug  1,052,319    vs ours 1,052,319      exact
 
-★ AND THE TWO G/D LINES ARE NOT PLAIN YEAR-ON-YEAR — that was the trap. The
-workbook's East & NE figures (-5.87% and +1.83%) match neither feed's raw
-comparison; they are the GD sheet's `2526FY` subtotal, the stores that traded a
-FULL year on both sides. South's +9.33% only appears when the year is counted
-from the 19 April takeover, not from 1 April. Both are what the dashboard
-already computes elsewhere, so this card agrees with the packs by construction
-rather than by coincidence.
+★ AND THE TWO G/D LINES ARE NOT PLAIN YEAR-ON-YEAR — that was the trap. South's
++9.33% only appears when the year is counted from the 19 April takeover, not
+from 1 April.
+
+★★ EAST'S TWO G/D LINES ARE LIKE TO LIKE, ON BOTH MTD AND YTD (Manav, 4 Sep
+2026). They were the GD sheet's `2526FY` subtotal until then — the stores that
+traded a FULL year on both sides, which is how the card first reconciled to the
+workbook (-5.87% / +1.83% on 31 Aug). It no longer ties to that column and is
+not meant to: `2526FY` drops a store that opened mid-last-year whole, both
+years of it, while like to like compares each store over the span it HAS both
+years. On 2 Sep the change reads -16.64/+1.61 to -20.14/+0.63.
+`_gd_from_sheet` is kept below but is no longer wired to anything.
 
     python3 -c "import month_brief; month_brief.write()"
 """
@@ -85,6 +90,51 @@ def _gd_from_sheet(disp, types, region, group="2526FY"):
             return (float(r["Sum of GD_MTD_%"]) * 100,
                     float(r["Sum of GD_YTD_%"]) * 100)
     return (None, None)
+
+
+def _gd_l2l(PL, pf, region, asof):
+    """A region's G/D on the LIKE TO LIKE basis — Manav, 4 Sep 2026.
+
+    ★ WHY THIS REPLACED THE GD SHEET'S `2526FY` SUBTOTAL. Both answer "how is
+    the region doing against last year", but they exclude differently, and one
+    of them throws real trade away:
+
+      `2526FY`  keeps only stores that traded a FULL year on BOTH sides. A store
+                that opened last June is dropped whole — both years of it — so
+                the months it CAN be compared over are lost with the months it
+                cannot.
+      like to like  compares each store over the span it has both years. Silchar
+                contributes its comparable months instead of contributing none.
+
+    The property that makes it the right basis here is the one `l2l_bounds`
+    states: last year's like to like total comes out at the estate's whole
+    last-year turnover, to the rupee. Nothing real is discarded; only THIS
+    year's sales with no counterpart are held out.
+
+    ★ BOTH LINES MOVE TOGETHER, deliberately. MTD and YTD on different bases
+    would put two numbers in one card that cannot be reasoned about as a pair —
+    see [[feedback-same-estate]]. The spans are per store and identical for
+    both; only the window they are cut against differs.
+
+    Computed from `_window_frames`, so the takeover anchoring and the closure
+    caps underneath are the report's, not a second set written here.
+    """
+    import exec_snapshot as ES
+    pf = pf[pf["region"] == region]
+    if pf.empty:
+        return (None, None)
+    bounds = ES.l2l_bounds(pf, "code", "sales", PL.closed_map(), asof,
+                           opened=PL.opened_map(pf, asof))
+
+    def rate(kind):
+        cur, pri = PL._window_frames(pf, kind, asof)
+        if cur.empty and pri.empty:
+            return None
+        c, p = ES.l2l_frames(cur, pri, bounds, "code")
+        ty, ly = c["sales"].sum(), p["sales"].sum()
+        return ((ty - ly) / ly * 100) if ly else None
+
+    return (rate("MTD"), rate("YTD"))
 
 
 def panel(L, name, d, amt, asof, gd_mtd, gd_ytd, target=None):
@@ -200,8 +250,11 @@ def build(L, PL, df, pf, asof=None, only=None):
     the same call, so a single-region card can never disagree with the pair.
     """
     asof = pd.Timestamp(PL.as_of(pf) if asof is None else asof)
-    disp, types = PL.gd_sheet_report(pf, asof)
-    e_m, e_y = _gd_from_sheet(disp, types, "East & NE")
+    # ★ EAST'S G/D IS LIKE TO LIKE ON BOTH LINES (Manav, 4 Sep 2026): *"the
+    # east growth degrowth needs to be L2L ... for both mtd and ytd"*. It was
+    # the GD sheet's `2526FY` subtotal until then — see `_gd_l2l` for what
+    # changed and why the two differ.
+    e_m, e_y = _gd_l2l(PL, pf, "East & NE", asof)
 
     east = pf[pf["region"] == "East & NE"]
     south = df[df[L.COL_REGION] == "South"]
