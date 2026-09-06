@@ -1165,6 +1165,19 @@ def store_sheets(L, df, asof, ff=None, pf=None, targets=None, progress=None,
     broken. `folder` prefixes the names so they land in their own directory
     inside the zip rather than scattered among the other reports.
 
+    ★ AND WITHIN IT, ONE DIRECTORY PER REGION (Manav, 6 Sep 2026): *"can the
+    zip have 2 folders, one for north east and the other one for south. makes
+    it easy to send and forward."* Twenty sheets in one directory have to be
+    picked through by name before anything can be forwarded; two directories
+    are two selections. The folder is the region exactly as every other report
+    spells it — `East & NE` and `South` — so the zip uses the same vocabulary
+    as the sheets inside it.
+
+    ★ A STORE WITH NO REGION IS NOT DROPPED AND NOT GUESSED. It lands directly
+    under `folder` and is named in the returned failure list, because a sheet
+    that silently does not appear in either directory is a manager who silently
+    does not get their morning.
+
     ★ THE FULL ESTATE, NEVER THE SIDEBAR. These go to individual managers; one
     built from whatever filter happened to be left set would be quietly wrong
     and the manager receiving it could not tell.
@@ -1176,7 +1189,7 @@ def store_sheets(L, df, asof, ff=None, pf=None, targets=None, progress=None,
     master = L.load_store_master().set_index("tableau_name")
 
     stores = open_stores(L, df)
-    out, failed = [], []
+    out, failed, unfiled = [], [], []
     for i, s in enumerate(stores, 1):
         code = int(master.loc[s, "code"]) if s in master.index else None
         try:
@@ -1185,9 +1198,20 @@ def store_sheets(L, df, asof, ff=None, pf=None, targets=None, progress=None,
             failed.append(f"{s}: {e}")
             made = None
         if made:
-            out.append((f"{folder}/{made[0]}" if folder else made[0], made[1]))
+            region = ""
+            if s in master.index:
+                r = master.loc[s].get("region")
+                region = "" if r is None or pd.isna(r) else str(r).strip()
+            if not region:
+                unfiled.append(s)
+            parts = [p for p in (folder, region) if p]
+            out.append(("/".join(parts + [made[0]]) if parts else made[0],
+                        made[1]))
         if progress:
             progress(i, len(stores), s)
+    if unfiled:
+        failed.append(f"{len(unfiled)} store(s) have no region and are at the "
+                      f"top of the folder: " + ", ".join(sorted(unfiled)))
     return out, failed
 
 
