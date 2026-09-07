@@ -450,6 +450,17 @@ def day_ladder(sales: pd.Series, w: Window) -> pd.DataFrame:
             "Day ": f"{td[i]:%A}" if i < len(td) else "",
             "Amount ": ta[i] if i < len(ta) else None,
             "Running Total ": tr[i] if i < len(tr) else None,
+            # ★ THE COMPARISON, DONE ON THE PAGE. An admin sheet that prints
+            # last year and this year side by side and leaves the subtraction
+            # to the reader is asking forty-five mental sums a morning. G/D is
+            # the day against its own opposite number; RUNNING G/D is the two
+            # totals so far, which is the figure that actually decides the
+            # season. Blank — never 0% — where this year has not reached that
+            # day yet, for the same reason the amount is blank.
+            "G/D %": (((ta[i] - la[i]) / la[i] * 100)
+                      if i < len(ta) and i < len(la) and la[i] else None),
+            "Running G/D %": (((tr[i] - lr[i]) / lr[i] * 100)
+                              if i < len(tr) and i < len(lr) and lr[i] else None),
         })
     return pd.DataFrame(rows)
 
@@ -496,9 +507,22 @@ def _ladder_image(ladder, w):
     lh = list(ladder.columns)
     lg = []
     for _, row in ladder.iterrows():
-        lg.append(([RT.cell(RT._money(v) if isinstance(v, float) else (v or ""),
-                            align="r" if isinstance(v, float) else "l")
-                    for v in row], RT.ROW_H))
+        cells = []
+        for c, v in zip(lh, row):
+            if not isinstance(v, float) or pd.isna(v):
+                # ★ A DAY NOT YET REACHED IS BLANK, and a growth with no base
+                # to grow from is blank too — never 0%, which would read as a
+                # day that traded flat rather than one that has not happened.
+                cells.append(RT.cell(v if isinstance(v, str) else "", align="l"))
+            elif c.endswith("%"):
+                # ★ AND A PER CENT IS NOT MONEY. Every float here used to be
+                # run through `_money`, so a growth of 12.4% would have printed
+                # as `Rs 12`.
+                cells.append(RT.cell(f"{v:,.1f}%", align="r",
+                                     ink=(RT.NEG_INK if v < 0 else RT.INK)))
+            else:
+                cells.append(RT.cell(RT._money(v), align="r"))
+        lg.append((cells, RT.ROW_H))
     return RT._draw_grid(lh, lg, title=f"{w.tenure} DAYS TO {w.festival.upper()}")
 
 
@@ -533,7 +557,21 @@ def build_festive_pdf(df: pd.DataFrame, w: Window, basis_label="",
     else:
         f = store_figures(df, w)
         sales = df.groupby("date")["sales"].sum()
-    with RT._LOCK:
+    # ★★ THE DESK TREATMENT, WHICH THIS PACK NEVER GOT (7 Sep 2026). Manav:
+    # *"the format is really shabby and doesnt help with reading data."* The
+    # cause was not the layout. Every other desk report — L-to-L, month-wise —
+    # draws inside `desk()`, which sets the pack's own density and type; the
+    # festive pack drew at the PHONE sizes, so its sheets came out 7,297px wide
+    # against a 6,500px cap. Tripping that cap RESAMPLES the page, and
+    # resampling is the documented source of blur in this engine: it throws
+    # away FreeType's hinting, so stems soften and 1px gridlines smear to grey.
+    #
+    #     without desk(): 4758 · 6027 · 7100 · 7297  -> widest 7297, RESAMPLED
+    #     with    desk(): 3801 · 4655 · 5478 · 5629  -> no resample
+    #
+    # Nothing is dropped and no column is narrowed — the same figures are drawn
+    # at the density the rest of the pack uses, and the page is never resampled.
+    with RT._LOCK, RT.desk():
         pdf = RT._pdf_from(festive_sheets(f, sales, w),
                            f"As of {w.asof:%d %b %Y} · {w.basis()}"
                            + (f" · {basis_label}" if basis_label else ""))

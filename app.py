@@ -1219,7 +1219,19 @@ def render_portfolio():
                                                              basis))
                     for _i, _w in enumerate(_fw):
                         if f"festive_{_i}" in chosen:
-                            built.append(FEST.build_festive_pdf(
+                            # ★ THE ADMIN PACK IS NOW THE FESTIVE REPORT
+                            # (Manav, 7 Sep). Seven pages instead of four
+                            # grids: the season drawn, the day ladder split
+                            # TOTAL / COMPARABLE / NON COMPARABLE on each side,
+                            # and store, brand, location and region all in that
+                            # same format with the comparable columns shaded.
+                            #
+                            # ⚠️ PORTFOLIO ONLY. `festive_admin` classifies on
+                            # `code` and `region`, which the VFL frame does not
+                            # carry — the VFL tab and the 🪔 Festive tab still
+                            # use `build_festive_pdf`, deliberately.
+                            import festive_admin as FADM
+                            built.append(FADM.build(
                                 pf_all, _w, basis_label=basis))
                     name, payload, mime = RTD.bundle(
                         built, zip_name=f"PORTFOLIO REPORTS {pdf_asof:%d-%m-%Y}.zip")
