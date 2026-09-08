@@ -45,6 +45,17 @@ BAR_LY = (226, 226, 226)
 RULE = (200, 200, 200)
 
 
+def in_degrowth(r):
+    """A row is in degrowth when its COMPARABLE pair went backwards.
+
+    ★ ONE DEFINITION, EVERY SHEET. It reads the like-for-like G/D and nothing
+    else: a store with no last year cannot be in degrowth, it can only be new,
+    and reddening it would say something the data does not.
+    """
+    g = r.get("gd")
+    return g is not None and not pd.isna(g) and g < 0
+
+
 def _hh(f):
     a, b = f.getmetrics()
     return a + b
@@ -190,13 +201,22 @@ def daily_chart(width, height, w, ty_days, ly_days):
 # reading each one; a bar of the same value is compared without reading at all.
 # The exact number stays beside it, so nothing is lost to anyone who needs it.
 def table_image(df, spec, width, font_px=26, bar_col=None, bar_label="",
-                total_row=None, shade=()):
+                total_row=None, shade=(), neg_row=None):
     """`spec` is [(column, kind, header)] with kind in
     text | money | pct | int | bar.
 
     `shade` is a set of COLUMN POSITIONS to tint down the whole table — the one
     an admin should land on first. Positions, not column keys, because a key
     can legitimately appear twice (a value and its bar).
+
+    `neg_row(row) -> bool` marks a row as being in degrowth, and the WHOLE row
+    is then set in red.
+
+    ★ THE ROW, NOT JUST THE G/D CELL (Manav, 8 Sep). The percentage already
+    coloured itself, but a reader scanning fifty-two stores for the ones going
+    backwards had to track a single narrow column down the page. Reddening the
+    name and the figures beside it makes those stores findable at arm's length,
+    which is what a colour is for.
     """
     reg, bold = PP._ft(font_px)
     hreg, hbold = PP._ft(max(int(font_px * 0.86), 12))
@@ -210,7 +230,7 @@ def table_image(df, spec, width, font_px=26, bar_col=None, bar_label="",
             return ""
         if kind == "money":
             return money(v)
-        if kind == "pct":
+        if kind in ("pct", "gd"):
             return f"{v:,.1f}%"
         if kind == "int":
             return f"{int(v):,}"
@@ -307,6 +327,9 @@ def table_image(df, spec, width, font_px=26, bar_col=None, bar_label="",
                             fill=SHADE)
         x = 0
         src = total_row if is_total else df[i]
+        # ★ A TOTAL ROW IS NEVER REDDENED — it is yellow and bold already, and
+        # a red-on-yellow total reads as an error rather than as a summary.
+        row_neg = bool(neg_row and not is_total and neg_row(src))
         for j, (c, k, _h) in enumerate(spec):
             f = bold if is_total else reg
             if k == "bar" and not is_total:
@@ -316,10 +339,15 @@ def table_image(df, spec, width, font_px=26, bar_col=None, bar_label="",
                 by = y + pad_y + PP._px(2)
                 bh = row_h - pad_y * 2 - PP._px(4)
                 d.rectangle([x + pad_x, by, x + pad_x + max(bw, 1), by + bh],
-                            fill=BAD if v < 0 else BAR_TY)
+                            fill=BAD if (v < 0 or row_neg) else BAR_TY)
             elif k != "bar":
-                ink = PP.INK
-                if k == "pct" and txt[i][j]:
+                ink = BAD if row_neg else PP.INK
+                # ★ ONLY A GROWTH GETS THE GOOD/BAD INK. `% OF SET` is a SHARE,
+                # and it was being painted green for being positive — which
+                # means nothing, and on a degrowth row it broke the red line by
+                # putting one green cell in the middle of it. A share follows
+                # the row; a growth speaks for itself.
+                if k == "gd" and txt[i][j]:
                     val = src.get(c)
                     if val is not None and not pd.isna(val):
                         ink = BAD if val < 0 else (GOOD if val > 0 else PP.INK)
@@ -535,8 +563,8 @@ def ladder_spec(rows):
             ("ty_l2l", "money", "COMPARABLE"),
             ("ty_non", "money", "NON\nCOMPARABLE"),
             ("ty_run", "money", "RUNNING\nCOMPARABLE"),
-            ("gd", "pct", "DAY G/D\nCOMPARABLE"),
-            ("rgd", "pct", "RUNNING G/D\nCOMPARABLE")]
+            ("gd", "gd", "DAY G/D\nCOMPARABLE"),
+            ("rgd", "gd", "RUNNING G/D\nCOMPARABLE")]
 
 
 def rollup_rows(f, group):
@@ -630,7 +658,7 @@ def rollup_spec(rows):
             ("l2l_ty", "money", "THIS YEAR\nCOMPARABLE"),
             ("non_ty", "money", "THIS YEAR\nNON COMP"),
             ("total_ty", "bar", "SHARE"),
-            ("gd", "pct", "G/D\nCOMPARABLE")]
+            ("gd", "gd", "G/D\nCOMPARABLE")]
 
 
 def build(pf, w, basis_label="", vfl=False):
@@ -816,12 +844,12 @@ def build(pf, w, basis_label="", vfl=False):
                        ("ly_full", "money", "LY FULL\nRUN-UP")]
             else:
                 sp += [("ly", "money", "LAST YEAR"),
-                       ("delta", "money", "CHANGE"), ("gd", "pct", "G/D"),
+                       ("delta", "money", "CHANGE"), ("gd", "gd", "G/D"),
                        ("ly_full", "money", "LY FULL\nRUN-UP")]
             sh = A4._Sheet(w.label, asof, "", bounded=False, footer=True)
             sh.put(A4._heading(W, title, sub), gap=18)
             sh.put(table_image(rs, sp, W, font_px=24, bar_col="ty",
-                               total_row=tot), gap=20)
+                               total_row=tot, neg_row=in_degrowth), gap=20)
             sh._footers()
             return sh.pages
 
@@ -864,7 +892,8 @@ def build(pf, w, basis_label="", vfl=False):
             _rshade = [i for i, (c, _k, _h) in enumerate(_rspec)
                        if c in ("l2l_ty", "l2l_ly")]
             sh.put(table_image(rs, _rspec, W, font_px=24, bar_col="total_ty",
-                               total_row=tot, shade=_rshade), gap=20)
+                               total_row=tot, shade=_rshade,
+                               neg_row=in_degrowth), gap=20)
             sh._footers()
             return sh.pages
 
