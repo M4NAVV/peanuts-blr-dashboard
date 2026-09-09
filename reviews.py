@@ -40,6 +40,12 @@ URL_ENV = "REVIEWS_URL"
 # The pack's own print quality — see feedback on pixels per page. Every other
 # report in the same download lands near here.
 TARGET_PPI = 327.0
+
+# ★ ONE WASH PER PERIOD, pale enough that the figures stay the content.
+_BAND = {"Day": (238, 245, 251),      # blue
+         "MTD": (238, 248, 241),      # green
+         "QTD": (252, 247, 236),      # amber
+         "YTD": (245, 241, 250)}      # violet
 _SNAPSHOT = os.path.join(os.path.dirname(__file__), "reviews_snapshot.csv")
 
 # Their name -> ours. Every one of these was confirmed by bill-series
@@ -345,7 +351,37 @@ def build(reviews: pd.DataFrame, bills: pd.DataFrame, asof) -> dict:
 # --------------------------------------------------------------------------- #
 #  PDF report
 # --------------------------------------------------------------------------- #
-def wide_table(report: dict) -> tuple:
+def store_display(vdf) -> dict:
+    """store label -> "MANYAVAR & MOHEY · Jayanagar", from the VFL feed.
+
+    Manav, 9 Sep: *"for the names of the stores, can u pull them from the VFL
+    sheet we have made. right now, i think u are doing more location names."*
+
+    ★ THE VFL SHEET'S OWN `SHORT_NAME` IS ALSO A LOCATION NAME. It reads
+    "Peanuts - Agartala", "Peanuts-CMH Road", "Peanuts Retail-Fairfield" — the
+    same place with a prefix, and that prefix is spelled FOUR ways across the
+    sheet. Every store is Peanuts, so the column would repeat it twenty times
+    and distinguish nothing while eating width.
+
+    The one name in the feed that carries information the location does not is
+    `store_format` — MANYAVAR or MANYAVAR & MOHEY — which is exactly what the
+    GD sheet and the festive store pages print as STORE NAME. So a store is
+    named the way it already is everywhere else in the pack, and the two
+    Kamraj Road shops stop looking like a duplicate.
+
+    ★ THE KEY IS UNCHANGED. Only the label shown is; the figures are still
+    joined on the store label, so a rename cannot silently drop a store.
+    """
+    import loader as L
+    if vdf is None or "store_format" not in getattr(vdf, "columns", []):
+        return {}
+    fmt = (vdf.dropna(subset=["store_format"])
+           .groupby(L.COL_STORE_LABEL)["store_format"]
+           .agg(lambda x: x.value_counts().index[0]))
+    return {st: f"{f} · {st}" for st, f in fmt.items()}
+
+
+def wide_table(report: dict, names: dict | None = None) -> tuple:
     """One row per store, all four windows across — his own layout.
 
     ★ ALSO WHY THE PAGE IS SHARP. The pack renders text ONCE at final size and
@@ -361,7 +397,7 @@ def wide_table(report: dict) -> tuple:
         if t is None:
             continue
         for store, r in t.iterrows():
-            rows.setdefault(store, {"STORE": store})
+            rows.setdefault(store, {"STORE": (names or {}).get(store, store)})
             rows[store][f"{period} BILLS"] = r["Bills"]
             rows[store][f"{period} GAINED"] = r["Reviews"]
             rows[store][f"{period} %"] = r["Rate %"]
@@ -396,7 +432,7 @@ def wide_table(report: dict) -> tuple:
 # --------------------------------------------------------------------------- #
 #  The leaderboard — the block this report is actually read for               #
 # --------------------------------------------------------------------------- #
-def _bars(t, width, title, sub):
+def _bars(t, width, title, sub, names=None):
     """Stores ranked by review rate, as bars.
 
     ★★ THIS REPORT IS READ ON A PHONE (Manav, 5 Sep). Thirteen columns across a
@@ -413,7 +449,8 @@ def _bars(t, width, title, sub):
     from PIL import Image, ImageDraw
     import portfolio_pdf as PP
 
-    rows = [(str(i), float(r["Rate %"]), float(r["Reviews"]), float(r["Bills"]),
+    rows = [((names or {}).get(str(i), str(i)), float(r["Rate %"]),
+             float(r["Reviews"]), float(r["Bills"]),
              float(r.get("Removed", 0) or 0))
             for i, r in t.iterrows() if pd.notna(r["Rate %"])]
     if not rows:
@@ -481,7 +518,8 @@ def _bars(t, width, title, sub):
     return img
 
 
-def build_pdf(report: dict, coverage: dict, asof, basis_label="") -> bytes:
+def build_pdf(report: dict, coverage: dict, asof, basis_label="",
+              names: dict | None = None) -> bytes:
     """The review report, built for a phone.
 
     ★ IT USED TO BE A COVER PAGE AND ONE WIDE GRID. The cover carried six lines
@@ -537,7 +575,8 @@ def build_pdf(report: dict, coverage: dict, asof, basis_label="") -> bytes:
         bars = _bars(qt, W, "Who is being reviewed",
                      f"{qlo:%d %b} to {qhi:%d %b %Y}  ·  "
                      f"{c.get('measured', 0)} days actually read  ·  "
-                     f"bar scaled to the best store, not to 100%")
+                     f"bar scaled to the best store, not to 100%",
+                     names=names)
 
         # ---- the caveats, at the foot rather than on a page of their own --
         days = " · ".join(
@@ -575,7 +614,7 @@ def build_pdf(report: dict, coverage: dict, asof, basis_label="") -> bytes:
 
         # ---- page two: every figure ---------------------------------------
         two = None
-        disp, rt, pct = wide_table(report)
+        disp, rt, pct = wide_table(report, names)
         if len(disp) > 1:
             counts = [c2 for c2 in disp.columns
                       if c2.endswith("BILLS") or c2.endswith("GAINED")]
@@ -606,8 +645,18 @@ def build_pdf(report: dict, coverage: dict, asof, basis_label="") -> bytes:
             two = A4._Sheet("Google reviews", asof, "", bounded=False,
                             footer=True)
             two.put(g_title, gap=22)
+            # ★ A WASH PER PERIOD. Twelve number columns in one flat run is
+            # where an eye loses which window it is reading — the same reason
+            # the salesperson sheet blocks its day, month and year.
+            # QTD is banded too, though he named three: it sits between MTD and
+            # YTD here, and leaving one group of four uncoloured would read as
+            # a mistake rather than a choice.
+            band = {j: _BAND[str(c).split()[0]]
+                    for j, c in enumerate(disp.columns)
+                    if str(c).split()[0] in _BAND}
             two.put(PP._render_chunk(A4._widen(best_fit[2], W), rt,
-                                     list(range(len(disp)))), gap=22)
+                                     list(range(len(disp))), col_bg=band),
+                    gap=22)
 
         # ★★ EACH SHEET IS CROPPED BY ITS OWN CONTENT. `_footers` crops every
         # page it holds to ONE height — the height of what THAT sheet drew — so

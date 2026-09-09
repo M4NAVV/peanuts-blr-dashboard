@@ -418,7 +418,7 @@ def _paginate(row_types, budget=ROWS_PER_PAGE):
 
 def _add_sheet(contents, section, disp, rt, *, money, pct, sign, money_dp,
                row_bg=None, cell_rules=(), font_px=32, header_px=28,
-               col_cap=None):
+               col_cap=None, col_bg=None, row_ink=None):
     """Measure, paginate, and append one (possibly multi-page) sheet. The column
     header repeats on every page; continued pages are labelled 'k/total'.
 
@@ -433,7 +433,9 @@ def _add_sheet(contents, section, disp, rt, *, money, pct, sign, money_dp,
     for k, rows in enumerate(row_pages):
         label = section if n == 1 else f"{section} — {k + 1}/{n}"
         contents.append((label, _render_chunk(m, rt, rows, row_bg=row_bg,
-                                              cell_rules=cell_rules)))
+                                              cell_rules=cell_rules,
+                                              col_bg=col_bg,
+                                              row_ink=row_ink)))
 
 
 # --------------------------------------------------------------------------- #

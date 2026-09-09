@@ -1248,7 +1248,8 @@ def render_portfolio():
                                      "total": int(_bills["store"].nunique()),
                                      "source": src},
                                     _asof,
-                                    basis_label=f"As of {_asof:%d %b %Y}")))
+                                    basis_label=f"As of {_asof:%d %b %Y}",
+                                    names=RV.store_display(vdf))))
                     if "tva" in chosen:
                         built.append(RTD.build_target_vs_ach(pf_all, pdf_asof,
                                                              basis))
@@ -2857,7 +2858,8 @@ if nav == "⭐ Google Reviews":
                                 {"measured": int(_rv["store"].nunique()),
                                  "total": int(_bills["store"].nunique()),
                                  "source": _src},
-                                _asof))
+                                _asof,
+                                names=RV.store_display(_b)))
                     except Exception as e:            # surface, don't crash
                         st.session_state["rv_out"] = None
                         st.error(f"Could not build: {e}")
