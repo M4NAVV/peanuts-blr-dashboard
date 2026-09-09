@@ -482,6 +482,69 @@ def salesperson_summary(df: pd.DataFrame) -> pd.DataFrame:
     return g
 
 
+def swapped_lines(df: pd.DataFrame) -> pd.Series:
+    """Rows whose piece was EXCHANGED, not sold — a boolean mask.
+
+    ★★ AN EVEN SWAP IS NOT A SALE (Manav, 9 Sep). He read Jayanagar's driver
+    sheet against his own arithmetic and found ABS 1.94 where he made it 1.89,
+    and ASP out by Rs 240 on the same day. One bill explained both:
+
+        PM/03792/Sep-26   -6,999  quantity blank    the item brought back
+                          +6,999  quantity 1        the item taken away
+
+    Zero rupees of trade and one piece on the quantity column. Counted, it
+    pushes ABS UP and — because the piece carries no money — drags ASP DOWN.
+    A piece went out and an identical piece came back; nothing was sold.
+
+    ★ PAIRED LINE BY LINE INSIDE THE BILL, NOT BILL BY BILL. One real bill
+    carries an upgrade AND two even swaps:
+
+        -4,499 / +4,999   a genuine upgrade, one piece really was sold
+        -1,899 / +1,899   an even swap
+        -2,624 / +2,624   an even swap
+
+    It nets +500, so a bill-level "does this net to zero" test keeps all three
+    pieces. Matching each return against a sale of the SAME amount catches
+    1,217 swapped pieces this year against 863 for the coarse rule — a third
+    more, and the right third.
+
+    ★ RETURNS THEMSELVES NEVER CARRY A QUANTITY. All 2,941 negative lines this
+    year have a blank one, so a pure return already contributes no units and
+    needs no special handling; only the replacement line has to be cancelled.
+    """
+    mask = pd.Series(False, index=df.index)
+    if COL_BILL_UID not in df.columns or df.empty:
+        return mask
+    neg = df[df[COL_AMOUNT] < 0]
+    if neg.empty:
+        return mask
+    # only bills that actually carry a return are worth walking
+    for _, g in df[df[COL_BILL_UID].isin(set(neg[COL_BILL_UID]))].groupby(
+            COL_BILL_UID, sort=False):
+        pool: dict = {}
+        for v in g.loc[g[COL_AMOUNT] < 0, COL_AMOUNT]:
+            pool[-v] = pool.get(-v, 0) + 1
+        if not pool:
+            continue
+        for i, v in g.loc[g[COL_AMOUNT] > 0, COL_AMOUNT].items():
+            if pool.get(v, 0) > 0:
+                pool[v] -= 1
+                mask.at[i] = True
+    return mask
+
+
+def sold_units(df: pd.DataFrame) -> float:
+    """Pieces actually SOLD — quantity with exchanged pieces netted out.
+
+    ★ ONE DEFINITION, EVERY SURFACE. ABS and ASP are computed on four sheets;
+    if each summed the quantity column its own way they would disagree the day
+    a customer swapped a kurta, which is what started this.
+    """
+    if df.empty or COL_QTY not in df.columns:
+        return 0.0
+    return float(df.loc[~swapped_lines(df), COL_QTY].sum())
+
+
 def salesperson_kpis(df: pd.DataFrame, asof=None) -> pd.DataFrame:
     """Per salesperson: sales, ABS, ABV and single-bill share, on the day, the
     month and the year.
@@ -561,11 +624,16 @@ def salesperson_kpis(df: pd.DataFrame, asof=None) -> pd.DataFrame:
                                       f"{tag}_single", f"{tag}_bills"])
             out = g if out is None else out.join(g, how="outer")
             continue
-        g = d.groupby(sid, dropna=False).agg(
-            sales=(COL_AMOUNT, "sum"), units=(COL_QTY, "sum"), bills=BILLS_AGG)
+        # ★ EXCHANGED PIECES ARE NOT SOLD PIECES, here as on the driver
+        # sheet — the two would otherwise disagree about the same day.
+        _sw = swapped_lines(d)
+        g = d.assign(**{"_u": d[COL_QTY].where(~_sw, 0.0)}).groupby(
+            sid, dropna=False).agg(
+            sales=(COL_AMOUNT, "sum"), units=("_u", "sum"), bills=BILLS_AGG)
         # a single bill is one PIECE on the bill — the house measure of whether
         # anything was added to the sale
-        per = d.groupby([sid, COL_BILL_UID], dropna=False)[COL_QTY].sum()
+        per = (d.assign(**{"_u": d[COL_QTY].where(~_sw, 0.0)})
+               .groupby([sid, COL_BILL_UID], dropna=False)["_u"].sum())
         g["single"] = (per <= 1).groupby(level=0).sum().reindex(g.index).fillna(0)
         g = pd.DataFrame({
             f"{tag}_sales": g["sales"],
@@ -664,6 +732,15 @@ def salesperson_kpis(df: pd.DataFrame, asof=None) -> pd.DataFrame:
     out.insert(0, "Salesperson", [str(names.get(i, "—")) for i in out.index])
     out.insert(1, "ID", [("" if pd.isna(i) else str(i)) for i in out.index])
     out = out.reset_index(drop=True).sort_values("m_sales", ascending=False)
+    # ★★ THE STORE'S OWN BILL COUNT, FOR THE TOTAL ROW. A bill can carry two
+    # salespeople — Jayanagar's PM/03787 has Prashanthini M and Prince Bagan on
+    # it — so SUMMING the per-person counts double-counts it: 19 against the
+    # store's 18. The total row describes the STORE, so it has to use the
+    # store's distinct bills, or the same day reads ABS 1.79 on the salesperson
+    # sheet and 1.89 on the driver sheet.
+    out.attrs["store_bills"] = {tag: bill_count(
+        df[(df["date"] >= a) & (df["date"] <= b)])
+        for tag, (a, b) in windows.items()}
     out.attrs["day"] = settled
     out.attrs["asof"] = asof
     out.attrs["quarter"] = windows["q"]

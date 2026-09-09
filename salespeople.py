@@ -115,8 +115,11 @@ def store_table(L, df, asof, store):
            "share": 100.0, "days": float("nan"), "perday": float("nan"),
            "move": float("nan"), "first": None, "tenure": float("nan"),
            "censored": False, "quiet": float("nan"), "flag": ""}
+    # ★ THE STORE'S DISTINCT BILLS, NOT THE SUM OF EACH PERSON'S — a bill with
+    # two salespeople on it is one bill for the store. See `salesperson_kpis`.
+    _sb = k.attrs.get("store_bills") or {}
     for t in ("d", "m", "q", "y"):
-        b = float(k[f"{t}_bills"].sum())
+        b = float(_sb.get(t) or k[f"{t}_bills"].sum())
         tot[f"{t}_sales"] = float(k[f"{t}_sales"].sum())
         tot[f"{t}_abv"] = tot[f"{t}_sales"] / b if b else 0.0
         tot[f"{t}_abs"] = float((k[f"{t}_abs"] * k[f"{t}_bills"]).sum()) / b if b else 0.0

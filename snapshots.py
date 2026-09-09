@@ -242,7 +242,10 @@ def store_kpis(L, df, asof, kind, store):
         d = f[f[L.COL_STORE_LABEL] == store]
         sale = float(d[L.COL_AMOUNT].sum())
         bills = L.bill_count(d)          # distinct bill numbers — see loader
-        units = float(d[L.COL_QTY].sum())
+        # ★ PIECES SOLD, NOT PIECES HANDLED — an even exchange adds a piece
+        # with no money behind it, which lifts ABS and drags ASP down. See
+        # `loader.swapped_lines`.
+        units = L.sold_units(d)
         return {"sale": sale, "bills": bills, "units": units,
                 "abv": sale / bills if bills else 0.0,
                 "abs": units / bills if bills else 0.0,
@@ -735,7 +738,7 @@ def _slice(L, df, asof, kind, store):
 def _one_kpi(L, d, ff, code, days):
     """Every figure the panel prints, for one slice."""
     sale = float(d[L.COL_AMOUNT].sum())
-    units = float(d[L.COL_QTY].sum())
+    units = L.sold_units(d)              # exchanges netted out — see loader
     bills = L.bill_count(d)              # distinct bill numbers — see loader
     out = {"sale": sale, "units": units, "bills": bills,
            "abv": sale / bills if bills else 0.0,
