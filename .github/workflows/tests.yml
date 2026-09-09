@@ -7,6 +7,9 @@ name: Tests
 # pinned to the same versions the app runs on. A run finishes in well under a
 # minute.
 #
+# ⚠️ REQUESTS IS HERE BECAUSE `test_google_reviews` imports `google_reviews`,
+# which reaches it at module import time. Nothing in the tests makes a call.
+#
 # ⚠️ PYYAML IS HERE FOR THE SAME REASON AS PILLOW: `test_reviews_workflow`
 # reads the collector's schedule as data, and without the library it would skip
 # silently rather than fail — which is worse than red, because a skipped guard
@@ -31,7 +34,16 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
+      # ★★ LFS OR THE FONTS ARE POINTERS. `assets/fonts/*.ttf` is stored in Git
+      # LFS, and checkout does NOT fetch LFS by default — the runner got a
+      # 132-byte text pointer where the font should be, and Pillow rejected it
+      # with `OSError: unknown file format`. Every test that measures or draws
+      # a table failed on that, and had done since 29 August, while the same
+      # suite passed on a laptop where the real file is on disk. Exactly the
+      # trap the Pillow note below describes, one layer down.
       - uses: actions/checkout@v4
+        with:
+          lfs: true
 
       - uses: actions/setup-python@v5
         with:
@@ -41,7 +53,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install "pandas==2.2.3" "numpy==1.26.4" "pillow==12.3.0" \
-                      "pyyaml==6.0.2" pytest
+                      "pyyaml==6.0.2" requests pytest
 
       - name: Run the tests
         run: python -m pytest tests -q
