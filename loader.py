@@ -347,6 +347,13 @@ def _apply_takeover_filter(df: pd.DataFrame) -> pd.DataFrame:
 # KPI helpers — all operate on the cleaned frame.
 # --------------------------------------------------------------------------- #
 
+# ★ THE GROUPBY SPELLING OF `bill_count`. Seven aggregations counted bills as
+# `bills=BILLS_AGG` — numerically identical to `bill_count` and
+# invisible to the test guarding it, which only looked for the bracket form.
+# Naming it once means the two cannot drift the next time the definition moves.
+BILLS_AGG = (COL_BILL_UID, "nunique")
+
+
 def bill_count(df: pd.DataFrame) -> int:
     """Bills — the distinct bill numbers in the frame.
 
@@ -421,7 +428,7 @@ def monthly_summary(df: pd.DataFrame) -> pd.DataFrame:
         df.groupby("month")
         .agg(
             sales=(COL_AMOUNT, "sum"),
-            bills=(COL_BILL_UID, "nunique"),
+            bills=BILLS_AGG,
             units=(COL_QTY, "sum"),
             discount=(COL_PROMO, "sum"),
         )
@@ -436,7 +443,7 @@ def monthly_summary(df: pd.DataFrame) -> pd.DataFrame:
 def daily_summary(df: pd.DataFrame) -> pd.DataFrame:
     g = (
         df.groupby("date")
-        .agg(sales=(COL_AMOUNT, "sum"), bills=(COL_BILL_UID, "nunique"), units=(COL_QTY, "sum"))
+        .agg(sales=(COL_AMOUNT, "sum"), bills=BILLS_AGG, units=(COL_QTY, "sum"))
         .reset_index()
         .sort_values("date")
     )
@@ -450,7 +457,7 @@ def dimension_summary(df: pd.DataFrame, col: str, top: int | None = None) -> pd.
         .agg(
             sales=(COL_AMOUNT, "sum"),
             units=(COL_QTY, "sum"),
-            bills=(COL_BILL_UID, "nunique"),
+            bills=BILLS_AGG,
         )
         .reset_index()
         .sort_values("sales", ascending=False)
@@ -466,13 +473,204 @@ def salesperson_summary(df: pd.DataFrame) -> pd.DataFrame:
         .agg(
             sales=(COL_AMOUNT, "sum"),
             units=(COL_QTY, "sum"),
-            bills=(COL_BILL_UID, "nunique"),
+            bills=BILLS_AGG,
         )
         .reset_index()
         .sort_values("sales", ascending=False)
     )
     g["atv"] = g["sales"] / g["bills"].where(g["bills"] != 0)
     return g
+
+
+def salesperson_kpis(df: pd.DataFrame, asof=None) -> pd.DataFrame:
+    """Per salesperson: sales, ABS, ABV and single-bill share, on the day, the
+    month and the year.
+
+    ★ KEYED ON THE SALESPERSON ID, NEVER THE NAME. Six people in this feed are
+    typed two ways — `IRFAN BASHA` / `N IRFAN ALI`, `NAFEESA BANU` /
+    `NAFEESA MARKED NA BANU`, `SUVAJIT DAS` with a trailing space — and each
+    pair carries ONE id. Keyed on name, Grand Kamraj Road's best seller appears
+    twice and ranks below people he outsold. 251 names collapse to 245 ids.
+    The name shown is the SPELLING MOST USED, decided from the data rather than
+    from a list somebody has to maintain.
+
+    ⚠ ABS IS LINES PER BILL, NOT GARMENTS PER BILL. `Bill Quantity` is 1.0 on
+    96% of this feed, so a kurta set — one line, two garments — counts once.
+    Against the GINESYS POS at Orion, 2.12 here against their 3.03. The same
+    caveat applies to any per-piece figure derived from it. Nothing in the data
+    can fix that; the export needs a real quantity column.
+
+    `(PROVISIONAL)` is the night fill, not a person: it carries no id and no
+    bills. It is kept, named, and counted, so the rows still add up to the
+    store's takings.
+    """
+    asof = as_of(df) if asof is None else pd.Timestamp(asof)
+    sid = "SALESPERSON_NO"
+    if sid not in df.columns:
+        return pd.DataFrame()
+
+    # ★ THE NIGHT FILL IS NOT A PERSON AND IT IS NOT DROPPED SILENTLY. It
+    # carries a day's takings before the bills arrive — on 2 Sep 2026 the whole
+    # day, Rs 15.9 lakh, with no bill numbers and no salesperson. Left in, it
+    # tops the leaderboard as a phantom seller; left in with the ratios, it
+    # divides a full numerator by an empty denominator, which is the
+    # mismatched-halves error that once made a city read 380% conversion.
+    # It is excluded here and REPORTED by `.attrs`, so the caller can say what
+    # is missing instead of the table quietly not adding up.
+    prov = df[sid].isna() | (df[sid].astype(str).str.strip() == "")
+    excluded = float(df.loc[prov, COL_AMOUNT].sum())
+    df = df[~prov]
+    if df.empty:
+        return pd.DataFrame()
+
+    # ★ AND THE DAY IS THE LAST SETTLED ONE, not the feed's last date. The
+    # morning after a night fill, the newest day has takings and no bills, so a
+    # "day" column keyed to it reads zero for every person on the team.
+    settled = df["date"].max()
+    fy = asof.year if asof.month >= 4 else asof.year - 1
+    # ★ THE QUARTER IS THE FISCAL ONE — Apr-Jun, Jul-Sep, Oct-Dec, Jan-Mar
+    # (Manav, 4 Sep). A calendar quarter would cut the year in the wrong places
+    # and put April in the same block as the previous March, which is a
+    # different trading year on every other sheet in this dashboard.
+    _q0 = pd.Timestamp(fy, 4, 1) + pd.DateOffset(months=3 * ((asof.month - 4) % 12 // 3))
+    windows = {
+        "d": (settled, settled),
+        "m": (asof.replace(day=1), asof),
+        "q": (_q0, asof),
+        "y": (pd.Timestamp(fy, 4, 1), asof),
+    }
+
+    # the name each id is known by — whichever spelling appears most often
+    names = (df.groupby([sid, COL_SALESPERSON], dropna=False).size()
+             .reset_index(name="n").sort_values("n", ascending=False)
+             .drop_duplicates(sid).set_index(sid)[COL_SALESPERSON])
+
+    # ★ EVERY PERIOD GETS ITS COLUMNS, EVEN AN EMPTY ONE. Skipping a window
+    # with no rows left the frame without its `m_*` columns entirely — Malda
+    # has not sold yet this month, and the sheet died on a KeyError rather than
+    # printing zeros. A person who sold nothing this month is a row of zeros,
+    # which is a fact; a missing column is a crash.
+    ids = pd.Index(df[sid].dropna().unique(), name=sid)
+    out = None
+    for tag, (a, b) in windows.items():
+        d = df[(df["date"] >= a) & (df["date"] <= b)]
+        if d.empty:
+            g = pd.DataFrame(0.0, index=ids,
+                             columns=[f"{tag}_sales", f"{tag}_units",
+                                      f"{tag}_abs", f"{tag}_abv",
+                                      f"{tag}_single", f"{tag}_bills"])
+            out = g if out is None else out.join(g, how="outer")
+            continue
+        g = d.groupby(sid, dropna=False).agg(
+            sales=(COL_AMOUNT, "sum"), units=(COL_QTY, "sum"), bills=BILLS_AGG)
+        # a single bill is one PIECE on the bill — the house measure of whether
+        # anything was added to the sale
+        per = d.groupby([sid, COL_BILL_UID], dropna=False)[COL_QTY].sum()
+        g["single"] = (per <= 1).groupby(level=0).sum().reindex(g.index).fillna(0)
+        g = pd.DataFrame({
+            f"{tag}_sales": g["sales"],
+            # ★ UNITS KEPT, NOT JUST DIVIDED AWAY. They were computed here only
+            # to make ABS and then dropped — but "who moved the most pieces" is
+            # a different question from "who took the most money", and a
+            # manager asks both. (Manav, 7 Sep.)
+            f"{tag}_units": g["units"],
+            f"{tag}_abs": g["units"] / g["bills"].where(g["bills"] != 0),
+            f"{tag}_abv": g["sales"] / g["bills"].where(g["bills"] != 0),
+            f"{tag}_single": g["single"] / g["bills"].where(g["bills"] != 0) * 100,
+            f"{tag}_bills": g["bills"],
+        })
+        out = g if out is None else out.join(g, how="outer")
+
+    if out is None:
+        return pd.DataFrame()
+    out = out.fillna(0.0)
+
+    # ----------------------------------------------------------------- #
+    #  What the four periods cannot say on their own                     #
+    # ----------------------------------------------------------------- #
+    # ★ A MONTH'S SALES ALONE CANNOT SEPARATE "SELLS WELL" FROM "WAS HERE".
+    # Somebody who billed on four days and somebody who billed on twenty-four
+    # sit in the same column, and on a sheet a manager judges a team by, that
+    # is the reading most likely to be unfair. DAYS SOLD and the per-day rate
+    # answer it, and they are derived here rather than in the report so the tab
+    # and the PDF cannot drift apart.
+    mlo, mhi = windows["m"]
+    md = df[(df["date"] >= mlo) & (df["date"] <= mhi) & (df[COL_AMOUNT] > 0)]
+    days = md.groupby(sid)["date"].nunique()
+    out["m_days"] = [float(days.get(i, 0)) for i in out.index]
+    out["m_perday"] = out["m_sales"] / out["m_days"].where(out["m_days"] > 0)
+
+    # ★ SHARE IS OF WHATEVER FRAME YOU PASSED, and that is the honest
+    # definition: sliced to one store it is the share of that store's month,
+    # asked of the estate it is the share of the estate's. It is not a
+    # store-level constant smuggled in from somewhere else — see
+    # [[feedback-same-estate]].
+    _mtot = float(out["m_sales"].sum())
+    out["m_share"] = (out["m_sales"] / _mtot * 100) if _mtot else 0.0
+
+    # ★ MOVEMENT IS A RANK CHANGE, NOT A SALES CHANGE. Last month was a
+    # different length and, in this trade, a different festival position, so the
+    # money is not comparable across it — but the ORDER of a team is. Positive
+    # means climbed. Somebody who did not sell last month has no rank to move
+    # from, and gets NaN rather than a flattering leap from nowhere.
+    # ★★ AND IT COMPARES THE SAME NUMBER OF DAYS. Ranking three days of
+    # September against the whole of August is the mismatched-window error this
+    # dashboard keeps finding — whoever happened to be rostered on the 1st
+    # would read as a large riser, and the column would be pure noise for the
+    # first fortnight of every month, which is exactly when a manager looks at
+    # it. Last month is cut to the same elapsed days: 1-3 Sep against 1-3 Aug.
+    plo = mlo - pd.DateOffset(months=1)
+    phi = min(plo + pd.Timedelta(days=(mhi_ := asof).day - 1),
+              plo + pd.offsets.MonthEnd(0))
+    pm = df[(df["date"] >= plo) & (df["date"] <= phi)]
+    if not pm.empty:
+        prev = pm.groupby(sid)[COL_AMOUNT].sum().sort_values(ascending=False)
+        prev = prev[prev > 0]
+        prank = {i: n + 1 for n, i in enumerate(prev.index)}
+    else:
+        prank = {}
+    cur_rank = {i: n + 1 for n, i in
+                enumerate(out["m_sales"].sort_values(ascending=False).index)}
+    out["m_rank"] = [cur_rank.get(i) for i in out.index]
+    out["pm_rank"] = [prank.get(i, float("nan")) for i in out.index]
+    # a person with no sales this month is not ranked either — an unranked row
+    # cannot have moved
+    out["m_move"] = [(p - c) if (pd.notna(p) and sale > 0) else float("nan")
+                     for c, p, sale in zip(out["m_rank"], out["pm_rank"],
+                                           out["m_sales"])]
+
+    # ----------------------------------------------------------------- #
+    #  How long they have been selling                                    #
+    # ----------------------------------------------------------------- #
+    # ★ A NEW JOINER AND A LONG-TIMER READ THE SAME IN A SALES COLUMN, and on a
+    # sheet a manager judges a team by, that is the reading most likely to be
+    # unfair (Manav, 6 Sep). Someone three weeks in at the bottom of the table
+    # is not the same fact as someone three years in at the bottom.
+    #
+    # ★★ AND IT IS CENSORED, SO IT SAYS SO. The first sale we can see is the
+    # first sale IN THIS DATA, not the day the person joined. This feed starts
+    # 1 Apr 2025 and 102 of its 375 salespeople first sold on that very day —
+    # they could have been on the floor for years. Anyone whose first sale
+    # falls on the earliest date their store has any data at all is flagged
+    # `tenure_censored`, and the report prints their tenure as "at least".
+    # Same trap as first-ROW versus first-SALE on the store L2L.
+    sold_all = df[df[COL_AMOUNT] > 0]
+    first = sold_all.groupby(sid)["date"].min()
+    horizon = df["date"].min()
+    out["first_sold"] = [first.get(i, pd.NaT) for i in out.index]
+    out["tenure_days"] = (asof - pd.to_datetime(out["first_sold"])).dt.days
+    out["tenure_censored"] = pd.to_datetime(out["first_sold"]) <= horizon
+
+    out.insert(0, "Salesperson", [str(names.get(i, "—")) for i in out.index])
+    out.insert(1, "ID", [("" if pd.isna(i) else str(i)) for i in out.index])
+    out = out.reset_index(drop=True).sort_values("m_sales", ascending=False)
+    out.attrs["day"] = settled
+    out.attrs["asof"] = asof
+    out.attrs["quarter"] = windows["q"]
+    out.attrs["horizon"] = horizon
+    out.attrs["prev_month"] = (plo, phi)
+    out.attrs["excluded_provisional"] = excluded
+    return out
 
 
 def store_summary(df: pd.DataFrame) -> pd.DataFrame:
@@ -482,7 +680,7 @@ def store_summary(df: pd.DataFrame) -> pd.DataFrame:
         .agg(
             sales=(COL_AMOUNT, "sum"),
             units=(COL_QTY, "sum"),
-            bills=(COL_BILL_UID, "nunique"),
+            bills=BILLS_AGG,
             customers=("mobile_clean", "nunique"),
         )
         .reset_index()
@@ -519,7 +717,7 @@ def customer_stats(df: pd.DataFrame) -> dict:
 
     top = (
         valid.groupby(COL_MOBILE)
-        .agg(spend=(COL_AMOUNT, "sum"), visits=(COL_BILL_UID, "nunique"))
+        .agg(spend=(COL_AMOUNT, "sum"), visits=BILLS_AGG)
         .reset_index()
         .sort_values("spend", ascending=False)
         .head(20)
@@ -664,7 +862,7 @@ def _agg_base(work: pd.DataFrame, group_cols: list[str]) -> pd.DataFrame:
             sales=(COL_AMOUNT, "sum"),
             net_sales=("net_amount", "sum"),
             units=(COL_QTY, "sum"),
-            bills=(COL_BILL_UID, "nunique"),
+            bills=BILLS_AGG,
             customers=("mobile_clean", "nunique"),
             stores=(COL_STORE_LABEL, "nunique"),
             discount=(COL_PROMO, "sum"),

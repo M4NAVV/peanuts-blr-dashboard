@@ -113,8 +113,9 @@ def _lift_constants(drv):
 CEILING = 1100
 
 
-def _measure(drv, money, pct, sign, px):
-    m = PP._measure_table(drv, money=money, pct=pct, sign=sign,
+def _measure(drv, money, pct, sign, px, num=(), whole=()):
+    m = PP._measure_table(drv, money=money, pct=pct, sign=sign, num=num,
+                          whole=whole,
                           font_px=px, header_px=max(int(px * 0.88), 12))
     scratch = ImageDraw.Draw(Image.new("RGB", (1, 1)))
     for j in range(len(m["cols"])):

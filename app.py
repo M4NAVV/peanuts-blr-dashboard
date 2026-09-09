@@ -2597,6 +2597,28 @@ if nav == "📄 REPORTS PDF":
                  "carries, on one sheet a manager can print and brief from. "
                  "Always the full estate, never the sidebar filters. "
                  "Takes a couple of minutes to build.")
+        # ★ THE TWO SALESPERSON REPORTS (6 Sep 2026). Two sheets, one source:
+        # the pointer is what a manager reads in five minutes before the floor
+        # opens, the detailed one is what gets read at a desk. Both come from
+        # the same `store_table` call so they cannot disagree.
+        picked["sp_pointer"] = st.checkbox(
+            "Manager team pointer  ·  one page per store, as a zip",
+            key="vrp_sp_pointer",
+            help="Who is carrying the month, who needs a word today, the one "
+                 "habit to say on the floor, and who is no longer on it. ONE "
+                 "page whatever the size of the team — a sixty-person floor "
+                 "and a five-person one both fit. Full estate, never the "
+                 "sidebar filters.")
+        picked["sp_detail"] = st.checkbox(
+            "Manager detailed team report  ·  one page per store, as a zip",
+            key="vrp_sp_detail",
+            help="Every employee on one sheet, A to Z, with the month rank in "
+                 "the first column. Sales, units, ABV, ABS and single-piece on "
+                 "the day, the month and the year — the three periods in "
+                 "separate colour blocks. A star marks whoever tops a measure "
+                 "and sets their name in gold; anybody whose year is zero or "
+                 "negative is in red. One page whatever the size of the team. "
+                 "Full estate, never the sidebar filters.")
     with c2:
         st.markdown("**Festive run-ups**")
         _fw = _festive_windows()
@@ -2639,6 +2661,25 @@ if nav == "📄 REPORTS PDF":
                     if _failed:
                         st.warning(f"{len(_failed)} store(s) could not be "
                                    f"built: " + "; ".join(_failed[:5]))
+                for _k, _kind, _lab in (("sp_pointer", "pointer",
+                                         "Team pointer"),
+                                        ("sp_detail", "detailed",
+                                         "Team detail")):
+                    if _k not in chosen:
+                        continue
+                    import salespeople as SP
+                    _sb = st.progress(0.0, text=f"{_lab}…")
+                    try:
+                        _sheets, _sfail = SP.store_sheets(
+                            L, get_data(), p_asof, kind=_kind)
+                        built += _sheets
+                        # A store that failed must be named, not absent.
+                        if _sfail:
+                            st.warning(f"{_lab}: {len(_sfail)} store(s) could "
+                                       f"not be built: "
+                                       + "; ".join(_sfail[:5]))
+                    finally:
+                        _sb.empty()
                 for _i, _w in enumerate(_fw):
                     if f"festive_{_i}" in chosen:
                         built.append(FEST.build_festive_pdf(

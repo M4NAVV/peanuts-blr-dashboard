@@ -212,15 +212,16 @@ def _wrap(draw, text, font, max_w):
 ROWS_PER_PAGE = 35
 
 
-def _measure_table(df, *, money=(), pct=(), sign=(), money_dp=0,
-                   font_px=32, header_px=28):
+def _measure_table(df, *, money=(), pct=(), sign=(), money_dp=0, num=(),
+                   whole=(), num_dp=2, font_px=32, header_px=28):
     """Measure a report table ONCE — formatted cells, column widths, wrapped
     header layout — so every paginated chunk shares identical columns. Returns a
     dict consumed by `_render_chunk`."""
     reg, bold = _ft(font_px)
     hreg, hbold = _ft(header_px)
     cols = [str(c) for c in df.columns]
-    money, pct, sign = set(money), set(pct), set(sign)
+    money, pct, sign, num = set(money), set(pct), set(sign), set(num)
+    whole = set(whole)
     scratch = ImageDraw.Draw(Image.new("RGB", (1, 1)))
 
     def cell_text(c, v):
@@ -228,12 +229,35 @@ def _measure_table(df, *, money=(), pct=(), sign=(), money_dp=0,
             return _fmt_in(v, money_dp)
         if c in pct:
             return "—" if pd.isna(v) else f"{float(v):,.2f}%"
+        if c in num:
+            # ★ THE THIRD BUCKET. A number that is neither money nor a
+            # percentage — pieces per bill, a ratio — used to fall past both and
+            # print as `str(v)`: `1.8482142857142858`, left-aligned, sizing its
+            # column to eighteen digits.
+            return "—" if pd.isna(v) else f"{float(v):,.{num_dp}f}"
+        if c in whole:
+            # ★ AND A COUNT IS NOT A RATIO. A rank and a day count came out as
+            # "1.00" and "2.00" beside "1.91" pieces per bill — three kinds of
+            # number claiming one precision.
+            return "—" if pd.isna(v) else f"{float(v):,.0f}"
         if isinstance(v, str):
             return v
         return "" if pd.isna(v) else str(v)
 
+    # ★ AND A NUMERIC COLUMN IN NO BUCKET NOW SAYS SO. Not an exception — a
+    # report that renders slightly wrong is better than one that does not
+    # render — but a warning the test suite can turn into a failure.
+    import warnings
+    for c in cols:
+        if c in money or c in pct or c in num or c in whole:
+            continue
+        if pd.api.types.is_float_dtype(df[c]):
+            warnings.warn(f"column {c!r} is numeric but declared in none of "
+                          f"money/pct/num — it will print unformatted and "
+                          f"left-aligned", RuntimeWarning, stacklevel=2)
+
     txt = [[cell_text(c, df.iloc[i][c]) for c in cols] for i in range(len(df))]
-    is_num = [c in money or c in pct for c in cols]
+    is_num = [c in money or c in pct or c in num or c in whole for c in cols]
 
     # Column widths: data drives width (capped); header wraps to that width.
     # Measure in BOLD — total rows, identity columns and growth cells all render
@@ -262,7 +286,8 @@ def _measure_table(df, *, money=(), pct=(), sign=(), money_dp=0,
                 W=sum(col_w), reg=reg, bold=bold, hbold=hbold, sign=sign)
 
 
-def _render_chunk(m, row_types, rows, row_bg=None, cell_rules=()):
+def _render_chunk(m, row_types, rows, row_bg=None, cell_rules=(),
+                  col_bg=None, row_ink=None):
     """Render the pale-blue column header + the given body `rows` (indices into
     the measured table) as one page-content image, so the header repeats per
     page. Styled to the client workbook: white ground, a full grid on every
@@ -273,6 +298,15 @@ def _render_chunk(m, row_types, rows, row_bg=None, cell_rules=()):
     reg, bold, hbold, sign = m["reg"], m["bold"], m["hbold"], m["sign"]
     row_bg = _ROW_BG if row_bg is None else row_bg
     cell_rules = tuple(cell_rules)
+    # ★ ADDITIVE AND OPTIONAL. `col_bg` tints whole COLUMN bands (a period
+    # block, say) and `row_ink` recolours a whole row's text. Both default to
+    # None, so every existing caller draws exactly what it drew before.
+    col_bg = col_bg or {}
+    row_ink = row_ink or {}
+    _xs, _acc = [], 0
+    for _w in col_w:
+        _xs.append(_acc)
+        _acc += _w
     scratch = ImageDraw.Draw(Image.new("RGB", (1, 1)))
 
     H = head_h + len(rows) * row_h
@@ -281,6 +315,9 @@ def _render_chunk(m, row_types, rows, row_bg=None, cell_rules=()):
 
     # header (repeated on every page) — pale blue, dark bold text
     d.rectangle([0, 0, W, head_h], fill=HDR_BG)
+    for _j, _c in col_bg.items():
+        d.rectangle([_xs[_j], 0, _xs[_j] + col_w[_j], head_h],
+                    fill=tuple(max(0, v - 18) for v in _c))
     x = 0
     for j in range(len(cols)):
         lines = m["hdr_lines"][j]
@@ -297,11 +334,17 @@ def _render_chunk(m, row_types, rows, row_bg=None, cell_rules=()):
         t = row_types[i] if row_types else "store"
         bg, is_bold = row_bg.get(t, (_BODY_BG, False))
         d.rectangle([0, y, W, y + row_h], fill=bg)
+        # A total row keeps its own fill — a period tint over yellow reads as a
+        # third colour nobody chose.
+        if col_bg and t not in ("grand", "subtotal", "total", "loctotal"):
+            for _j, _c in col_bg.items():
+                d.rectangle([_xs[_j], y, _xs[_j] + col_w[_j], y + row_h],
+                            fill=_c)
         x = 0
         for j, c in enumerate(cols):
             s = txt[i][j]
             f = bold if (is_bold or c in BOLD_COLS) else reg
-            color = INK
+            color = row_ink.get(i, INK)
             # Negative growth is filled red (workbook convention), not just
             # coloured — it has to read at a glance on a phone.
             # Conditional formatting and negative figures both colour the TEXT

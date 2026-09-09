@@ -66,6 +66,13 @@ def test_every_bill_count_in_the_pack_uses_this_one_definition():
     body = src.split("def bill_count", 1)[1].split("\ndef ", 1)[1]
     stray = re.findall(r"\[COL_BILL_UID\]\.nunique\(\)", body)
     assert not stray, f"{len(stray)} bill count(s) bypass bill_count()"
+    # ★ AND THE GROUPBY SPELLING, which the line above never saw. Seven
+    # aggregations counted bills as `(COL_BILL_UID, "nunique")` inside a
+    # named-agg — the same definition, written a second way, and invisible to a
+    # test that claimed every bill count went through one place.
+    agg = re.findall(r'\(COL_BILL_UID,\s*"nunique"\)', body)
+    assert not agg, (f"{len(agg)} groupby bill count(s) spell it out instead of "
+                     f"using BILLS_AGG")
 
 
 def test_orion_august_ties_to_the_pos_exactly():
@@ -166,3 +173,105 @@ def test_a_division_is_never_listed_twice():
     df = _movers([(0, 100), (0, 90), (300, 0)])
     got = _divisions(df, top_products=2, both_ways=True)
     assert len(got) == len({n for n, _ in got}) == 3
+
+
+# --------------------------------------------------------------------------- #
+#  Salesperson KPIs — the quarter, the depth measures, and the rank move       #
+# --------------------------------------------------------------------------- #
+def _sp_frame():
+    """A two-month, three-person store built by hand, so the expected answers
+    are arithmetic rather than whatever the live feed happens to hold."""
+    import loader as L
+    rows = []
+
+    def bill(day, who, sid, amt, uid, qty=1):
+        rows.append({"date": pd.Timestamp(day), L.COL_AMOUNT: amt,
+                     L.COL_QTY: qty, L.COL_BILL_UID: uid,
+                     "SALESPERSON_NO": sid, L.COL_SALESPERSON: who,
+                     L.COL_STORE_LABEL: "Test Store"})
+
+    # August: A ahead of B on the first three days, C nowhere
+    bill("2026-08-01", "A", "1", 300, "b1")
+    bill("2026-08-02", "A", "1", 300, "b2")
+    bill("2026-08-02", "B", "2", 100, "b3")
+    bill("2026-08-20", "B", "2", 5000, "b4")     # after the 3rd — must NOT count
+    bill("2026-08-21", "C", "3", 9000, "b5")     # ditto
+    # September, three days: B ahead of A, C still nothing
+    bill("2026-09-01", "B", "2", 900, "b6")
+    bill("2026-09-02", "B", "2", 900, "b7")
+    bill("2026-09-03", "A", "1", 400, "b8")
+    return pd.DataFrame(rows)
+
+
+def test_the_quarter_is_the_fiscal_one_not_the_calendar_one():
+    import loader as L
+    k = L.salesperson_kpis(_sp_frame(), asof=pd.Timestamp("2026-09-03"))
+    lo, hi = k.attrs["quarter"]
+    assert (lo.month, lo.day) == (7, 1), "Jul-Sep, not Jul-Sep of a calendar Q3"
+    assert hi == pd.Timestamp("2026-09-03")
+
+
+def test_the_move_compares_the_same_number_of_days():
+    """★ THE BUG THIS PINS. Ranking three days of September against the WHOLE
+    of August made B (who took Rs 5,000 on the 20th) look established and
+    everyone else look like risers. Cut to 1-3 Aug, A led August and B leads
+    September, so B has climbed one and A has fallen one."""
+    import loader as L
+    k = L.salesperson_kpis(_sp_frame(), asof=pd.Timestamp("2026-09-03"))
+    lo, hi = k.attrs["prev_month"]
+    assert (lo, hi) == (pd.Timestamp("2026-08-01"), pd.Timestamp("2026-08-03"))
+    by = k.set_index("Salesperson")
+    assert by.loc["B", "m_move"] == 1
+    assert by.loc["A", "m_move"] == -1
+
+
+def test_somebody_who_did_not_sell_last_month_has_not_moved():
+    """A rank they never held is not a rank they climbed from."""
+    import loader as L
+    k = L.salesperson_kpis(_sp_frame(), asof=pd.Timestamp("2026-09-03"))
+    assert pd.isna(k.set_index("Salesperson").loc["C", "m_move"])
+
+
+def test_days_sold_counts_days_not_bills():
+    import loader as L
+    k = L.salesperson_kpis(_sp_frame(), asof=pd.Timestamp("2026-09-03"))
+    by = k.set_index("Salesperson")
+    assert by.loc["B", "m_days"] == 2          # 1 and 2 Sep
+    assert by.loc["A", "m_days"] == 1          # 3 Sep only
+    assert by.loc["B", "m_perday"] == 900
+
+
+def test_share_is_of_the_frame_it_was_given():
+    import loader as L
+    k = L.salesperson_kpis(_sp_frame(), asof=pd.Timestamp("2026-09-03"))
+    assert round(k["m_share"].sum(), 6) == 100.0
+    by = k.set_index("Salesperson")
+    assert round(by.loc["B", "m_share"], 2) == round(1800 / 2200 * 100, 2)
+
+
+def test_a_whole_number_column_prints_without_decimals():
+    """★ A rank and a day count came out as '1.00' beside '1.91' pieces per
+    bill — three kinds of number claiming the same precision."""
+    import portfolio_pdf as PP
+    d = pd.DataFrame({"#": [1.0, 2.0], "ABS": [1.9142, 2.0]})
+    m = PP._measure_table(d, whole=["#"], num=["ABS"], font_px=20, header_px=18)
+    assert m["txt"][0][0] == "1"
+    assert m["txt"][0][1] == "1.91"
+
+
+def test_every_salesperson_column_is_declared():
+    """The undeclared-column warning, turned into a failure for this report."""
+    import warnings
+    import salespeople as SP
+    rows = [{"rank": 1, "who": "A", "id": "1", "share": 10.0, "days": 2.0,
+             "perday": 100.0, "move": 1.0, "last": pd.Timestamp("2026-09-03"),
+             **{f"{t}_{m}": 1.0 for t in "dmqy"
+                for m in ("sales", "abv", "abs", "single")}}]
+    for frame, money, pct, num, whole in (
+            (SP._frame(rows), SP._MONEY, SP._PCT, SP._NUM, SP._WHOLE),
+            (SP._grid_frame(rows), SP._G_MONEY, SP._G_PCT, SP._G_NUM, SP._G_WHOLE)):
+        import portfolio_pdf as PP
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", RuntimeWarning)
+            PP._measure_table(frame, money=money, pct=pct, num=num, whole=whole,
+                              font_px=20, header_px=18)
