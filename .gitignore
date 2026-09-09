@@ -6,6 +6,11 @@ __pycache__/
 
 # Local data copy — production reads the Google Sheet, not this file.
 data/*.xlsx
+# ★ AND THE COLLECTOR'S LOGS. `reviews.log` / `reviews.err` are the launchd
+# job's own output — stack traces and this machine's paths, of no use to anyone
+# checking the repo out, and the collector runs on Actions now anyway.
+data/*.log
+data/*.err
 
 # Raw portfolio drop — the committed portfolio_snapshot.csv is the fallback.
 25v26 data set all str.xlsx

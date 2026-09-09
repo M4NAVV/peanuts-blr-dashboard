@@ -1151,6 +1151,9 @@ def render_portfolio():
             picked["tva"] = st.checkbox(
                 "Target vs achievement  ·  MTD and YTD against the Targets tab",
                 key="rp_tva")
+            picked["reviews"] = st.checkbox(
+                "Google reviews  ·  reviews against bills, day / month / "
+                "quarter / year", key="rp_rv")
         with c2:
             st.markdown("**Festive run-ups**")
             _fw = _festive_windows()
@@ -1183,6 +1186,12 @@ def render_portfolio():
                        "and carpet area** are computed from the data and will "
                        "differ from the workbook, which uses a hand-kept "
                        "comparable-store list. All sales figures match.")
+        if "reviews" in chosen:
+            st.caption("ℹ️ Google reviews: reviews are counted as the **daily "
+                       "change in each store's running Google total**, so the "
+                       "figure is net of any deletions and carries no staff "
+                       "name. The report prints which source it used and how "
+                       "many stores it covers.")
         if "tva" in chosen:
             st.caption("ℹ️ Target vs achievement: the year-to-date target is the "
                        "**sum of the months elapsed**, not the full year — South "
@@ -1214,6 +1223,32 @@ def render_portfolio():
                             RTD.build_month_wise(pf_all, vdf, v_asof, tdb))
                     if "night_sms" in chosen:
                         built.append(RTD.build_night_sms(pf_all, basis_label=tdb))
+                    if "reviews" in chosen:
+                        import reviews as RV
+                        rv, src = RV.load_best()
+                        if rv is None or rv.empty:
+                            st.warning(f"Google review report skipped: {src}")
+                        else:
+                            _b = vdf[vdf[L.COL_BILL_UID].notna()]
+                            _bills = (_b.groupby([L.COL_STORE_LABEL, "date"])
+                                      [L.COL_BILL_UID].nunique().reset_index())
+                            _bills.columns = ["store", "date", "bills"]
+                            # the last day with BOTH a reading and bills —
+                            # see `reviews.settled_day`
+                            _asof = RV.settled_day(rv, _bills, pdf_asof)
+                        if rv is not None and not rv.empty and _asof is None:
+                            st.warning("Google review report skipped: no day "
+                                       "has both a review reading and bills "
+                                       "yet.")
+                            built.append((
+                                f"google_reviews_{_asof:%Y%m%d}.pdf",
+                                RV.build_pdf(
+                                    RV.build(rv, _bills, _asof),
+                                    {"measured": int(rv["store"].nunique()),
+                                     "total": int(_bills["store"].nunique()),
+                                     "source": src},
+                                    _asof,
+                                    basis_label=f"As of {_asof:%d %b %Y}")))
                     if "tva" in chosen:
                         built.append(RTD.build_target_vs_ach(pf_all, pdf_asof,
                                                              basis))
@@ -2079,7 +2114,7 @@ def render_productivity(pr, key):
 _TAB_LABELS = [
     "🧾 VFL G/D", "🧾 VFL Gender", "📄 REPORTS PDF", "🖼️ REPORTS IMAGES",
     "📋 MTD / YTD Report", "📉 Degrowth", "🔎 Degrowth Drivers",
-    "💸 DB REPORTS", "🗓️ Day calendar",
+    "💸 DB REPORTS", "⭐ Google Reviews", "🗓️ Day calendar",
     "🧑‍🤝‍🧑 Gender G/D", "🏷️ Brand G/D", "🏬 Store × Brand G/D",
     "⚖️ Gender Mix",
     "📊 Executive", "🎯 Day Targets", "🏙️ City-wise G/D", "📅 Monthly Contribution",
@@ -2264,9 +2299,9 @@ if nav == "🖼️ REPORTS IMAGES" and _img_what == "Morning set (ZIP)":
     _per_store = 1          # the A4 sheet is one image per store, always
     want_drivers = c3.checkbox(
         "Per-store drivers", value=True,
-        help=f"{len(_stores)} stores, one sheet each — the month and the year "
-             f"side by side, falling and growing told apart, with the six "
-             f"measures. Same layout as the printable driver sheet.")
+        help=f"{len(_stores)} stores, one A4 sheet each — the month and the year "
+             f"side by side with the six measures, same layout as the printable "
+             f"driver sheet, delivered as PNG.")
 
     _n = (1 if want_store_wise else 0) + (4 if want_degrowth else 0) \
         + (len(_stores) * _per_store if want_drivers else 0)
@@ -2304,13 +2339,11 @@ if nav == "🖼️ REPORTS IMAGES" and _img_what == "Morning set (ZIP)":
                         _ff = SN.footfall_map(_load_portfolio_cached()[0])
                     except Exception:
                         _ff = {}
-                    # ★ THE PER-STORE IMAGE IS NOW THE DRIVER SHEET (28 Aug):
-                    # same layout as the printable one, still delivered as PNG.
-                    # One layout, two containers — snapshots_a4 composes the
-                    # page once and only saves it differently, so they cannot
-                    # drift. The image is NOT held to A4: it grows to fit, which
-                    # is what lets it keep every Twamev section at a readable
-                    # size where the fixed page could not.
+                    # ★ THE PER-STORE IMAGE IS NOW THE A4 SHEET (Manav, 28 Aug):
+                    # same layout and look as the printable driver sheet, still
+                    # delivered as a PNG. One layout, two containers — they
+                    # cannot drift, because `snapshots_a4` composes the page once
+                    # and only saves it differently.
                     import snapshots_a4 as A4
                     _tg = SN._targets_for(_asof)
                     for _st in _stores:
@@ -2619,6 +2652,7 @@ if nav == "📄 REPORTS PDF":
                  "and sets their name in gold; anybody whose year is zero or "
                  "negative is in red. One page whatever the size of the team. "
                  "Full estate, never the sidebar filters.")
+
     with c2:
         st.markdown("**Festive run-ups**")
         _fw = _festive_windows()
@@ -2699,6 +2733,141 @@ if nav == "📄 REPORTS PDF":
 # =========================================================================== #
 # DB REPORTS — the women's discount vs fresh report (Mohey & Manyavar stores)
 # =========================================================================== #
+if nav == "⭐ Google Reviews":
+    import reviews as RV
+    st.subheader("⭐ Google Reviews  ·  ratings against bills")
+
+    _rv, _src = RV.load_best()
+    if _rv is None or _rv.empty:
+        st.warning(f"No review data: {_src}")
+    else:
+        _b = get_data()
+        _bb = _b[_b[L.COL_BILL_UID].notna()]
+        _bills = (_bb.groupby([L.COL_STORE_LABEL, "date"])[L.COL_BILL_UID]
+                  .nunique().reset_index())
+        _bills.columns = ["store", "date", "bills"]
+        _asof = RV.settled_day(_rv, _bills)
+        if _asof is None:
+            st.warning("No day has both a review reading and bills yet.")
+        else:
+            _rep = RV.build(_rv, _bills, _asof)
+            _cov = _rep.get("_cover", {})
+
+            # ★ THE PAGE SAYS WHAT IT IS BEFORE IT SAYS A NUMBER. This feed
+            # measures the MOVEMENT in a store's public rating count, not a list
+            # of reviews — Google's public interface returns five reviews and
+            # not the recent five, so a day's figure can only be a difference.
+            st.caption(
+                f"**{_src}**  ·  as of **{_asof:%d %b %Y}** — the last day with "
+                f"both a reading and bills. This counts the **movement in each "
+                f"store's public Google rating count**, not a list of reviews, "
+                f"so a rating left and one removed on the same day cancel out. "
+                f"Exact per-review dates need owner access through the Business "
+                f"Profile API.")
+
+            _period = st.radio("Period", ["Day", "MTD", "QTD", "YTD"],
+                               index=1, horizontal=True, key="rv_period")
+            _t = _rep[_period]
+            _c = _cov.get(_period, {})
+            _gain, _gone = _t["Reviews"].sum(), _t["Removed"].sum()
+            _bil = _t["Bills"].sum()
+
+            m = st.columns(4)
+            m[0].metric("Ratings gained", f"{_gain:,.0f}")
+            m[1].metric("Removed by Google",
+                        f"-{_gone:,.0f}" if _gone else "0")
+            m[2].metric("Rate", f"{_gain / _bil * 100:,.2f}%" if _bil else "—",
+                        help="Ratings over the bills of THE SAME DAYS.")
+            m[3].metric("Days measured",
+                        f"{_c.get('measured', 0)} of {_c.get('traded', 0)}",
+                        help="Bills are counted only on days that store has a "
+                             "reading, so both halves cover the same calendar.")
+
+            if _c.get("measured", 0) < _c.get("traded", 0):
+                st.caption(
+                    f"⚠️ Collection began on **23 Aug 2026**, so this period is "
+                    f"measured over {_c.get('measured', 0)} of its "
+                    f"{_c.get('traded', 0)} trading days. The rate is over the "
+                    f"days actually read — it is not a whole-period figure.")
+
+            _disp = _t.reset_index().rename(columns={
+                "store": "STORE", "Reviews": "GAINED", "Removed": "REMOVED",
+                "Bills": "BILLS", "Rate %": "RATE %", "Days": "DAYS"})
+            _disp = _disp[["STORE", "GAINED", "REMOVED", "BILLS", "RATE %",
+                           "DAYS"]]
+            _safe_dataframe(
+                _disp, use_container_width=True, hide_index=True,
+                column_config={
+                    "RATE %": st.column_config.NumberColumn(format="%.2f%%"),
+                    "GAINED": st.column_config.NumberColumn(format="%.1f"),
+                    "REMOVED": st.column_config.NumberColumn(format="%.1f"),
+                })
+
+            # ★ A STORE LOSING REVIEWS IS A DIFFERENT PROBLEM FROM ONE NEVER
+            # ASKING, and the fix is not the same. Named rather than left for
+            # someone to spot in a column.
+            _losing = _t[_t["Removed"] > _t["Reviews"]]
+            if len(_losing):
+                st.warning(
+                    "**Losing more than they gain:** "
+                    + " · ".join(f"{i} ({r['Reviews']:.0f} in, "
+                                 f"{r['Removed']:.0f} out)"
+                                 for i, r in _losing.iterrows()))
+
+            st.caption(
+                "GAINED and REMOVED can be fractional: when the collector "
+                "misses a morning, the next reading covers more than one day "
+                "and is spread evenly across them — a running total cannot say "
+                "which day inside the gap a rating arrived. Totals stay exact.")
+
+            with st.expander("Collection health"):
+                # ★ NOT A BARE RELATIVE PATH. `google_reviews` roots these
+                # at its own file, which is the only place they are certain to
+                # be; a cwd-relative read works locally and silently finds
+                # nothing wherever the app is actually served from.
+                import google_reviews as _G
+                _snap = RV.pd.read_csv(_G.SNAPSHOT_CSV, parse_dates=["date"])
+                _days = RV.pd.date_range(_snap["date"].min(),
+                                         _snap["date"].max())
+                _missed = [d for d in _days
+                           if d not in set(_snap["date"].dt.normalize())]
+                _per = _snap.groupby("store")["date"].nunique()
+                st.write(f"**{_snap['store'].nunique()} stores** · "
+                         f"{_snap['date'].nunique()} of {len(_days)} days "
+                         f"collected since {_snap['date'].min():%d %b %Y}")
+                if _missed:
+                    st.write("**Days missed:** "
+                             + ", ".join(f"{d:%d %b}" for d in _missed))
+                _short = _per[_per < _per.max()]
+                if len(_short):
+                    st.write("**Fewer readings than the rest** (newly added, or "
+                             "a fetch that failed): "
+                             + " · ".join(f"{i} ({v})"
+                                          for i, v in _short.items()))
+
+            st.divider()
+            if st.button("📄 Build the PDF report", key="rv_pdf",
+                         type="primary"):
+                with st.spinner("Building…"):
+                    try:
+                        st.session_state["rv_out"] = (
+                            f"google_reviews_{_asof:%Y%m%d}.pdf",
+                            RV.build_pdf(
+                                _rep,
+                                {"measured": int(_rv["store"].nunique()),
+                                 "total": int(_bills["store"].nunique()),
+                                 "source": _src},
+                                _asof))
+                    except Exception as e:            # surface, don't crash
+                        st.session_state["rv_out"] = None
+                        st.error(f"Could not build: {e}")
+            if st.session_state.get("rv_out"):
+                _n, _p = st.session_state["rv_out"]
+                st.success(f"Ready — {_n}")
+                st.download_button("⬇️ Download", _p, file_name=_n,
+                                   mime="application/pdf", key="rv_dl")
+
+
 if nav == "💸 DB REPORTS":
     import discount as DISC
     st.subheader("💸 DB Reports  ·  women's discount")
@@ -3152,18 +3321,61 @@ if nav == "Category mix":
 # SALESPEOPLE
 # =========================================================================== #
 if nav == "Salespeople":
-    sp = L.salesperson_summary(df)
-    st.subheader("Salesperson leaderboard")
-    st.caption(f"{len(sp)} salespeople in view · click a column header to sort")
-    _safe_dataframe(
-        sp.rename(columns={L.COL_SALESPERSON: "Salesperson", "sales": "Sales (₹)",
-                           "units": "Units", "bills": "Bills", "atv": "ATV (₹)"}),
-        use_container_width=True, hide_index=True,
-        column_config={
-            "Sales (₹)": st.column_config.NumberColumn(format="₹%.2f"),
-            "ATV (₹)": st.column_config.NumberColumn(format="₹%.2f"),
-        },
-    )
+    # ★ THE SAME FOUR MEASURES ON THE DAY, THE MONTH AND THE YEAR (Manav,
+    # 3 Sep). Sales says who is busy; ABV, ABS and the single-bill share say
+    # how they SELL — a person can be top on sales and bottom on everything
+    # that made it, and the point of the table is to show that in one row.
+    sp = L.salesperson_kpis(df)
+    if sp.empty:
+        st.info("No salesperson data in this view.")
+        st.stop()
+    _day = sp.attrs.get("day")
+    _exc = sp.attrs.get("excluded_provisional") or 0.0
+
+    st.subheader("Salesperson KPIs")
+    st.caption(
+        f"{len(sp)} selling · **day = {_day:%d %b}**, the last day with bills · "
+        f"month and year to {sp.attrs.get('asof'):%d %b %Y} · sorted by the "
+        f"month · click any column header to re-sort")
+    if _exc:
+        # A night fill carries a day's takings before the bills arrive, so it
+        # belongs to no salesperson. Saying so beats a table that quietly does
+        # not add up to the store.
+        st.caption(f"ℹ️ Rs {_exc:,.0f} of night-fill sale is not in this table — "
+                   f"it arrives before the bills do, so it belongs to nobody yet.")
+
+    _period = st.radio("Show", ["All three", "Day", "Month", "Year"],
+                       horizontal=True, key="sp_period",
+                       help="Thirteen columns is a lot to read at once — pick a "
+                            "period to see just its four.")
+    _cols = {"Day": "d", "Month": "m", "Year": "y"}
+    _want = ["d", "m", "y"] if _period == "All three" else [_cols[_period]]
+
+    _title = {"d": "Day", "m": "Month", "y": "Year"}
+    disp, cfg = pd.DataFrame({"Salesperson": sp["Salesperson"], "ID": sp["ID"]}), {}
+    for t in _want:
+        disp[f"{_title[t]} · sales"] = sp[f"{t}_sales"]
+        disp[f"{_title[t]} · bills"] = sp[f"{t}_bills"]
+        disp[f"{_title[t]} · ABV"] = sp[f"{t}_abv"]
+        disp[f"{_title[t]} · ABS"] = sp[f"{t}_abs"]
+        disp[f"{_title[t]} · single"] = sp[f"{t}_single"]
+        cfg[f"{_title[t]} · sales"] = st.column_config.NumberColumn(
+            format="₹%,.0f", help="net of returns")
+        cfg[f"{_title[t]} · bills"] = st.column_config.NumberColumn(format="%d")
+        cfg[f"{_title[t]} · ABV"] = st.column_config.NumberColumn(
+            format="₹%,.0f", help="average bill value — sales ÷ bills")
+        cfg[f"{_title[t]} · ABS"] = st.column_config.NumberColumn(
+            format="%.2f", help="lines per bill. NOT garments — a kurta set is "
+                                "one line and two garments, so this reads low "
+                                "against the POS")
+        cfg[f"{_title[t]} · single"] = st.column_config.ProgressColumn(
+            format="%.0f%%", min_value=0, max_value=100,
+            help="share of bills that left with a single piece — lower is better")
+    cfg["ID"] = st.column_config.TextColumn(
+        help="the salesperson id this row is keyed on — six people in this feed "
+             "are typed two ways and would otherwise appear twice")
+    _safe_dataframe(disp, use_container_width=True, hide_index=True,
+                    column_config=cfg)
 
 # =========================================================================== #
 # CUSTOMERS

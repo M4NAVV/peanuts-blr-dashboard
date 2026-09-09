@@ -213,7 +213,7 @@ ROWS_PER_PAGE = 35
 
 
 def _measure_table(df, *, money=(), pct=(), sign=(), money_dp=0, num=(),
-                   whole=(), num_dp=2, font_px=32, header_px=28):
+                   whole=(), num_dp=2, font_px=32, header_px=28, col_cap=None):
     """Measure a report table ONCE — formatted cells, column widths, wrapped
     header layout — so every paginated chunk shares identical columns. Returns a
     dict consumed by `_render_chunk`."""
@@ -233,12 +233,18 @@ def _measure_table(df, *, money=(), pct=(), sign=(), money_dp=0, num=(),
             # ★ THE THIRD BUCKET. A number that is neither money nor a
             # percentage — pieces per bill, a ratio — used to fall past both and
             # print as `str(v)`: `1.8482142857142858`, left-aligned, sizing its
-            # column to eighteen digits.
+            # column to eighteen digits. That has now happened three times (the
+            # TTM column, a draft of this sheet, and ABS), always the same way,
+            # because alignment AND formatting are decided entirely by these
+            # lists and a column absent from all of them silently prints raw.
             return "—" if pd.isna(v) else f"{float(v):,.{num_dp}f}"
         if c in whole:
-            # ★ AND A COUNT IS NOT A RATIO. A rank and a day count came out as
-            # "1.00" and "2.00" beside "1.91" pieces per bill — three kinds of
-            # number claiming one precision.
+            # ★ A COUNT IS NOT A RATIO. `num` carries one decimal convention for
+            # every column that uses it, so a rank and a day count came out as
+            # "1.00" and "2.00" beside "1.91" pieces per bill — three different
+            # kinds of number claiming the same precision. Whole numbers get
+            # their own bucket rather than a second `num_dp` nobody can vary
+            # per column.
             return "—" if pd.isna(v) else f"{float(v):,.0f}"
         if isinstance(v, str):
             return v
@@ -246,7 +252,8 @@ def _measure_table(df, *, money=(), pct=(), sign=(), money_dp=0, num=(),
 
     # ★ AND A NUMERIC COLUMN IN NO BUCKET NOW SAYS SO. Not an exception — a
     # report that renders slightly wrong is better than one that does not
-    # render — but a warning the test suite can turn into a failure.
+    # render — but a warning the test suite can turn into a failure, so the
+    # next one is caught at build time rather than on a printed page.
     import warnings
     for c in cols:
         if c in money or c in pct or c in num or c in whole:
@@ -266,7 +273,11 @@ def _measure_table(df, *, money=(), pct=(), sign=(), money_dp=0, num=(),
     for j, c in enumerate(cols):
         data_w = max((scratch.textlength(txt[i][j], font=bold)
                       for i in range(len(df))), default=0)
-        target = min(max(data_w, _px(30)), COL_CAP)
+        # ★ THE CAP MUST SCALE WITH THE TYPE. It is a pixel width, so drawing a
+        # table at triple the font size against a fixed cap clips every long
+        # value — store names came out as "Roodraksh M…" on an otherwise
+        # correct sheet.
+        target = min(max(data_w, _px(30)), col_cap or COL_CAP)
         lines = _wrap(scratch, c, hbold, target)
         hw = max(scratch.textlength(ln, font=hbold) for ln in lines)
         hdr_lines.append(lines)
@@ -406,10 +417,17 @@ def _paginate(row_types, budget=ROWS_PER_PAGE):
 
 
 def _add_sheet(contents, section, disp, rt, *, money, pct, sign, money_dp,
-               row_bg=None, cell_rules=()):
+               row_bg=None, cell_rules=(), font_px=32, header_px=28,
+               col_cap=None):
     """Measure, paginate, and append one (possibly multi-page) sheet. The column
-    header repeats on every page; continued pages are labelled 'k/total'."""
-    m = _measure_table(disp, money=money, pct=pct, sign=sign, money_dp=money_dp)
+    header repeats on every page; continued pages are labelled 'k/total'.
+
+    `font_px` / `header_px` are passed through so a narrow table can be drawn
+    larger: page dpi is pixels laid across a fixed sheet, so a table with few
+    columns prints soft unless its type grows to fill the width.
+    """
+    m = _measure_table(disp, money=money, pct=pct, sign=sign, money_dp=money_dp,
+                       font_px=font_px, header_px=header_px, col_cap=col_cap)
     row_pages = _paginate(rt)
     n = len(row_pages)
     for k, rows in enumerate(row_pages):
