@@ -576,7 +576,11 @@ def _kpi_grid_a4(kpis, width, label_px=24, value_px=40, sub_px=21, per_px=26):
     n = len(spec)
     cw = (width - per_w - gap * n) // n
     lh, vh, sh = _h(lab_f), _h(val_b), _h(sub_f)
-    row_h = SN.CARD_PAD_Y * 2 + lh + vh + sh + 10
+    # ★ ROOM FOR A TWO-LINE SUB — the bills pill spells itself out now.
+    _subs = max(len(str(SN._fmt_kpi(w, kpis[SN.PERIODS[0]]["ty"],
+                                    kpis[SN.PERIODS[0]]["ly"])[1]).split("\n"))
+                for w, _l, _g in spec)
+    row_h = SN.CARD_PAD_Y * 2 + lh + vh + sh * _subs + 10
 
     H = len(SN.PERIODS) * (row_h + gap) - gap
     img = Image.new("RGB", (width, H), (255, 255, 255))
@@ -599,8 +603,10 @@ def _kpi_grid_a4(kpis, width, label_px=24, value_px=40, sub_px=21, per_px=26):
                    font=lab_f, fill=SN.SUB_INK)
             d.text((x + SN.CARD_PAD_X, y + SN.CARD_PAD_Y + lh + 2), head,
                    font=val_b, fill=ink)
-            d.text((x + SN.CARD_PAD_X, y + SN.CARD_PAD_Y + lh + vh + 8), sub,
-                   font=sub_f, fill=SN.SUB_INK)
+            for _i, _ln in enumerate(str(sub).split("\n")):
+                d.text((x + SN.CARD_PAD_X,
+                        y + SN.CARD_PAD_Y + lh + vh + 8 + _i * sh), _ln,
+                       font=sub_f, fill=SN.SUB_INK)
         y += row_h + gap
     return img
 
@@ -1022,8 +1028,8 @@ def store_sheet(L, df, asof, store, code=None, pf=None, ff=None, targets=None,
     half = (CONTENT_W - GUT) // 2
     usable = PAGE_H - 2 * MARGIN - int(round(9 / 25.4 * DPI))
     kpis = SN.period_kpis(L, df, asof, store, ff, code)
-    kpi = _stack([_caption(CONTENT_W, "The six measures",
-                           "the same six on the day, the month and the year"),
+    kpi = _stack([_caption(CONTENT_W, "The seven measures",
+                           "the same seven on the day, the month and the year"),
                   _kpi_grid_a4(kpis, CONTENT_W)], gap=10)
     tcap_h = _caption(half, "MTD — where the movement comes from",
                       "by brand and product, this year against last").height
@@ -1307,8 +1313,8 @@ def store_sheet_print(L, df, asof, store, code=None, pf=None, ff=None,
         usable = PAGE_H - 2 * MARGIN
 
         kpis = SN.period_kpis(L, df, asof, store, ff, code)
-        kpi = _stack([_caption(CONTENT_W, "The six measures",
-                               "the same six on the day, the month and the year"),
+        kpi = _stack([_caption(CONTENT_W, "The seven measures",
+                               "the same seven on the day, the month and the year"),
                       _kpi_grid_a4(kpis, CONTENT_W, **PRINT_KPI)], gap=10)
 
         # EVERY section — the cap loop that protects the live sheet's type is

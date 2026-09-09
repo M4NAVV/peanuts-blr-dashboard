@@ -790,8 +790,36 @@ def period_kpis(L, df, asof, store, ff=None, code=None) -> dict:
 
 def _fmt_kpi(which, t, l):
     """(headline, the line under it) for one KPI of one period."""
+    if which == "sale":
+        # ★ WHAT THE STORE ACTUALLY TOOK (Manav, 10 Sep). The sheet carried six
+        # RATIOS for the day — bills, ABV, pieces per bill, price per piece —
+        # and nowhere the day's takings. It was derivable, bills x ABV, and a
+        # manager should not have to multiply two cells to learn what his shop
+        # made yesterday.
+        return _money(t["sale"], _unit_for([t["sale"], l["sale"]])), \
+            "was " + _money(l["sale"], _unit_for([t["sale"], l["sale"]]))
     if which == "bills":
-        return f"{t['bills']:,}", f"was {l['bills']:,}"
+        # ★★ EVERY LINE A SENTENCE, NOT A ROW OF NUMBERS (Manav, 10 Sep:
+        # *"spelling it out in that cell... pure numbers will be confusing"*).
+        #
+        # It went wrong twice before this. First "18" over "34 pieces · was 13"
+        # — he asked what the 13 meant, and that IS the bug: the pieces sat
+        # BETWEEN the bills figure and its comparison, so the "was" attached to
+        # the wrong number, and last year's pieces were not shown at all. Then
+        # "18 · 34" over "was 13 · 24", which is unambiguous only if you work
+        # out that position carries the meaning.
+        #
+        # Now each line stands on its own and names its own unit:
+        #     18 bills
+        #     was 13 bills
+        #     34 pieces, was 24
+        #
+        # Measured at the WIDEST row a store can print (YTD, five figures):
+        # head 192px, lines 142px and 230px, against 265px of usable card. No
+        # font shrunk to make it fit.
+        return (f"{t['bills']:,} bills",
+                f"was {l['bills']:,} bills\n"
+                f"{t['units']:,.0f} pieces, was {l['units']:,.0f}")
     if which == "abv":
         return f"Rs {t['abv']:,.0f}", f"was Rs {l['abv']:,.0f}"
     if which == "abs":
@@ -813,7 +841,8 @@ def _fmt_kpi(which, t, l):
 
 
 # Which way is good, per KPI: a single-piece bill going UP is not an improvement.
-_KPI_SPEC = (("bills", "Bills written", +1),
+_KPI_SPEC = (("sale", "Sales", +1),
+             ("bills", "Bills and pieces", +1),
              ("abv", "ABV · per bill", +1),
              ("abs", "Pieces per bill", +1),
              ("asp", "Price per piece", +1),
@@ -858,7 +887,12 @@ def _kpi_grid(kpis, lines, width):
     lh = lab_f.getmetrics()[0] + lab_f.getmetrics()[1]
     vh = val_b.getmetrics()[0] + val_b.getmetrics()[1]
     sh = sub_f.getmetrics()[0] + sub_f.getmetrics()[1]
-    row_h = CARD_PAD_Y * 2 + lh + vh + sh + 8
+    # ★ ROOM FOR THE TALLEST SUB IN THE SPEC. The bills pill now spells itself
+    # over two lines; sizing the row for one would clip the second.
+    _subs = max(len(str(_fmt_kpi(w, kpis[PERIODS[0]]["ty"],
+                                 kpis[PERIODS[0]]["ly"])[1]).split("\n"))
+                for w, _l, _g in _KPI_SPEC)
+    row_h = CARD_PAD_Y * 2 + lh + vh + sh * _subs + 8
 
     bh = body_f.getmetrics()[0] + body_f.getmetrics()[1]
     gutter = int(max(scratch.textlength(h, font=head_b) for h, _ in lines) + 28)
@@ -899,8 +933,11 @@ def _kpi_grid(kpis, lines, width):
                    fill=SUB_INK)
             d.text((x + CARD_PAD_X, y + CARD_PAD_Y + lh + 2), head,
                    font=val_b, fill=ink)
-            d.text((x + CARD_PAD_X, y + CARD_PAD_Y + lh + vh + 6), sub,
-                   font=sub_f, fill=SUB_INK)
+            # ★ THE SUB MAY BE TWO LINES NOW — see `_fmt_kpi` for bills.
+            for _i, _ln in enumerate(str(sub).split("\n")):
+                d.text((x + CARD_PAD_X,
+                        y + CARD_PAD_Y + lh + vh + 6 + _i * sh), _ln,
+                       font=sub_f, fill=SUB_INK)
         y += row_h + CARD_GAP
 
     y += 14 - CARD_GAP
@@ -916,6 +953,8 @@ def _kpi_grid(kpis, lines, width):
 
 
 def _kpi_pair(which, t, l):
+    if which == "sale":
+        return t["sale"], l["sale"]
     if which == "bills":
         return t["bills"], l["bills"]
     if which == "abv":
@@ -1010,7 +1049,7 @@ def _panel_heading(width, asof):
     d = ImageDraw.Draw(img)
     d.text((0, 0), "What to work on", font=f_b, fill=KPI_INK)
     d.text((0, h1 + 6),
-           f"The same six measures on the day, the month and the year · "
+           f"The same seven measures on the day, the month and the year · "
            f"the notes below read the MONTH, which is the one still in play",
            font=sub, fill=SUB_INK)
     return img
