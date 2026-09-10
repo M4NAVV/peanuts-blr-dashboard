@@ -280,7 +280,7 @@ def test_every_salesperson_column_is_declared():
 # --------------------------------------------------------------------------- #
 #  An even exchange is not a sale                                              #
 # --------------------------------------------------------------------------- #
-def _exchange_frame():
+def _return_frame():
     """One bill per case, built by hand so the right answer is arithmetic."""
     import loader as L
     rows = []
@@ -290,63 +290,85 @@ def _exchange_frame():
                      L.COL_QTY: qty, L.COL_BILL_UID: uid,
                      L.COL_STORE_LABEL: "T"})
 
-    line("b1", 5000, 1)                      # a plain sale
+    line("b1", 5000, 1)                               # a plain sale
     line("b2", -6999, None); line("b2", 6999, 1)      # an even swap
-    line("b3", -4499, None); line("b3", 4999, 1)      # an upgrade: really sold
-    # ★ THE CASE A BILL-LEVEL RULE GETS WRONG: this bill nets +500, so "does it
-    # net to zero" keeps all three pieces. Only one of them was sold.
-    line("b4", -4499, None); line("b4", 4999, 1)
-    line("b4", -1899, None); line("b4", 1899, 1)
-    line("b4", -2624, None); line("b4", 2624, 1)
+    line("b3", -4499, None); line("b3", 4999, 1)      # swapped for a dearer one
+    line("b4", -2499, None)                           # a plain refund, no swap
+    line("b5", 3000, 1)                               # another plain sale
     return pd.DataFrame(rows)
 
 
-def test_an_even_swap_is_not_a_piece_sold():
-    """Manav, 9 Sep: the driver sheet read ABS 1.94 where he made it 1.89, and
-    ASP was out by Rs 240. One exchange explained both."""
+def test_a_returned_piece_comes_off_the_count():
+    """Manav, 10 Sep: his sheet made Jayanagar 59 pieces on 9 Sep where we
+    printed 68. The quantity column summed to 75 and the day held 16 returns."""
     import loader as L
-    d = _exchange_frame()
+    d = _return_frame()
     b2 = d[d[L.COL_BILL_UID] == "b2"]
     assert b2[L.COL_QTY].sum() == 1          # the raw column says one piece
-    assert L.sold_units(b2) == 0             # nothing was sold
+    assert L.sold_units(b2) == 0             # one out, one back
 
 
-def test_an_upgrade_is_a_piece_sold():
+def test_a_return_counts_whatever_replaces_it():
+    """★ THE BUG IN THE RULE THIS REPLACED. The 9 Sep rule cancelled a return
+    only against a sale of the SAME amount, so a swap for a dearer piece kept
+    its unit. Both bills move a piece each way and both must read zero."""
     import loader as L
-    d = _exchange_frame()
-    assert L.sold_units(d[d[L.COL_BILL_UID] == "b3"]) == 1
+    d = _return_frame()
+    for uid in ("b2", "b3"):
+        assert L.sold_units(d[d[L.COL_BILL_UID] == uid]) == 0
+    b3 = d[d[L.COL_BILL_UID] == "b3"]
+    assert round(b3[L.COL_AMOUNT].sum()) == 500   # money moved, pieces did not
 
 
-def test_the_pairing_is_line_by_line_not_bill_by_bill():
-    """b4 nets +500, so a bill-level test keeps all three pieces. Two of them
-    were swapped for an identical amount and only one was sold."""
+def test_a_plain_refund_is_minus_one_piece():
+    """A return with nothing taken in exchange still takes a piece off the day."""
     import loader as L
-    d = _exchange_frame()
-    b4 = d[d[L.COL_BILL_UID] == "b4"]
-    assert round(b4[L.COL_AMOUNT].sum()) == 500      # not zero
-    assert b4[L.COL_QTY].sum() == 3
-    assert L.sold_units(b4) == 1
+    d = _return_frame()
+    assert L.sold_units(d[d[L.COL_BILL_UID] == "b4"]) == -1
 
 
-def test_abs_and_asp_move_the_way_the_swap_implies():
-    """A swapped piece carries no money, so counting it lifts ABS and drags
-    ASP down — which is exactly the pair of errors he spotted."""
+def test_returns_carry_a_blank_quantity_so_the_raw_column_overstates():
+    """Every negative line in the feed has a blank quantity — summing the
+    column as-is treats a kurta that came back as though it never left."""
     import loader as L
-    d = _exchange_frame()
-    bills = L.bill_count(d)
-    sale = d[L.COL_AMOUNT].sum()
+    d = _return_frame()
+    assert d.loc[d[L.COL_AMOUNT] < 0, L.COL_QTY].isna().all()
+    assert d[L.COL_QTY].sum() == 4            # raw: four lines carry a one
+    # b2 and b3 each moved a piece both ways; b4 took one back. b1 and b5 sold.
+    assert L.sold_units(d) == 1
+
+
+def test_abs_falls_and_asp_rises_once_returns_come_off():
+    """A returned piece brings no money, so counting it lifts ABS and drags
+    ASP down — the pair of errors he spotted on the driver sheet."""
+    import loader as L
+    d = _return_frame()
+    bills, sale = L.bill_count(d), d[L.COL_AMOUNT].sum()
     raw, sold = d[L.COL_QTY].sum(), L.sold_units(d)
     assert sold < raw
     assert sold / bills < raw / bills          # ABS falls
     assert sale / sold > sale / raw            # ASP rises
 
 
-def test_a_pure_return_needs_no_special_handling():
-    """Every negative line in this feed carries a blank quantity, so a return
-    with no replacement already contributes nothing."""
+def test_the_jayanagar_day_that_settled_it():
+    """9 Sep 2026, Jayanagar: 75 on the quantity column, 16 return lines,
+    59 pieces — his Google Sheet figure, to the piece."""
     import loader as L
-    d = pd.DataFrame([{"date": pd.Timestamp("2026-09-08"),
-                       L.COL_AMOUNT: -2999, L.COL_QTY: None,
-                       L.COL_BILL_UID: "r1", L.COL_STORE_LABEL: "T"}])
-    assert L.sold_units(d) == 0
-    assert not L.swapped_lines(d).any()       # nothing to cancel
+    rows = [{"date": pd.Timestamp("2026-09-09"), L.COL_AMOUNT: 2624,
+             L.COL_QTY: 1, L.COL_BILL_UID: f"s{i}",
+             L.COL_STORE_LABEL: "Jayanagar"} for i in range(75)]
+    rows += [{"date": pd.Timestamp("2026-09-09"), L.COL_AMOUNT: -2624,
+              L.COL_QTY: None, L.COL_BILL_UID: f"r{i}",
+              L.COL_STORE_LABEL: "Jayanagar"} for i in range(16)]
+    d = pd.DataFrame(rows)
+    assert d[L.COL_QTY].sum() == 75
+    assert L.sold_units(d) == 59
+
+
+def test_unit_delta_is_one_row_per_line():
+    """The rollups group it, so it has to line up with the frame it came from."""
+    import loader as L
+    d = _return_frame()
+    u = L.unit_delta(d)
+    assert list(u.index) == list(d.index)
+    assert u.sum() == L.sold_units(d)

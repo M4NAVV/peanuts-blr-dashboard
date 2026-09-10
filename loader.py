@@ -482,67 +482,42 @@ def salesperson_summary(df: pd.DataFrame) -> pd.DataFrame:
     return g
 
 
-def swapped_lines(df: pd.DataFrame) -> pd.Series:
-    """Rows whose piece was EXCHANGED, not sold — a boolean mask.
+def unit_delta(df: pd.DataFrame) -> pd.Series:
+    """Pieces each line moves — plus the quantity on a sale, MINUS ONE on a return.
 
-    ★★ AN EVEN SWAP IS NOT A SALE (Manav, 9 Sep). He read Jayanagar's driver
-    sheet against his own arithmetic and found ABS 1.94 where he made it 1.89,
-    and ASP out by Rs 240 on the same day. One bill explained both:
+    ★★ A RETURNED PIECE COMES OFF THE COUNT (Manav, 10 Sep). His Google Sheet
+    made Jayanagar 59 pieces on 9 Sep where we printed 68. The quantity column
+    sums to 75; the day carried 16 return lines; 75 - 16 = 59, to the piece.
+    Tableau subtracts a piece when one comes back and so, now, do we.
 
-        PM/03792/Sep-26   -6,999  quantity blank    the item brought back
-                          +6,999  quantity 1        the item taken away
+    ★ RETURNS CARRY A BLANK QUANTITY. Every negative-amount line in the feed
+    has one, so summing the column as-is treats a kurta that came back as
+    though it never left — it lifts ABS and, since the piece brought no money,
+    drags ASP down. That was the whole of the gap.
 
-    Zero rupees of trade and one piece on the quantity column. Counted, it
-    pushes ABS UP and — because the piece carries no money — drags ASP DOWN.
-    A piece went out and an identical piece came back; nothing was sold.
-
-    ★ PAIRED LINE BY LINE INSIDE THE BILL, NOT BILL BY BILL. One real bill
-    carries an upgrade AND two even swaps:
-
-        -4,499 / +4,999   a genuine upgrade, one piece really was sold
-        -1,899 / +1,899   an even swap
-        -2,624 / +2,624   an even swap
-
-    It nets +500, so a bill-level "does this net to zero" test keeps all three
-    pieces. Matching each return against a sale of the SAME amount catches
-    1,217 swapped pieces this year against 863 for the coarse rule — a third
-    more, and the right third.
-
-    ★ RETURNS THEMSELVES NEVER CARRY A QUANTITY. All 2,941 negative lines this
-    year have a blank one, so a pure return already contributes no units and
-    needs no special handling; only the replacement line has to be cancelled.
+    ★ THIS REPLACED A LINE-PAIRING RULE (9 Sep, `swapped_lines`) that cancelled
+    a return only when the same bill held a sale of the SAME amount. It caught
+    7 of the 16 on that day and missed every swap for a dearer piece and every
+    plain refund — 68 instead of 59. Amount-matching was the wrong idea: a
+    return is a return whatever replaces it.
     """
-    mask = pd.Series(False, index=df.index)
-    if COL_BILL_UID not in df.columns or df.empty:
-        return mask
-    neg = df[df[COL_AMOUNT] < 0]
-    if neg.empty:
-        return mask
-    # only bills that actually carry a return are worth walking
-    for _, g in df[df[COL_BILL_UID].isin(set(neg[COL_BILL_UID]))].groupby(
-            COL_BILL_UID, sort=False):
-        pool: dict = {}
-        for v in g.loc[g[COL_AMOUNT] < 0, COL_AMOUNT]:
-            pool[-v] = pool.get(-v, 0) + 1
-        if not pool:
-            continue
-        for i, v in g.loc[g[COL_AMOUNT] > 0, COL_AMOUNT].items():
-            if pool.get(v, 0) > 0:
-                pool[v] -= 1
-                mask.at[i] = True
-    return mask
+    if df.empty or COL_QTY not in df.columns or COL_AMOUNT not in df.columns:
+        return pd.Series(dtype=float, index=df.index)
+    q = pd.to_numeric(df[COL_QTY], errors="coerce").fillna(0.0)
+    # a return is one piece back unless it states more; blank means one
+    return q.where(df[COL_AMOUNT] >= 0, -q.clip(lower=1.0))
 
 
 def sold_units(df: pd.DataFrame) -> float:
-    """Pieces actually SOLD — quantity with exchanged pieces netted out.
+    """Pieces sold, net of pieces returned.
 
     ★ ONE DEFINITION, EVERY SURFACE. ABS and ASP are computed on four sheets;
     if each summed the quantity column its own way they would disagree the day
-    a customer swapped a kurta, which is what started this.
+    a customer brought a kurta back, which is what started this.
     """
     if df.empty or COL_QTY not in df.columns:
         return 0.0
-    return float(df.loc[~swapped_lines(df), COL_QTY].sum())
+    return float(unit_delta(df).sum())
 
 
 def salesperson_kpis(df: pd.DataFrame, asof=None) -> pd.DataFrame:
@@ -624,15 +599,15 @@ def salesperson_kpis(df: pd.DataFrame, asof=None) -> pd.DataFrame:
                                       f"{tag}_single", f"{tag}_bills"])
             out = g if out is None else out.join(g, how="outer")
             continue
-        # ★ EXCHANGED PIECES ARE NOT SOLD PIECES, here as on the driver
-        # sheet — the two would otherwise disagree about the same day.
-        _sw = swapped_lines(d)
-        g = d.assign(**{"_u": d[COL_QTY].where(~_sw, 0.0)}).groupby(
+        # ★ RETURNED PIECES COME OFF, here as on the driver sheet — the two
+        # would otherwise disagree about the same day.
+        _u = unit_delta(d)
+        g = d.assign(**{"_u": _u}).groupby(
             sid, dropna=False).agg(
             sales=(COL_AMOUNT, "sum"), units=("_u", "sum"), bills=BILLS_AGG)
         # a single bill is one PIECE on the bill — the house measure of whether
         # anything was added to the sale
-        per = (d.assign(**{"_u": d[COL_QTY].where(~_sw, 0.0)})
+        per = (d.assign(**{"_u": _u})
                .groupby([sid, COL_BILL_UID], dropna=False)["_u"].sum())
         g["single"] = (per <= 1).groupby(level=0).sum().reindex(g.index).fillna(0)
         g = pd.DataFrame({

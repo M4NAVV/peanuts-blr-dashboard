@@ -242,9 +242,9 @@ def store_kpis(L, df, asof, kind, store):
         d = f[f[L.COL_STORE_LABEL] == store]
         sale = float(d[L.COL_AMOUNT].sum())
         bills = L.bill_count(d)          # distinct bill numbers — see loader
-        # ★ PIECES SOLD, NOT PIECES HANDLED — an even exchange adds a piece
-        # with no money behind it, which lifts ABS and drags ASP down. See
-        # `loader.swapped_lines`.
+        # ★ PIECES SOLD, NET OF PIECES RETURNED — a returned piece carries a
+        # blank quantity, so counting the column raw lifts ABS and drags ASP
+        # down. See `loader.unit_delta`.
         units = L.sold_units(d)
         return {"sale": sale, "bills": bills, "units": units,
                 "abv": sale / bills if bills else 0.0,
