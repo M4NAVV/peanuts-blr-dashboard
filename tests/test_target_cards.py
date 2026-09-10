@@ -262,23 +262,33 @@ def test_the_card_and_the_kpi_panel_use_the_same_threshold():
 def test_a_bill_of_one_piece_is_single_and_two_pieces_is_not():
     import loader as L
 
+    # b5 sells two pieces and takes one back, so it nets to one: a single
+    # bill. Counting the raw column would call it two and miss it.
     rows = []
-    for uid, qtys in [("b1", [1]), ("b2", [2]), ("b3", [1, 1]), ("b4", [1])]:
-        for q in qtys:
+    for uid, lines in [("b1", [(1, 5000)]), ("b2", [(2, 9000)]),
+                       ("b3", [(1, 4000), (1, 4000)]), ("b4", [(1, 3000)]),
+                       ("b5", [(1, 6000), (1, 6000), (None, -6000)])]:
+        for q, amt in lines:
             rows.append({L.COL_STORE_LABEL: "S", L.COL_BILL_UID: uid,
-                         L.COL_QTY: q, "date": pd.Timestamp("2026-08-10")})
+                         L.COL_QTY: q, L.COL_AMOUNT: amt,
+                         "date": pd.Timestamp("2026-08-10")})
     frame = pd.DataFrame(rows)
 
     class _FakeL:
         COL_STORE_LABEL = L.COL_STORE_LABEL
         COL_BILL_UID = L.COL_BILL_UID
         COL_QTY = L.COL_QTY
+        COL_AMOUNT = L.COL_AMOUNT
+        COL_UNITS = L.COL_UNITS
+        # ★ the stub must mirror the real loader: pieces are counted net of
+        # returns everywhere, so a fake that skips this tests nothing real.
+        with_units = staticmethod(L.with_units)
 
         @staticmethod
         def report_frames(df, kind, asof=None):
             return frame, frame.iloc[0:0]
 
     sb = SN.single_bill_share(_FakeL, frame, pd.Timestamp("2026-08-20"), "MTD", "S")
-    # b1 and b4 are one piece; b2 is two pieces; b3 is two pieces on two lines.
-    assert sb["ty"] == pytest.approx(0.5)   # threshold is <= 1, see above
+    # b1, b4 and b5 are one piece; b2 is two; b3 is two on two lines.
+    assert sb["ty"] == pytest.approx(3 / 5)   # threshold is <= 1, see above
     assert sb["ly"] is None

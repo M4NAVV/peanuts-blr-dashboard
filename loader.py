@@ -42,6 +42,12 @@ COL_COLOR_NAME = "color_name"
 COL_STYLE = "CATEGORY1"
 COL_AMOUNT = "Bill Amount"
 COL_QTY = "Bill Quantity"
+# ★★ THE COLUMN EVERY SURFACE MUST SUM (10 Sep 2026). `Bill Quantity` is the
+# RAW column and summing it counts a returned kurta as sold — it was doing so
+# on fourteen separate call sites, of which fixing two left the morning driver
+# sheet still 3 pieces out at Jayanagar on 7 Sep. This one is derived once in
+# `clean()` from `unit_delta`, so a surface cannot get it wrong by forgetting.
+COL_UNITS = "_units"
 COL_PROMO = "Promotion Amount"
 
 NUMERIC_COLS = [COL_AMOUNT, COL_QTY, COL_PROMO]
@@ -167,6 +173,13 @@ def clean(df: pd.DataFrame) -> pd.DataFrame:
     for c in NUMERIC_COLS:
         if c in df.columns:
             df[c] = _to_number(df[c])
+
+    # pieces net of returns — see COL_UNITS. Derived HERE so night-fill rows,
+    # which are concatenated before clean(), are counted by the same rule.
+    if COL_QTY in df.columns and COL_AMOUNT in df.columns:
+        df[COL_UNITS] = unit_delta(df)
+    else:
+        df[COL_UNITS] = 0.0
 
     df["date"] = _parse_dates(df[COL_DATE])
     df = df[df["date"].notna()].copy()
@@ -390,13 +403,13 @@ def bill_count(df: pd.DataFrame) -> int:
 def headline_kpis(df: pd.DataFrame) -> dict:
     """Top-line KPIs for the overview cards."""
     total_sales = df[COL_AMOUNT].sum()
-    total_units = df[COL_QTY].sum()
+    total_units = df[COL_UNITS].sum()
     bills = bill_count(df)
     customers = df[COL_MOBILE].replace("", pd.NA).nunique()
     discount = df[COL_PROMO].sum()
 
     per_bill = df.groupby(COL_BILL_UID).agg(
-        amt=(COL_AMOUNT, "sum"), qty=(COL_QTY, "sum")
+        amt=(COL_AMOUNT, "sum"), qty=(COL_UNITS, "sum")
     )
     atv = per_bill["amt"].mean() if len(per_bill) else 0
     upt = per_bill["qty"].mean() if len(per_bill) else 0
@@ -429,7 +442,7 @@ def monthly_summary(df: pd.DataFrame) -> pd.DataFrame:
         .agg(
             sales=(COL_AMOUNT, "sum"),
             bills=BILLS_AGG,
-            units=(COL_QTY, "sum"),
+            units=(COL_UNITS, "sum"),
             discount=(COL_PROMO, "sum"),
         )
         .reset_index()
@@ -443,7 +456,7 @@ def monthly_summary(df: pd.DataFrame) -> pd.DataFrame:
 def daily_summary(df: pd.DataFrame) -> pd.DataFrame:
     g = (
         df.groupby("date")
-        .agg(sales=(COL_AMOUNT, "sum"), bills=BILLS_AGG, units=(COL_QTY, "sum"))
+        .agg(sales=(COL_AMOUNT, "sum"), bills=BILLS_AGG, units=(COL_UNITS, "sum"))
         .reset_index()
         .sort_values("date")
     )
@@ -456,7 +469,7 @@ def dimension_summary(df: pd.DataFrame, col: str, top: int | None = None) -> pd.
         df.groupby(col)
         .agg(
             sales=(COL_AMOUNT, "sum"),
-            units=(COL_QTY, "sum"),
+            units=(COL_UNITS, "sum"),
             bills=BILLS_AGG,
         )
         .reset_index()
@@ -472,7 +485,7 @@ def salesperson_summary(df: pd.DataFrame) -> pd.DataFrame:
         df.groupby(COL_SALESPERSON)
         .agg(
             sales=(COL_AMOUNT, "sum"),
-            units=(COL_QTY, "sum"),
+            units=(COL_UNITS, "sum"),
             bills=BILLS_AGG,
         )
         .reset_index()
@@ -501,11 +514,23 @@ def unit_delta(df: pd.DataFrame) -> pd.Series:
     plain refund — 68 instead of 59. Amount-matching was the wrong idea: a
     return is a return whatever replaces it.
     """
-    if df.empty or COL_QTY not in df.columns or COL_AMOUNT not in df.columns:
+    if df.empty or COL_QTY not in df.columns:
         return pd.Series(dtype=float, index=df.index)
+    if COL_AMOUNT not in df.columns:
+        # No amounts means no way to tell a return from a sale. Fall back to
+        # the raw quantity rather than returning NaN, which would silently
+        # empty every unit count downstream.
+        return pd.to_numeric(df[COL_QTY], errors="coerce").fillna(0.0)
     q = pd.to_numeric(df[COL_QTY], errors="coerce").fillna(0.0)
     # a return is one piece back unless it states more; blank means one
     return q.where(df[COL_AMOUNT] >= 0, -q.clip(lower=1.0))
+
+
+def with_units(df: pd.DataFrame) -> pd.DataFrame:
+    """`df` with COL_UNITS present. Idempotent, for frames not from `clean()`."""
+    if COL_UNITS in df.columns or df.empty:
+        return df
+    return df.assign(**{COL_UNITS: unit_delta(df)})
 
 
 def sold_units(df: pd.DataFrame) -> float:
@@ -515,7 +540,11 @@ def sold_units(df: pd.DataFrame) -> float:
     if each summed the quantity column its own way they would disagree the day
     a customer brought a kurta back, which is what started this.
     """
-    if df.empty or COL_QTY not in df.columns:
+    if df.empty:
+        return 0.0
+    if COL_UNITS in df.columns:
+        return float(df[COL_UNITS].sum())
+    if COL_QTY not in df.columns:
         return 0.0
     return float(unit_delta(df).sum())
 
@@ -731,7 +760,7 @@ def store_summary(df: pd.DataFrame) -> pd.DataFrame:
         df.groupby(COL_STORE_LABEL)
         .agg(
             sales=(COL_AMOUNT, "sum"),
-            units=(COL_QTY, "sum"),
+            units=(COL_UNITS, "sum"),
             bills=BILLS_AGG,
             customers=("mobile_clean", "nunique"),
         )
@@ -913,7 +942,7 @@ def _agg_base(work: pd.DataFrame, group_cols: list[str]) -> pd.DataFrame:
         .agg(
             sales=(COL_AMOUNT, "sum"),
             net_sales=("net_amount", "sum"),
-            units=(COL_QTY, "sum"),
+            units=(COL_UNITS, "sum"),
             bills=BILLS_AGG,
             customers=("mobile_clean", "nunique"),
             stores=(COL_STORE_LABEL, "nunique"),
@@ -957,7 +986,7 @@ def _window_metrics(df: pd.DataFrame, start: pd.Timestamp, end: pd.Timestamp) ->
     sub = df[(df["date"] >= start) & (df["date"] <= end)]
     sales = sub[COL_AMOUNT].sum()
     bills = bill_count(sub)
-    units = sub[COL_QTY].sum()
+    units = sub[COL_UNITS].sum()
     return {
         "sales": sales,
         "bills": int(bills),
@@ -1240,7 +1269,7 @@ def _frame_metrics(f: pd.DataFrame) -> dict:
     settled = (f[~f["_provisional"].astype(bool)]
                if "_provisional" in f.columns else f)
     sales = f[COL_AMOUNT].sum()
-    units = f[COL_QTY].sum()
+    units = f[COL_UNITS].sum()
     bills = bill_count(settled)
     s_sales = settled[COL_AMOUNT].sum()
     return {"sales": sales, "bills": bills, "units": int(units),
@@ -1442,7 +1471,7 @@ def all_scalar_kpis(df: pd.DataFrame) -> dict[str, tuple[float, bool]]:
     Returns {label: (value, is_money)}."""
     sales = df[COL_AMOUNT].sum()
     net = df["net_amount"].sum()
-    units = df[COL_QTY].sum()
+    units = df[COL_UNITS].sum()
     bills = bill_count(df)
     customers = df["mobile_clean"].nunique()
     stores = df[COL_STORE_LABEL].nunique()

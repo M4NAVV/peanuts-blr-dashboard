@@ -459,7 +459,7 @@ def single_bill_share(L, df, asof, kind, store):
         d = d[d[L.COL_BILL_UID].notna()]
         if d.empty:
             return None
-        qty = d.groupby(L.COL_BILL_UID)[L.COL_QTY].sum()
+        qty = L.with_units(d).groupby(L.COL_BILL_UID)[L.COL_UNITS].sum()
         if not len(qty):
             return None
         return float((qty <= 1).mean())
@@ -747,8 +747,8 @@ def _one_kpi(L, d, ff, code, days):
            "single": 0, "single_units": 0.0, "single_val": 0.0,
            "conv": None, "conv_days": 0, "ff": 0.0, "conv_bills": 0}
     if bills:
-        per = d.groupby(L.COL_BILL_UID).agg(q=(L.COL_QTY, "sum"),
-                                            v=(L.COL_AMOUNT, "sum"))
+        per = L.with_units(d).groupby(L.COL_BILL_UID).agg(
+            q=(L.COL_UNITS, "sum"), v=(L.COL_AMOUNT, "sum"))
         one = per[per["q"] <= 1]
         out["single"] = int(len(one))
         out["single_units"] = float(one["q"].sum())

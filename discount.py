@@ -59,7 +59,8 @@ def womens(vdf: pd.DataFrame) -> pd.DataFrame:
     d["_line"] = L.brand_line_vfl(d).astype(str).str.upper()
     d = d[d["_line"].isin(BRANDS)].copy()
     d["_val"] = pd.to_numeric(d[L.COL_AMOUNT], errors="coerce").fillna(0.0)
-    d["_qty"] = pd.to_numeric(d[L.COL_QTY], errors="coerce").fillna(0.0)
+    # pieces net of returns — the house rule, see loader.COL_UNITS
+    d["_qty"] = L.with_units(d)[L.COL_UNITS].astype(float)
     d["_disc"] = pd.to_numeric(d[L.COL_PROMO], errors="coerce").fillna(0) > 0
     return d
 

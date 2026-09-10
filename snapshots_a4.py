@@ -352,7 +352,7 @@ def _accessory_price(L, df, asof, store):
         return None
     acc = d[d[L.COL_DIVISION].astype(str).str.upper().str.contains("ACCESSOR",
                                                                    na=False)]
-    u = float(acc[L.COL_QTY].sum())
+    u = L.sold_units(acc)          # pieces net of returns, as everywhere
     return float(acc[L.COL_AMOUNT].sum()) / u if u else None
 
 
