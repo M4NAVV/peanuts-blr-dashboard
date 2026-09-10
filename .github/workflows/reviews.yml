@@ -27,7 +27,22 @@ name: Collect Google reviews
 
 on:
   schedule:
-    - cron: "10 2 * * *"     # 02:10 UTC = 07:40 IST, just after the old job
+    # ★★ TWO SLOTS, AND NEITHER ON THE HOUR (10 Sep 2026). The first schedule
+    # was a single `10 2 * * *` and GitHub simply never fired it — the workflow
+    # was active, no run was created, nothing committed. Scheduled workflows are
+    # queued and are delayed or DROPPED under load, worst around the top of the
+    # hour, and a newly added schedule often misses its first slot.
+    #
+    # A missed morning here is permanent: the count is a running LEVEL, so the
+    # next reading silently covers two days. One slot a day for something that
+    # cannot be backfilled was the wrong shape.
+    #
+    # The job is IDEMPOTENT, which is what makes a second attempt free —
+    # `append_snapshot` keeps one row per store per day and the commit step
+    # exits cleanly when nothing changed. So the afternoon run either rescues a
+    # missed morning or does nothing at all.
+    - cron: "37 2 * * *"     # 08:07 IST — just after the shop's old job
+    - cron: "37 8 * * *"     # 14:07 IST — the safety net
   workflow_dispatch:
 
 permissions:

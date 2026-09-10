@@ -72,11 +72,26 @@ def test_two_runs_cannot_append_the_same_day_at_once():
     assert c["group"] and c["cancel-in-progress"] is False
 
 
-def test_it_runs_once_a_day():
+def test_it_is_scheduled_off_the_hour_and_more_than_once():
+    """★ GitHub never fired the original single `10 2 * * *`. Scheduled runs are
+    delayed or dropped under load, worst at the top of the hour — and a missed
+    morning cannot be recovered here, because the count is a running level.
+    So: fixed minutes well away from :00, and a second attempt that can rescue
+    the first."""
     crons = [e["cron"] for e in _wf()["on"]["schedule"]]
-    assert len(crons) == 1
-    mins, hrs = crons[0].split()[0], crons[0].split()[1]
-    assert "," not in mins and "/" not in mins and "*" not in hrs
+    assert len(crons) >= 2, "one slot a day cannot rescue a dropped run"
+    for c in crons:
+        mins, hrs = c.split()[0], c.split()[1]
+        assert "," not in mins and "/" not in mins and "*" not in hrs
+        assert 5 <= int(mins) <= 55, f"{c} sits in the congested top-of-hour window"
+
+
+def test_a_second_run_the_same_day_is_harmless():
+    """The safety net is only safe because the job is idempotent: one row per
+    store per day, and the commit step exits 0 when nothing changed."""
+    body = open(WF, encoding="utf-8").read()
+    assert "git diff --cached --quiet" in body
+    assert "exit 0" in body
 
 
 def test_a_missing_key_stops_before_it_writes():
