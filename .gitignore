@@ -39,3 +39,6 @@ _archive/
 
 # A4 morning briefing output — store-level PDFs, never committed
 out_a4/
+
+# The year-end trial's pack is a build artefact, ~49MB, rebuilt on demand.
+YEAR END TRIAL *.zip

@@ -766,11 +766,17 @@ def _cover(page_w, asof, basis_label, scope_rows,
 # --------------------------------------------------------------------------- #
 _MONEY = ["Sum of YTD_LY", "Sum of YTD_TY", "Sum of MTD_LY", "Sum of MTD_TY",
           "Sum of DAY SALE FIGURE", "Sum of MONTH SALE LY", "Sum of PROJECTED MTD",
-          "Sum of LY FULL SALES", "Sum of PROJECTED YTD", "Sum of TTM SALES"]
+          "Sum of LY FULL SALES", "Sum of PROJECTED YTD", "Sum of TTM SALES",
+          # ★ THE YEAR END TRIAL'S COLUMN IS MONEY. Undeclared it prints as a
+          # raw left-aligned float and sizes its own column — the fourth time
+          # that has happened here. Listed unconditionally: naming a column
+          # that is not on the sheet costs nothing, and a flag-dependent money
+          # list is exactly how the declaration gets lost again.
+          "Sum of YEAR END"]
 _PCT = ["Sum of GD_YTD_%", "Sum of GD_MTD_%"]
 _AVG_MONEY = ["SBA", "CA", "Sum of YTD_LY", "Sum of YTD_TY", "Average of OPERATION",
               "Sum of AVG DAY SALE", "Sum of AVG MONTH SALE", "Sum of PSFPD",
-              "Sum of TTM SALES"]
+              "Sum of TTM SALES", "Sum of YEAR END"]
 
 
 def _prep_gd(df, money=_MONEY):

@@ -22,6 +22,7 @@ from datetime import datetime
 import pandas as pd
 
 import projections as PROJ
+import yearend as _YE
 
 # Column names as they appear in the raw Tableau export.
 COL_STORE = "SHORT_NAME"
@@ -1678,6 +1679,15 @@ def _gd_by(df: pd.DataFrame, keys, asof=None, anchor_takeover: bool = True,
     out["Projected YTD"] = PROJ.project(
         out["YTD TY"], pd.Timestamp(fy_year, 4, 1), asof, None, PROJ.YEAR_DAYS)
 
+    # ★ YEAR END TRIAL — off unless YEAR_END_VIEW=1. See yearend.py. On the VFL
+    # feed no stitch is needed: this IS the feed South's history lives in, and
+    # `_extra_gd_windows` already zeroes any row without twelve months. So a
+    # zero TTM means "not twelve months yet" and the projection stands in.
+    import yearend as _YE
+    if _YE.enabled():
+        out[_YE.COL_VFL] = out["TTM Sales"].where(out["TTM Sales"] > 0,
+                                                  out["Projected YTD"])
+
     ly_ytd = out["YTD LY"].replace(0, pd.NA)
     ly_mtd = out["MTD LY"].replace(0, pd.NA)
     out["GD YTD %"] = (out["YTD TY"] - out["YTD LY"]) / ly_ytd * 100
@@ -1695,7 +1705,7 @@ def brand_wise_gd(df: pd.DataFrame, asof=None, anchor_takeover: bool = True) -> 
     cols = ["Brand", "YTD LY", "YTD TY", "GD YTD %", "MTD LY", "MTD TY",
             "GD MTD %", "Day Sales", "Month Sale LY", "Projected MTD",
             "LY Full Sales", "Projected YTD", "TTM Sales"]
-    return out[cols]
+    return out[_YE.swap_cols(cols, vfl=True)]
 
 
 def gender_wise_gd(df: pd.DataFrame, asof=None, anchor_takeover: bool = True) -> pd.DataFrame:
@@ -1712,7 +1722,7 @@ def gender_wise_gd(df: pd.DataFrame, asof=None, anchor_takeover: bool = True) ->
     cols = ["Region", "Gender", "YTD LY", "YTD TY", "GD YTD %", "MTD LY",
             "MTD TY", "GD MTD %", "Day Sales", "Month Sale LY", "Projected MTD",
             "LY Full Sales", "Projected YTD", "TTM Sales"]
-    return out[cols]
+    return out[_YE.swap_cols(cols, vfl=True)]
 
 
 def gender_contribution(df: pd.DataFrame, asof=None, anchor_takeover: bool = True):
@@ -1787,7 +1797,7 @@ def gender_store_gd(df: pd.DataFrame, asof=None, anchor_takeover: bool = True) -
             "YTD LY", "YTD TY", "GD YTD %", "MTD LY", "MTD TY", "GD MTD %",
             "Day Sales", "Projected MTD", "Month Sale LY", "Projected YTD",
             "LY Full Sales", "TTM Sales"]
-    return out[cols]
+    return out[_YE.swap_cols(cols, vfl=True)]
 
 
 def store_brand_gd(df: pd.DataFrame, asof=None, anchor_takeover: bool = True) -> pd.DataFrame:
@@ -1818,7 +1828,7 @@ def store_brand_gd(df: pd.DataFrame, asof=None, anchor_takeover: bool = True) ->
             "Gender", "Brand", "YTD LY", "YTD TY", "GD YTD %", "MTD LY", "MTD TY",
             "GD MTD %", "Day Sales", "Month Sale LY", "Projected MTD",
             "LY Full Sales", "Projected YTD", "TTM Sales"]
-    return out[cols]
+    return out[_YE.swap_cols(cols, vfl=True)]
 
 
 _GD_OUT_COLS = ["YTD LY", "YTD TY", "GD YTD %", "MTD LY", "MTD TY", "GD MTD %",
@@ -1841,6 +1851,7 @@ VFL_GD_MONEY = ["Sum of YTD_LY", "Sum of YTD_TY", "Sum of MTD_LY", "Sum of MTD_T
                 "Sum of DAY SALE FIGURE", "Sum of PROJECTED MTD",
                 "Sum of MONTH SALE LY", "Sum of PROJECTED YTD", "Sum of LY FULL SALES",
                 "Sum of TTM SALES"]
+VFL_GD_MONEY = _YE.swap_cols(VFL_GD_MONEY)
 VFL_GD_PCT = ["Sum of GD_YTD_%", "Sum of GD_MTD_%"]
 # brand-line detail column (loader name) -> workbook "Sum of ..." money column
 _VFL_SUM_SRC = {"YTD LY": "Sum of YTD_LY", "YTD TY": "Sum of YTD_TY",
@@ -1851,6 +1862,12 @@ _VFL_SUM_SRC = {"YTD LY": "Sum of YTD_LY", "YTD TY": "Sum of YTD_TY",
                 "Projected YTD": "Sum of PROJECTED YTD",
                 "LY Full Sales": "Sum of LY FULL SALES",
                 "TTM Sales": "Sum of TTM SALES"}
+if _YE.enabled():
+    # ★ YEAR END TRIAL: one source column, one destination. Dropping the pair
+    # from the bridge is what keeps the workbook sheet to a single column.
+    _VFL_SUM_SRC = {k: v for k, v in _VFL_SUM_SRC.items()
+                    if k not in ("Projected YTD", "TTM Sales")}
+    _VFL_SUM_SRC[_YE.COL_VFL] = _YE.COL_PF
 _VFL_SUM_COLS = list(_VFL_SUM_SRC)
 
 

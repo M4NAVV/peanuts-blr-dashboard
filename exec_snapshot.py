@@ -153,6 +153,15 @@ def _growth(cur, pri):
 # --------------------------------------------------------------------------- #
 # Metrics — portfolio
 # --------------------------------------------------------------------------- #
+def PL_vfl_for_exec():
+    """The VFL feed, for South's pre-takeover history. Never fatal."""
+    try:
+        import loader as L
+        return L.load_data()
+    except Exception:
+        return None
+
+
 def regions_of(df, vfl=False) -> list:
     """Regions present in the frame, in the packs' display order.
 
@@ -442,8 +451,18 @@ def portfolio_metrics(pf, asof, basis_label="", region=None) -> dict:
     d_wday = dl[dl["date"] == asof - pd.Timedelta(days=364)]["sales"].sum()
 
     mets = PL._gd_store_metrics(pf, asof)
-    proj = sum(v["proj_ytd"] for v in mets.values())
-    ly_full = sum(v["ly_full"] for v in mets.values())
+    # ★ YEAR END TRIAL — off unless YEAR_END_VIEW=1. The tile answers "where
+    # does the year finish", so under the trial it stands on the measured
+    # twelve months wherever a store has them. See yearend.py.
+    import yearend as _YE
+    proj = sum(v.get("year_end", v["proj_ytd"]) for v in mets.values())
+    if _YE.enabled():
+        # ★ BOTH SIDES OF THE FRACTION OR NEITHER — see stitched_ly_full. With
+        # only the top stitched this tile read +108% where it is +0.5%.
+        _lyf = _YE.stitched_ly_full(pf, PL_vfl_for_exec(), asof)
+        ly_full = float(sum(_lyf.get(c, 0.0) for c in mets))
+    else:
+        ly_full = sum(v["ly_full"] for v in mets.values())
 
     # Floor space actually being traded from, and what it earns. Carpet comes
     # from the store master; closed stores are excluded from both sides, so the
@@ -603,9 +622,11 @@ def portfolio_metrics(pf, asof, basis_label="", region=None) -> dict:
                        _pct(_growth(d_ty, d_date)))],
              "key": (f"vs {asof - pd.Timedelta(days=364):%a %d %b}",
                      _pct(_growth(d_ty, d_wday)))},
-            {"label": "Projected year", "value": f"Rs {_cr(proj)} Cr",
+            {"label": "Year end" if _YE.enabled() else "Projected year",
+             "value": f"Rs {_cr(proj)} Cr",
              "sub": f"last full year Rs {_cr(ly_full)} Cr",
-             "rows": [("Run-rate", "x365 op-days")],
+             "rows": [("Trailing 12m", "where a store has one")
+                      if _YE.enabled() else ("Run-rate", "x365 op-days")],
              "key": ("Implied", _pct(_growth(proj, ly_full)))},
             # ★ A PERIOD'S TWO HALVES STAY ON ONE LINE (Manav, 29 Aug — he read
             # this tile as saying up and down were swapped). The year used to
@@ -866,6 +887,8 @@ def vfl_metrics(df, asof, gen_date=None, basis_label="", region=None) -> dict:
     ttm_by = df[(df["date"] >= ttm_start) & (df["date"] <= asof)
                 & ~df[L.COL_STORE_LABEL].isin(_short)] \
         .groupby(L.COL_STORE_LABEL)[amt].sum()
+    import yearend as _YE
+    _YE_ON = _YE.enabled()
     proj = proj_open = proj_open_all = ly_full = ttm = 0.0
     import master_lookup as _ML
     carpet_by_code = _ML.carpet()
@@ -880,9 +903,11 @@ def vfl_metrics(df, asof, gen_date=None, basis_label="", region=None) -> dict:
         cl = pd.to_datetime(shut.get(c), errors="coerce") if c else pd.NaT
         p = PROJ.project_ytd(float(r["cur"]), fy_start, opened, gen_date,
                              None if pd.isna(cl) else cl)
-        proj += p
+        _t = float(ttm_by.get(s, 0.0))
+        # the trial's rule, per store: the measured year where there is one
+        proj += (_t if (_YE_ON and _t > 0) else p)
         ly_full += float(ly_full_by.get(s, 0.0))
-        ttm += float(ttm_by.get(s, 0.0))
+        ttm += _t
         if s not in closed_labels:
             proj_open_all += p
             if (carpet_by_code.get(c) or 0) > 0:      # see the portfolio site
@@ -958,10 +983,14 @@ def vfl_metrics(df, asof, gen_date=None, basis_label="", region=None) -> dict:
                        _pct(_growth(d_ty, d_date)))],
              "key": (f"vs {asof - pd.Timedelta(days=364):%a %d %b}",
                      _pct(_growth(d_ty, d_wday)))},
-            {"label": "Projected year", "value": f"Rs {_cr(proj)} Cr",
+            {"label": "Year end" if _YE_ON else "Projected year",
+             "value": f"Rs {_cr(proj)} Cr",
              "sub": f"last full year Rs {_cr(ly_full)} Cr",
-             "rows": [("Run-rate", "x365 op-days"),
-                      ("TTM", f"Rs {_cr(ttm)} Cr")],
+             # Under the trial the tile IS the trailing year wherever there is
+             # one, so a separate TTM row would repeat the headline.
+             "rows": ([("Trailing 12m", "where a store has one")] if _YE_ON
+                      else [("Run-rate", "x365 op-days"),
+                            ("TTM", f"Rs {_cr(ttm)} Cr")]),
              "key": ("Implied", _pct(_growth(proj, ly_full)))},
             # ★ A PERIOD'S TWO HALVES STAY ON ONE LINE (Manav, 29 Aug — he read
             # this tile as saying up and down were swapped). The year used to

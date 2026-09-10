@@ -72,18 +72,26 @@ def test_two_runs_cannot_append_the_same_day_at_once():
     assert c["group"] and c["cancel-in-progress"] is False
 
 
-def test_it_is_scheduled_off_the_hour_and_more_than_once():
-    """★ GitHub never fired the original single `10 2 * * *`. Scheduled runs are
-    delayed or dropped under load, worst at the top of the hour — and a missed
-    morning cannot be recovered here, because the count is a running level.
-    So: fixed minutes well away from :00, and a second attempt that can rescue
-    the first."""
-    crons = [e["cron"] for e in _wf()["on"]["schedule"]]
-    assert len(crons) >= 2, "one slot a day cannot rescue a dropped run"
-    for c in crons:
-        mins, hrs = c.split()[0], c.split()[1]
-        assert "," not in mins and "/" not in mins and "*" not in hrs
-        assert 5 <= int(mins) <= 55, f"{c} sits in the congested top-of-hour window"
+def test_the_collection_rides_on_the_schedule_that_actually_fires():
+    """★ 10 Sep 2026: reviews.yml asked for two slots a day and NEVER fired
+    once. Measured against keep-warm, which asks every 15 minutes and fired
+    9 times in ~150 slots, GitHub drops ~94% of this repo's scheduled runs.
+    A missed morning cannot be recovered — the count is a running level — so
+    the collection moved to the one workflow that does fire, and this file
+    keeps only its manual trigger."""
+    import yaml
+    on = _wf()["on"] if "on" in _wf() else _wf()[True]
+    assert "schedule" not in on, "a schedule here has never once fired"
+    assert "workflow_dispatch" in on, "a manual run must stay possible"
+
+    warm = yaml.safe_load(open(
+        ".github/workflows/keep-warm.yml", encoding="utf-8"))
+    assert "collect-reviews" in warm["jobs"], \
+        "the collection has to live on the schedule GitHub honours"
+    job = warm["jobs"]["collect-reviews"]
+    assert job["permissions"]["contents"] == "write"
+    # ★ NINE RUNS A DAY MUST NOT MEAN NINE GOOGLE BILLS.
+    assert any("already on file" in str(s.get("run", "")) for s in job["steps"])
 
 
 def test_a_second_run_the_same_day_is_harmless():

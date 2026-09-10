@@ -855,6 +855,22 @@ def gd_sheet_report(df: pd.DataFrame, asof=None):
     """The GROWTH DEGROWTH SHEET, matching the workbook 1:1. Returns
     (display_df, row_types). Figures are live; identity from gd_store_attrs."""
     asof = as_of(df) if asof is None else pd.Timestamp(asof)
+    # ★ YEAR END TRIAL — off unless YEAR_END_VIEW=1. See yearend.py. The two
+    # column lists are SHADOWED here rather than edited at module level, so the
+    # trial cannot leak into any other report and reverting is deleting a
+    # block. Bound before the empty-frame return below, which reads them.
+    import yearend as _YE
+    _ye_basis: dict = {}
+    _ye_ttm2 = _ye_first2 = None
+    if _YE.enabled():
+        _v = _vfl_for_stitch()
+        _ye_ttm2 = _YE.stitched_ttm(df, _v, asof)
+        _ye_first2 = _YE.first_trade_map(df, _v)
+        GD_SHEET_COLS = _YE.swap_cols(globals()["GD_SHEET_COLS"])
+        _GD_VALUE_COLS = _YE.swap_cols(globals()["_GD_VALUE_COLS"])
+    else:
+        GD_SHEET_COLS = globals()["GD_SHEET_COLS"]
+        _GD_VALUE_COLS = globals()["_GD_VALUE_COLS"]
     attrs = gd_store_attrs_dyn(df, asof)
     # Nothing traded this year in this selection — every store in it has
     # closed. Return the report's own empty shape so the tab can say so.
@@ -899,7 +915,12 @@ def gd_sheet_report(df: pd.DataFrame, asof=None):
         # Run-rate over the days actually traded (see projections.py).
         proj_mtd = project_mtd(mty, asof, doo, closed)
         proj_ytd = project_ytd(yty, fy_start, doo, asof, closed)
-        return {
+        _ye_val = None
+        if _ye_ttm2 is not None:
+            _ye_val, _b = _YE.year_end(yty, _ye_ttm2.get(c), _ye_first2.get(c),
+                                       fy_start, doo, asof, closed)
+            _ye_basis[c] = _b
+        return _YE.swap_row({
             "Region": a["region"], "NEW/OLD": a["new_old"], "STORE CODE": c,
             "STORE NAME MAIN": a["store_name_main"], "LOCATION": a["location_main"],
             "CLOSED": a["closed"] if a["closed"] else "(blank)", "DOO": a["doo"],
@@ -913,7 +934,7 @@ def gd_sheet_report(df: pd.DataFrame, asof=None):
             "Sum of LY FULL SALES": float(ly_full.get(c, 0.0)),
             "Sum of PROJECTED YTD": proj_ytd,
             "Sum of TTM SALES": float(ttm.get(c, 0.0)),
-        }
+        }, _ye_val)
 
     # ★★ THE SPLIT (chachu, 16 Aug; built 17 Aug). A store that has only PART of
     # a comparable year is shown as two lines and a subtotal: the span it has no
@@ -1470,6 +1491,13 @@ def _gd_store_metrics(df: pd.DataFrame, asof: pd.Timestamp) -> dict:
     # the window outruns print 0, not a part year — see `ttm_by_store`.
     ttm = ttm_by_store(df, asof)
     fy_start = pd.Timestamp(fy_year, 4, 1)
+    # ★ YEAR END TRIAL (off unless YEAR_END_VIEW=1) — see yearend.py. The
+    # stitched TTM reaches into the VFL feed for the eight South stores whose
+    # portfolio history starts at the takeover, so they stop reading as
+    # five-month-old businesses.
+    import yearend as YE
+    _ye_ttm = YE.stitched_ttm(df, _vfl_for_stitch(), asof) if YE.enabled() else None
+    _ye_first = YE.first_trade_map(df, _vfl_for_stitch()) if YE.enabled() else None
     out = {}
     for c in attrs.index:
         c = int(c)
@@ -1488,13 +1516,39 @@ def _gd_store_metrics(df: pd.DataFrame, asof: pd.Timestamp) -> dict:
             "ly_full": float(ly_full.get(c, 0.0)), "proj_ytd": proj_ytd,
             "ttm": float(ttm.get(c, 0.0)),
         }
+        if _ye_ttm is not None:
+            v, basis = YE.year_end(yty, _ye_ttm.get(c), _ye_first.get(c),
+                                   fy_start, doo, asof, closed)
+            out[c]["year_end"], out[c]["year_basis"] = v, basis
     return out
+
+
+def _vfl_for_stitch():
+    """The VFL feed, for South's pre-takeover history. Never fatal: without it
+    the stitch simply does not happen and those stores fall back to the
+    projection, which is the honest answer when the history cannot be read."""
+    try:
+        import loader as L
+        return L.load_data()
+    except Exception:
+        return None
 
 
 def brand_wise_gd_report(df: pd.DataFrame, asof=None):
     """BRAND_WISE_GD — GD figures grouped by PARENT company (alphabetical),
     store rows → 'PARENT Total' → 'Grand Total'. Returns (display_df, row_types)."""
     asof = as_of(df) if asof is None else pd.Timestamp(asof)
+    # ★ YEAR END TRIAL — off unless YEAR_END_VIEW=1. Shadowed, exactly as in
+    # `gd_sheet_report`: this report has its own column list and its own row
+    # builder, and wiring only one of the three is how page 8 of the pack came
+    # out still carrying the old pair.
+    import yearend as _YE
+    if _YE.enabled():
+        BRAND_GD_COLS = _YE.swap_cols(globals()["BRAND_GD_COLS"])
+        _BRAND_VALUE_COLS = _YE.swap_cols(globals()["_BRAND_VALUE_COLS"])
+    else:
+        BRAND_GD_COLS = globals()["BRAND_GD_COLS"]
+        _BRAND_VALUE_COLS = globals()["_BRAND_VALUE_COLS"]
     metrics = _gd_store_metrics(df, asof)
     attrs = gd_store_attrs_dyn(df, asof)
     # Nothing traded this year in this selection — every store in it has
@@ -1504,7 +1558,7 @@ def brand_wise_gd_report(df: pd.DataFrame, asof=None):
 
     def _store_row(a):
         m = metrics[int(a["code"])]
-        return {
+        return _YE.swap_row({
             "PARENT": a["parent"], "STORE NAME MAIN": a["store_name_main"],
             "LOCATION": a["location_main"], "NEW/OLD": a["new_old"],
             "CLOSED": a["closed"] if a["closed"] else "(blank)",
@@ -1515,7 +1569,7 @@ def brand_wise_gd_report(df: pd.DataFrame, asof=None):
             "Sum of PROJECTED MTD": m["proj_mtd"], "Sum of LY FULL SALES": m["ly_full"],
             "Sum of TTM SALES": m["ttm"],
             "Sum of PROJECTED YTD": m["proj_ytd"],
-        }
+        }, m.get("year_end"))
 
     def _total_row(label, sub):
         d = {c: "" for c in BRAND_GD_COLS}
@@ -1560,6 +1614,17 @@ def loc_wise_gd_report(df: pd.DataFrame, asof=None):
     """LOC_WISE_GD — GD figures grouped by Location TL (exact sheet order),
     store rows → 'Location TL Total' → 'Grand Total'."""
     asof = as_of(df) if asof is None else pd.Timestamp(asof)
+    # ★ YEAR END TRIAL — off unless YEAR_END_VIEW=1. Shadowed, exactly as in
+    # `gd_sheet_report`: this report has its own column list and its own row
+    # builder, and wiring only one of the three is how page 8 of the pack came
+    # out still carrying the old pair.
+    import yearend as _YE
+    if _YE.enabled():
+        LOC_GD_COLS = _YE.swap_cols(globals()["LOC_GD_COLS"])
+        _LOC_VALUE_COLS = _YE.swap_cols(globals()["_LOC_VALUE_COLS"])
+    else:
+        LOC_GD_COLS = globals()["LOC_GD_COLS"]
+        _LOC_VALUE_COLS = globals()["_LOC_VALUE_COLS"]
     metrics = _gd_store_metrics(df, asof)
     attrs = gd_store_attrs_dyn(df, asof)
     # Nothing traded this year in this selection — every store in it has
@@ -1570,7 +1635,7 @@ def loc_wise_gd_report(df: pd.DataFrame, asof=None):
     def _store_row(a):
         c = int(a["code"])
         m = metrics[c]
-        return {
+        return _YE.swap_row({
             "Location TL": a["location_tl"], "STORE CODE": c, "NEW/OLD": a["new_old"],
             "STORE NAME MAIN": a["store_name_main"], "LOCATION": a["location_main"],
             "Sum of YTD_LY": m["ytd_ly"], "Sum of YTD_TY": m["ytd_ty"],
@@ -1580,7 +1645,7 @@ def loc_wise_gd_report(df: pd.DataFrame, asof=None):
             "Sum of LY FULL SALES": m["ly_full"], "Sum of PROJECTED YTD": m["proj_ytd"],
             "Sum of TTM SALES": m["ttm"],
             "Sum of DAY SALE FIGURE": m["day"],
-        }
+        }, m.get("year_end"))
 
     def _total_row(label, sub):
         d = {c: "" for c in LOC_GD_COLS}

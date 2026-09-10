@@ -1806,6 +1806,16 @@ TVA_COLS = [
     ("YEAR TARGET", "r"), ("YEAR ACHIEVED %", "r"),
     ("AVG DAY SALES", "r"), ("TTM SALES", "r"),
 ]
+
+
+def _tva_cols():
+    """Under the trial the TTM column answers the year-end question, so it
+    says so — a projection printed under a header reading TTM is a lie."""
+    import yearend as _YE
+    if not _YE.enabled():
+        return TVA_COLS
+    return [(("YEAR END", a) if h == "TTM SALES" else (h, a))
+            for h, a in TVA_COLS]
 _TVA_VALUES = ("mtd_target", "mtd", "mtd_bal", "ytd_target", "ytd", "ytd_bal",
                "year_target", "ttm")
 
@@ -1856,6 +1866,17 @@ def target_vs_ach(pf_df, asof=None, targets_df=None) -> dict:
     # store is one: they open 19 Apr 2026 on this feed, and their TTM was
     # coming out equal to their YTD.
     ttm = PL.ttm_by_store(p, asof)
+    # ★ YEAR END TRIAL — off unless YEAR_END_VIEW=1. This sheet already had a
+    # TTM column and no projection, so the trial does not add a column here: it
+    # makes the one that exists answer the question properly. Today it prints 0
+    # for every South store; stitched, they print their real twelve months, and
+    # a store too young for one falls back to the run-rate.
+    import yearend as _YE
+    _ye_on = _YE.enabled()
+    if _ye_on:
+        _st = _YE.stitched_ttm(p, _YE_vfl(), asof)
+        _ft = _YE.first_trade_map(p, _YE_vfl())
+        _fy0 = pd.Timestamp(asof.year if asof.month >= 4 else asof.year - 1, 4, 1)
 
     tgt = {} if t is None else t.set_index("code").to_dict("index")
     rows = []
@@ -1871,7 +1892,10 @@ def target_vs_ach(pf_df, asof=None, targets_df=None) -> dict:
             "code": c, "city": str(m["city"]).upper(),
             "name": str(m["location"]), "brand": str(m.get("brand", "") or ""),
             "region": str(m["region"]), "from": start_of.get(c, fy_start),
-            "mtd": a_m, "ytd": a_y, "ttm": float(ttm.get(c, 0.0)),
+            "mtd": a_m, "ytd": a_y,
+            "ttm": (_YE.year_end(a_y, _st.get(c), _ft.get(c), _fy0,
+                                 start_of.get(c, fy_start), asof)[0]
+                    if _ye_on else float(ttm.get(c, 0.0))),
             "mtd_target": float(mt) if mt is not None and pd.notna(mt) else None,
             "ytd_target": float(yt) if yt else None,
             "year_target": float(yr) if yr is not None and pd.notna(yr) else None,
@@ -2052,8 +2076,9 @@ def render_target_vs_ach(sheet, region=None) -> "Image":
     asof = sheet["asof"]
     rows = [r for r in sheet["rows"]
             if region is None or r["region"] == region]
-    header = [h for h, _ in TVA_COLS]
-    aligns = [a for _, a in TVA_COLS]
+    _cols = _tva_cols()          # the trial renames TTM SALES -> YEAR END
+    header = [h for h, _ in _cols]
+    aligns = [a for _, a in _cols]
 
     def pct(a, b):
         return f"{a / b * 100:,.1f}" if (a is not None and b) else ""
@@ -2133,6 +2158,15 @@ def render_target_vs_ach(sheet, region=None) -> "Image":
     return _draw_grid(header, grid, landscape=False,
                       title=f"TARGET vs ACHIEVEMENT  ·  {asof:%d %b %Y}  ·  "
                             f"year to date covers {m[0]}–{m[-1]}")
+
+
+def _YE_vfl():
+    """The VFL feed, for South's pre-takeover history. Never fatal."""
+    try:
+        import loader as L
+        return L.load_data()
+    except Exception:
+        return None
 
 
 def build_target_vs_ach(pf_df, asof=None, basis_label="") -> tuple[str, bytes]:
