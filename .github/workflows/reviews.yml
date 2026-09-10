@@ -26,23 +26,16 @@ name: Collect Google reviews
 # push landed while this was reading.
 
 on:
-  schedule:
-    # ★★ TWO SLOTS, AND NEITHER ON THE HOUR (10 Sep 2026). The first schedule
-    # was a single `10 2 * * *` and GitHub simply never fired it — the workflow
-    # was active, no run was created, nothing committed. Scheduled workflows are
-    # queued and are delayed or DROPPED under load, worst around the top of the
-    # hour, and a newly added schedule often misses its first slot.
-    #
-    # A missed morning here is permanent: the count is a running LEVEL, so the
-    # next reading silently covers two days. One slot a day for something that
-    # cannot be backfilled was the wrong shape.
-    #
-    # The job is IDEMPOTENT, which is what makes a second attempt free —
-    # `append_snapshot` keeps one row per store per day and the commit step
-    # exits cleanly when nothing changed. So the afternoon run either rescues a
-    # missed morning or does nothing at all.
-    - cron: "37 2 * * *"     # 08:07 IST — just after the shop's old job
-    - cron: "37 8 * * *"     # 14:07 IST — the safety net
+  # ★★ THE SCHEDULE WAS REMOVED 10 SEP 2026 — IT NEVER ONCE FIRED. Two slots a
+  # day (`37 2` and `37 8`) produced not a single scheduled run. Measured
+  # against `keep-warm.yml`, which asks every 15 minutes and fired 9 times in
+  # ~150 slots: GitHub drops roughly 94% of this repo's scheduled runs, so two
+  # slots had about a one-in-eight chance of either landing, and a missed
+  # morning cannot be backfilled — the count is a running LEVEL.
+  #
+  # The collection now rides on `keep-warm.yml`, the one schedule GitHub does
+  # honour, guarded so it reads once a day. THIS file stays for MANUAL runs and
+  # is deliberately NOT gated: a manual run means "read it again now".
   workflow_dispatch:
 
 permissions:

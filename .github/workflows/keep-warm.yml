@@ -4,6 +4,23 @@ name: Keep app warm
 # inactivity — visitors then hit a warm app with its data cache populated
 # rather than a cold boot.
 #
+# ★★ IT ALSO COLLECTS THE GOOGLE REVIEWS NOW (10 Sep 2026), because this is
+# the only schedule in this repo that GitHub actually honours. `reviews.yml`
+# asked for two slots a day and, as of 14:59 IST on 10 Sep, had NEVER fired on
+# schedule — not once. Measured against this workflow: it asks every 15 minutes,
+# about 150 slots since 9 Sep, and fired NINE times. Gaps of five hours in a
+# fifteen-minute schedule. GitHub drops roughly 94% of this repo's scheduled
+# runs, so two slots a day had about a one-in-eight chance of either landing.
+#
+# More cron lines cannot fix a 6% per-slot rate. Riding on the workflow that
+# fires ~9x a day can: the collector keeps ONE ROW PER STORE PER DAY, so a
+# second attempt is free, and the first run of the day does the work while the
+# rest cost one `grep`. A missed morning is PERMANENT — the review count is a
+# running LEVEL, so the next reading silently swallows two days.
+#
+# The ping job is deliberately left alone and carries NO concurrency group: a
+# reading must never make the app wait to be pinged.
+#
 # ★ RETARGETED 14 Aug 2026. This pointed at peanuts-blr.streamlit.app, the
 # retired Streamlit Community Cloud app, and had been pinging a dead host every
 # five minutes since the move to Hugging Face. It now pings the Space that is
@@ -34,3 +51,73 @@ jobs:
             echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ')  $path -> $code"
           done
           rm -f "$JAR"
+
+  collect-reviews:
+    runs-on: ubuntu-latest
+    # ⚠️ THIS REPO IS PUBLIC. The key lives in repository secrets and is never
+    # echoed; a fork cannot run this, and there is no `pull_request` trigger,
+    # so a pull request cannot reach the secret.
+    if: github.repository == 'M4NAVV/peanuts-blr-dashboard'
+    permissions:
+      contents: write
+    concurrency:
+      # Shared with reviews.yml — two runs appending the same file would fight
+      # over it. Groups are repo-wide, so naming it the same serialises both.
+      group: collect-reviews
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Has today already been read?
+        id: gate
+        run: |
+          # Runners are UTC and the collector stamps `date.today()`, so this is
+          # the same day it would write. Nine runs a day must not mean nine
+          # times the Google API bill.
+          TODAY=$(date -u +%F)
+          if cut -d, -f1 review_snapshots.csv | grep -qx "$TODAY"; then
+            echo "todo=no" >> "$GITHUB_OUTPUT"
+            echo "$TODAY is already on file — nothing to do"
+          else
+            echo "todo=yes" >> "$GITHUB_OUTPUT"
+            echo "$TODAY not yet read — collecting"
+          fi
+
+      - uses: actions/setup-python@v5
+        if: steps.gate.outputs.todo == 'yes'
+        with:
+          python-version: "3.12"
+
+      - name: Install
+        if: steps.gate.outputs.todo == 'yes'
+        run: |
+          python -m pip install --upgrade pip
+          pip install "pandas==2.2.3" "numpy==1.26.4" requests
+
+      - name: Read the counts
+        if: steps.gate.outputs.todo == 'yes'
+        env:
+          GOOGLE_MAPS_API_KEY: ${{ secrets.GOOGLE_MAPS_API_KEY }}
+        run: |
+          if [ -z "$GOOGLE_MAPS_API_KEY" ]; then
+            echo "NOT COLLECTED: GOOGLE_MAPS_API_KEY is not set in this"
+            echo "repository's secrets, so today's reading cannot be taken."
+            exit 1
+          fi
+          python scripts_collect_reviews.py
+
+      - name: Commit the reading
+        if: steps.gate.outputs.todo == 'yes'
+        run: |
+          git config user.name  "peanuts-reviews"
+          git config user.email "reviews@peanuts.invalid"
+          git add review_snapshots.csv
+          if git diff --cached --quiet; then
+            echo "no change — today's reading is already on file"
+            exit 0
+          fi
+          git commit -m "Google review counts $(date -u +%F) [skip ci]"
+          # A real push may have landed while this was reading; rebase rather
+          # than clobber, because both are true.
+          git pull --rebase --autostash origin "${GITHUB_REF_NAME}" || true
+          git push
