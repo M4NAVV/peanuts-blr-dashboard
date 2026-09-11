@@ -19,6 +19,24 @@ def on(monkeypatch):
     yield
 
 
+@pytest.fixture
+def feeds():
+    """The real portfolio and VFL frames, or a skip.
+
+    ★ CI HAS NO DATA AND NO SECRETS. Tests that reach for the live feeds pass
+    on this machine and fail on the runner — which is how the suite went red
+    for a fortnight in August. Everything below that needs real figures takes
+    this fixture, so a bare checkout skips them instead of erroring.
+    """
+    try:
+        import loader as L
+        import portfolio_loader as PL
+        pf = PL.load_portfolio()
+        return pf, L.load_data(), PL.as_of(pf)
+    except Exception as e:                       # noqa: BLE001 - any cause skips
+        pytest.skip(f"needs live data: {e}")
+
+
 def test_it_is_on_by_default(monkeypatch):
     """Approved 11 Sep, so an unset environment means the sheets carry it."""
     monkeypatch.delenv("YEAR_END_VIEW", raising=False)
@@ -217,18 +235,18 @@ def _no_pair(df, where):
                for c in df.columns), f"{where} lost its MTD projection"
 
 
-def test_every_portfolio_gd_report_is_swept(on):
+def test_every_portfolio_gd_report_is_swept(on, feeds):
     import portfolio_loader as PL
-    pf = PL.load_portfolio()
+    pf, _v, _a = feeds
     for name, fn in (("gd_sheet", PL.gd_sheet_report),
                      ("brand_wise", PL.brand_wise_gd_report),
                      ("loc_wise", PL.loc_wise_gd_report)):
         _no_pair(fn(pf)[0], name)
 
 
-def test_every_vfl_gd_report_is_swept(on):
+def test_every_vfl_gd_report_is_swept(on, feeds):
     import loader as L
-    v = L.load_data()
+    _pf, v, _a = feeds
     for name, fn in (("brand_wise_gd", L.brand_wise_gd),
                      ("gender_wise_gd", L.gender_wise_gd)):
         _no_pair(fn(v), name)
@@ -236,14 +254,13 @@ def test_every_vfl_gd_report_is_swept(on):
     _no_pair(out[0] if isinstance(out, tuple) else out, "vfl_gd_report")
 
 
-def test_the_target_sheet_and_its_pace_table_are_swept(on):
+def test_the_target_sheet_and_its_pace_table_are_swept(on, feeds):
     """★ The one Manav found: "the top table of the targets vs achievement
     still has a projected column"."""
     import pandas as pd
-    import portfolio_loader as PL
     import report_td as RTD
-    pf = PL.load_portfolio()
-    sheet = RTD.target_vs_ach(pf, PL.as_of(pf))
+    pf, _v, asof = feeds
+    sheet = RTD.target_vs_ach(pf, asof)
 
     heads = [h for h, _ in RTD._tva_cols()]
     assert "TTM SALES" not in heads and "YEAR END" in heads
@@ -278,7 +295,7 @@ def test_a_festival_window_is_left_alone(on):
     assert "yearend" not in src
 
 
-def test_the_two_grand_totals_reconcile_exactly(on):
+def test_the_two_grand_totals_reconcile_exactly(on, feeds):
     """★★ Manav, 11 Sep: "yes, reconcile these".
 
     The GD sheet's grand total read Rs 138.35 Cr and the target sheet's
@@ -291,8 +308,7 @@ def test_the_two_grand_totals_reconcile_exactly(on):
     import portfolio_loader as PL
     import report_td as RTD
 
-    pf = PL.load_portfolio()
-    asof = PL.as_of(pf)
+    pf, _v, asof = feeds
     mets = PL._gd_store_metrics(pf, asof)
     sheet = RTD.target_vs_ach(pf, asof)
 
@@ -306,17 +322,15 @@ def test_the_two_grand_totals_reconcile_exactly(on):
         f"GD {gd:,.0f} - closed {gone:,.0f} != target sheet {tva:,.0f}")
 
 
-def test_only_in_year_closures_are_reported(on):
+def test_only_in_year_closures_are_reported(on, feeds):
     """Ten of the fourteen dropped codes shut in an EARLIER year and carry no
     sales in this one. Counting those would overstate what the reader is
     missing, so the note names only the in-year ones."""
     import pandas as pd
-    import portfolio_loader as PL
     import report_td as RTD
     import loader as L
 
-    pf = PL.load_portfolio()
-    asof = PL.as_of(pf)
+    pf, _v, asof = feeds
     fy0 = pd.Timestamp(asof.year if asof.month >= 4 else asof.year - 1, 4, 1)
     shut = L.closed_map()
     for c in RTD.target_vs_ach(pf, asof)["closed_out"]:
