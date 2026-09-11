@@ -182,3 +182,85 @@ def test_nothing_is_shaded_when_the_trial_is_off(monkeypatch):
     import portfolio_pdf as PP
     assert not YE.enabled()
     assert hasattr(PP, "HL_BG")          # the shade exists but goes unused
+
+
+# ── the sweep ───────────────────────────────────────────────────────────────
+# ★★ THREE TIMES NOW a rule was fixed in one place and left in the others: the
+# pieces rule (2 of 14 call sites), the year-end column (1 of 3 row builders),
+# and then the pace table Manav found himself — "im sure there will be other
+# instances like these, do a thorough sweep". These tests fail if ANY rendered
+# surface still offers a year projection when the trial is on.
+
+_PAIR = ("Sum of PROJECTED YTD", "Sum of TTM SALES",
+         "Projected YTD", "TTM Sales")
+
+
+def _no_pair(df, where):
+    left = [c for c in df.columns if c in _PAIR]
+    assert not left, f"{where} still carries {left}"
+    assert any(c in (YE.COL_PF, YE.COL_VFL) for c in df.columns), \
+        f"{where} has no year-end column"
+    # ★ MTD IS NOT TOUCHED.
+    assert any("PROJECTED MTD" in c.upper() or "Projected MTD" in c
+               for c in df.columns), f"{where} lost its MTD projection"
+
+
+def test_every_portfolio_gd_report_is_swept(on):
+    import portfolio_loader as PL
+    pf = PL.load_portfolio()
+    for name, fn in (("gd_sheet", PL.gd_sheet_report),
+                     ("brand_wise", PL.brand_wise_gd_report),
+                     ("loc_wise", PL.loc_wise_gd_report)):
+        _no_pair(fn(pf)[0], name)
+
+
+def test_every_vfl_gd_report_is_swept(on):
+    import loader as L
+    v = L.load_data()
+    for name, fn in (("brand_wise_gd", L.brand_wise_gd),
+                     ("gender_wise_gd", L.gender_wise_gd)):
+        _no_pair(fn(v), name)
+    out = L.vfl_gd_report(v)
+    _no_pair(out[0] if isinstance(out, tuple) else out, "vfl_gd_report")
+
+
+def test_the_target_sheet_and_its_pace_table_are_swept(on):
+    """★ The one Manav found: "the top table of the targets vs achievement
+    still has a projected column"."""
+    import pandas as pd
+    import portfolio_loader as PL
+    import report_td as RTD
+    pf = PL.load_portfolio()
+    sheet = RTD.target_vs_ach(pf, PL.as_of(pf))
+
+    heads = [h for h, _ in RTD._tva_cols()]
+    assert "TTM SALES" not in heads and "YEAR END" in heads
+
+    exec_heads = [h for h, _ in RTD._tva_exec_cols()]
+    assert "PROJECTED" not in exec_heads, "the pace table still says PROJECTED"
+    assert any("TTM" in h for h in exec_heads)
+
+    # the YEAR row is the measured year; the MONTH row is still a run-rate
+    rows = RTD.tva_exec_rows(sheet)
+    per = {}
+    cur = None
+    for kind, r in rows:
+        if kind == "head":
+            cur = r["label"]
+        else:
+            per.setdefault(cur, {})[r["label"]] = r["projected"]
+    ytd = per["YEAR TO DATE"]
+    assert ytd["OVERALL"] > 0
+    # a scope is the sum of its stores' year-end figures, so the regions add up
+    regions = sum(v for k, v in ytd.items() if k != "OVERALL")
+    assert abs(regions - ytd["OVERALL"]) < 1.0
+
+
+def test_a_festival_window_is_left_alone(on):
+    """★ NOT EVERY PROJECTION IS A YEAR-END ONE. Festive projects a 45-day
+    window to its own tenure; a trailing twelve months answers nothing there,
+    so `festive.py` keeps its projection and must not be swept."""
+    import festive
+    src = open(festive.__file__, encoding="utf-8").read()
+    assert "PROJ.project(" in src
+    assert "yearend" not in src

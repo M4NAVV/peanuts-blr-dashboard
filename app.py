@@ -2556,7 +2556,7 @@ if nav == "🧾 VFL G/D":
         st.info("No data for the current filters.")
     else:
         st.markdown(
-            styled_report_html(disp, money_cols=L.VFL_GD_MONEY, pct_cols=L.VFL_GD_PCT,
+            styled_report_html(disp, money_cols=L.vfl_gd_money(), pct_cols=L.VFL_GD_PCT,
                                sign_cols=L.VFL_GD_PCT, row_types=rtypes, compact=True,
                                palette="vfl"),
             unsafe_allow_html=True)

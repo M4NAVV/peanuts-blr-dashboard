@@ -1851,7 +1851,6 @@ VFL_GD_MONEY = ["Sum of YTD_LY", "Sum of YTD_TY", "Sum of MTD_LY", "Sum of MTD_T
                 "Sum of DAY SALE FIGURE", "Sum of PROJECTED MTD",
                 "Sum of MONTH SALE LY", "Sum of PROJECTED YTD", "Sum of LY FULL SALES",
                 "Sum of TTM SALES"]
-VFL_GD_MONEY = _YE.swap_cols(VFL_GD_MONEY)
 VFL_GD_PCT = ["Sum of GD_YTD_%", "Sum of GD_MTD_%"]
 # brand-line detail column (loader name) -> workbook "Sum of ..." money column
 _VFL_SUM_SRC = {"YTD LY": "Sum of YTD_LY", "YTD TY": "Sum of YTD_TY",
@@ -1862,13 +1861,35 @@ _VFL_SUM_SRC = {"YTD LY": "Sum of YTD_LY", "YTD TY": "Sum of YTD_TY",
                 "Projected YTD": "Sum of PROJECTED YTD",
                 "LY Full Sales": "Sum of LY FULL SALES",
                 "TTM Sales": "Sum of TTM SALES"}
-if _YE.enabled():
-    # ★ YEAR END TRIAL: one source column, one destination. Dropping the pair
-    # from the bridge is what keeps the workbook sheet to a single column.
-    _VFL_SUM_SRC = {k: v for k, v in _VFL_SUM_SRC.items()
-                    if k not in ("Projected YTD", "TTM Sales")}
-    _VFL_SUM_SRC[_YE.COL_VFL] = _YE.COL_PF
 _VFL_SUM_COLS = list(_VFL_SUM_SRC)
+
+
+# ★★ READ THE FLAG WHEN THE REPORT RUNS, NEVER AT IMPORT (11 Sep). These three
+# were rewritten at module level under `if _YE.enabled():`, which made the whole
+# trial depend on whether `loader` happened to be imported before or after the
+# flag was set. It passed alone and failed in the suite — and in production it
+# would have been worse than a failure: the sheet would simply have come out
+# with the old columns and said nothing. The portfolio side shadows inside each
+# function for the same reason.
+def vfl_gd_cols():
+    """Output column list for the VFL GD sheet."""
+    return _YE.swap_cols(VFL_GD_COLS)
+
+
+def vfl_gd_money():
+    """Its money columns — must follow the names above, or an undeclared
+    numeric column prints as a raw left-aligned float."""
+    return _YE.swap_cols(VFL_GD_MONEY)
+
+
+def vfl_sum_src():
+    """brand-line column -> workbook column. One source, one destination."""
+    if not _YE.enabled():
+        return dict(_VFL_SUM_SRC)
+    out = {k: v for k, v in _VFL_SUM_SRC.items()
+           if k not in ("Projected YTD", "TTM Sales")}
+    out[_YE.COL_VFL] = _YE.COL_PF
+    return out
 
 
 def _vfl_gd_frac(ty, ly):
@@ -1933,6 +1954,9 @@ def vfl_gd_report(df: pd.DataFrame, asof=None, gen_date=None):
     → Gender (MEN/WOMEN) → brand-line detail, with MEN/WOMEN, store, location,
     region and grand totals. Returns (display_df, row_types).  Group labels show
     once per group (blank on repeats), exactly like the Excel outline."""
+    # ★ Resolved HERE, per run — never at import. See vfl_gd_cols().
+    _cols, _money, _src = vfl_gd_cols(), vfl_gd_money(), vfl_sum_src()
+    _srccols = list(_src)
     asof = as_of(df) if asof is None else pd.Timestamp(asof)
     # `gen_date` = the day the review is run (the live current date). The workbook
     # sums through `asof` (month-end) but PROJECTS on the gen-date elapsed days.
@@ -1980,6 +2004,14 @@ def vfl_gd_report(df: pd.DataFrame, asof=None, gen_date=None):
         ~shut, sb["MTD TY"])
     sb["Projected YTD"] = (sb["YTD TY"] * PROJ.YEAR_DAYS / op_ytd).where(
         ~shut, sb["YTD TY"])
+    if _YE.enabled():
+        # ★ These rows are brand LINES within a store, so the twelve months
+        # come from the same feed at the same grain; a zero means the line has
+        # no full year behind it and the run-rate stands in, exactly as on the
+        # portfolio side.
+        _ttm = (sb["TTM Sales"] if "TTM Sales" in sb.columns
+                else pd.Series(0.0, index=sb.index))
+        sb[_YE.COL_VFL] = _ttm.where(_ttm > 0, sb["Projected YTD"])
 
     # Drop pure-return / all-zero brand-lines (no positive activity), like the sheet.
     keep = ((sb["YTD LY"] > 0) | (sb["YTD TY"] > 0)
@@ -1989,10 +2021,10 @@ def vfl_gd_report(df: pd.DataFrame, asof=None, gen_date=None):
     rows, types = [], []
 
     def emit(region, mloc, code, gender, sname, loc, doo, s, rtype):
-        d = dict.fromkeys(VFL_GD_COLS, "")
+        d = dict.fromkeys(_cols, "")
         d["Region"], d["Master Location"], d["STORE CODE"] = region, mloc, code
         d["MEN/WOMEN/KIDS"], d["STORE NAME"], d["LOCATION"], d["DOO"] = gender, sname, loc, doo
-        for src, dst in _VFL_SUM_SRC.items():
+        for src, dst in _src.items():
             d[dst] = s[src]
         d["Sum of GD_YTD_%"] = _vfl_gd_frac(s["YTD TY"], s["YTD LY"])
         d["Sum of GD_MTD_%"] = _vfl_gd_frac(s["MTD TY"], s["MTD LY"])
@@ -2000,10 +2032,10 @@ def vfl_gd_report(df: pd.DataFrame, asof=None, gen_date=None):
         types.append(rtype)
 
     def sums(frame):
-        return {c: float(frame[c].sum()) for c in _VFL_SUM_COLS}
+        return {c: float(frame[c].sum()) for c in _srccols}
 
     def rowsum(r):
-        return {c: float(r[c]) for c in _VFL_SUM_COLS}
+        return {c: float(r[c]) for c in _srccols}
 
     # ----------------------------------------------------------------- #
     # ★★ THE LIKE-TO-LIKE SPLIT, the same rule the portfolio GD sheet got on
@@ -2058,12 +2090,12 @@ def vfl_gd_report(df: pd.DataFrame, asof=None, gen_date=None):
 
     def emit_split(gender_label, loc, values):
         """A half-line: only the compared columns mean anything on it."""
-        d = dict.fromkeys(VFL_GD_COLS, "")
-        for c in VFL_GD_MONEY:
+        d = dict.fromkeys(_cols, "")
+        for c in _money:
             d[c] = float("nan")
         d["MEN/WOMEN/KIDS"], d["LOCATION"] = gender_label, loc
         for src in _split_src:
-            d[_VFL_SUM_SRC[src]] = values[src]
+            d[_src[src]] = values[src]
         d["Sum of GD_YTD_%"] = _vfl_gd_frac(values["YTD TY"], values["YTD LY"])
         d["Sum of GD_MTD_%"] = _vfl_gd_frac(values["MTD TY"], values["MTD LY"])
         rows.append(d)
@@ -2078,13 +2110,13 @@ def vfl_gd_report(df: pd.DataFrame, asof=None, gen_date=None):
 
     def _summary_row(label, part):
         """One LIKE TO LIKE / NO L2L line, from a list of store-level halves."""
-        d = dict.fromkeys(VFL_GD_COLS, "")
-        for c in VFL_GD_MONEY:
+        d = dict.fromkeys(_cols, "")
+        for c in _money:
             d[c] = float("nan")
         d["Region"] = label
         tot = {k: sum(float(p.get(k, 0.0) or 0.0) for p in part) for k in _split_src}
         for src in _split_src:
-            d[_VFL_SUM_SRC[src]] = tot[src]
+            d[_src[src]] = tot[src]
         d["Sum of GD_YTD_%"] = _vfl_gd_frac(tot["YTD TY"], tot["YTD LY"])
         d["Sum of GD_MTD_%"] = _vfl_gd_frac(tot["MTD TY"], tot["MTD LY"])
         return d
@@ -2155,7 +2187,7 @@ def vfl_gd_report(df: pd.DataFrame, asof=None, gen_date=None):
         rows.append(d)
         types.append("summary")
 
-    return pd.DataFrame(rows, columns=VFL_GD_COLS), types
+    return pd.DataFrame(rows, columns=_cols), types
 
 
 # --------------------------------------------------------------------------- #

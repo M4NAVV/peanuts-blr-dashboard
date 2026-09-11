@@ -481,7 +481,10 @@ def portfolio_metrics(pf, asof, basis_label="", region=None) -> dict:
     # which is the normal order of events.
     measured = {c for c in open_codes if (carpet_map.get(c) or 0) > 0}
     area = float(sum(carpet_map[c] for c in measured))
-    proj_open = sum(v["proj_ytd"] for c, v in mets.items()
+    # ★ The throughput tile divides the SAME year-end figure the tile above it
+    # shows by the floor it was earned on. Left on `proj_ytd` under the trial
+    # it would disagree with the headline on the same page.
+    proj_open = sum(v.get("year_end", v["proj_ytd"]) for c, v in mets.items()
                     if int(c) in measured)
     throughput = (proj_open / area) if area else None
     unmeasured = len(open_codes) - len(measured)
@@ -909,9 +912,10 @@ def vfl_metrics(df, asof, gen_date=None, basis_label="", region=None) -> dict:
         ly_full += float(ly_full_by.get(s, 0.0))
         ttm += _t
         if s not in closed_labels:
-            proj_open_all += p
+            proj_open_all += (_t if (_YE_ON and _t > 0) else p)
             if (carpet_by_code.get(c) or 0) > 0:      # see the portfolio site
-                proj_open += p
+                # the same figure the tile shows, for the same reason
+                proj_open += (_t if (_YE_ON and _t > 0) else p)
 
     # Floor space being traded from, and what it earns. Closed stores are out of
     # both the area and the sales that divide by it, so the two describe the

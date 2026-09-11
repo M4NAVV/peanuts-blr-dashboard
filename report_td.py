@@ -1967,6 +1967,17 @@ TVA_EXEC_COLS = [
 ]
 
 
+def _tva_exec_cols():
+    """Under the trial the YEAR row of this column is the measured twelve
+    months, so the header stops saying only PROJECTED. The MONTH row above it
+    is still a run-rate — the row labels say which is which."""
+    import yearend as _YE
+    if not _YE.enabled():
+        return TVA_EXEC_COLS
+    return [(("PROJECTED/TTM", a) if h == "PROJECTED" else (h, a))
+            for h, a in TVA_EXEC_COLS]
+
+
 def tva_exec_rows(sheet):
     """The snapshot above the sheet: what is left, in how long, at what rate.
 
@@ -1985,6 +1996,9 @@ def tva_exec_rows(sheet):
     figure, so asking the estate to earn them again would overstate the rate.
     """
     rows = sheet["rows"]
+    # ★ YEAR END TRIAL — off unless YEAR_END_VIEW=1. See yearend.py.
+    import yearend as _YE
+    _ye_on = _YE.enabled()
     asof = sheet["asof"]
     fy_end = pd.Timestamp(asof.year + (1 if asof.month >= 4 else 0), 3, 31)
     days_mtd = calendar.monthrange(asof.year, asof.month)[1] - asof.day
@@ -1992,7 +2006,8 @@ def tva_exec_rows(sheet):
 
     month_start = asof.replace(day=1)
 
-    def block(part, label, tgt_key, ach_key, days, period_start, period_days):
+    def block(part, label, tgt_key, ach_key, days, period_start, period_days,
+              is_year=False):
         tgt = sum(r[tgt_key] for r in part if r.get(tgt_key))
         ach = sum(r[ach_key] for r in part)
         bal = (tgt - ach) if tgt else None
@@ -2016,7 +2031,15 @@ def tva_exec_rows(sheet):
             # days traded, scaled to the length of the period: the month's own
             # 28-31 days, and Manav's flat 365 for the year (his call, 9 Aug —
             # NOT South's own 347-day window).
-            "projected": PROJ.project(ach, start, asof, None, period_days),
+            # ★ THE YEAR ROW STANDS ON THE MEASURED YEAR UNDER THE TRIAL
+            # (Manav, 11 Sep: "the top table of the targets vs achievement
+            # still has a projected column"). `r["ttm"]` already IS each
+            # store's year-end here — TTM where it has twelve months, the
+            # run-rate until it does — so the scope is simply their sum. The
+            # MONTH row is untouched: "for the mtd column, keep as is".
+            "projected": (sum(r.get("ttm") or 0.0 for r in part)
+                          if (is_year and _ye_on)
+                          else PROJ.project(ach, start, asof, None, period_days)),
             # Ahead of the ask needs no daily rate — printing one would read as
             # a demand where none exists.
             "per_day": (bal / days) if (bal and bal > 0 and days > 0) else None,
@@ -2028,21 +2051,24 @@ def tva_exec_rows(sheet):
              PROJ.month_days(asof)),
             ("YEAR TO DATE", "year_target", "ytd", days_ytd, sheet["fy_start"],
              PROJ.YEAR_DAYS)):
+        _is_year = kind == "YEAR TO DATE"
         out.append(("head", {"label": kind, "days": days}))
         out.append(("total",
-                    block(rows, "OVERALL", tgt_key, ach_key, days, start, span)))
+                    block(rows, "OVERALL", tgt_key, ach_key, days, start,
+                          span, _is_year)))
         for reg in sorted({r["region"] for r in rows}):
             part = [r for r in rows if r["region"] == reg]
             out.append(("region", block(part, reg.upper(), tgt_key, ach_key,
-                                        days, start, span)))
+                                        days, start, span, _is_year)))
     return out
 
 
 def render_tva_exec(sheet) -> "Image":
     """The snapshot table — one grid, both periods, three scopes each."""
     asof = sheet["asof"]
-    header = [h for h, _ in TVA_EXEC_COLS]
-    aligns = [a for _, a in TVA_EXEC_COLS]
+    _cols = _tva_exec_cols()
+    header = [h for h, _ in _cols]
+    aligns = [a for _, a in _cols]
     grid = []
     for kind, r in tva_exec_rows(sheet):
         if kind == "head":
