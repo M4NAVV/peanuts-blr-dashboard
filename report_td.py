@@ -1842,6 +1842,20 @@ def target_vs_ach(pf_df, asof=None, targets_df=None) -> dict:
     master = PL.store_master().dropna(subset=["code"]).copy()
     master["code"] = master["code"].astype(int)
     shut = L.closed_map()
+    # ★★ THIS SHEET IS TRADING STORES ONLY, AND NOW SAYS SO (11 Sep). A store
+    # that has closed has no ongoing target, so it is dropped here — correctly.
+    # But the GD sheet DOES carry it, because its sales genuinely happened, and
+    # the two grand totals then differ with nothing on either page to explain
+    # it: Rs 138.35 Cr against Rs 136.16 Cr, which is exactly the four stores
+    # that shut during this year. A reader cannot reconcile two headline
+    # figures that will not say what estate they cover.
+    # ★ ONLY THE ONES THAT SHUT DURING THIS YEAR. Fourteen codes are dropped
+    # here, but ten of them closed in an earlier year and have no sales in this
+    # one — counting those would overstate what the reader is missing. The four
+    # that closed inside the year are the whole of the gap.
+    _fy0 = pd.Timestamp(asof.year if asof.month >= 4 else asof.year - 1, 4, 1)
+    _gone = [int(c) for c in master["code"]
+             if c in shut and _fy0 <= pd.to_datetime(shut[c]) <= asof]
     master = master[~master["code"].map(
         lambda c: c in shut and pd.to_datetime(shut[c]) <= asof)]
 
@@ -1903,7 +1917,9 @@ def target_vs_ach(pf_df, asof=None, targets_df=None) -> dict:
     for r in rows:
         r["mtd_bal"] = (r["mtd_target"] - r["mtd"]) if r["mtd_target"] else None
         r["ytd_bal"] = (r["ytd_target"] - r["ytd"]) if r["ytd_target"] else None
-    return {"rows": rows, "asof": asof, "months": months,
+    return {
+        "closed_out": _gone,
+        "rows": rows, "asof": asof, "months": months,
             "fy_start": fy_start}
 
 
@@ -2181,9 +2197,15 @@ def render_target_vs_ach(sheet, region=None) -> "Image":
                         aligns, TOTAL_BG, True), ROW_H))
 
     m = sheet["months"]
+    # ★ SAY WHAT ESTATE THIS IS. Without it this sheet's grand total and the GD
+    # sheet's differ by the stores that shut during the year, and neither page
+    # admits why. See `target_vs_ach`.
+    _gone = sheet.get("closed_out") or []
+    _note = (f"  ·  trading stores only, {len(_gone)} closed this year excluded"
+             if _gone else "")
     return _draw_grid(header, grid, landscape=False,
                       title=f"TARGET vs ACHIEVEMENT  ·  {asof:%d %b %Y}  ·  "
-                            f"year to date covers {m[0]}–{m[-1]}")
+                            f"year to date covers {m[0]}–{m[-1]}{_note}")
 
 
 def _YE_vfl():

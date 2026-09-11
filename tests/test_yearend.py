@@ -264,3 +264,54 @@ def test_a_festival_window_is_left_alone(on):
     src = open(festive.__file__, encoding="utf-8").read()
     assert "PROJ.project(" in src
     assert "yearend" not in src
+
+
+def test_the_two_grand_totals_reconcile_exactly(on):
+    """★★ Manav, 11 Sep: "yes, reconcile these".
+
+    The GD sheet's grand total read Rs 138.35 Cr and the target sheet's
+    Rs 136.16 Cr, with nothing on either page explaining the Rs 2.19 Cr. Both
+    were right: the GD sheet carries stores that shut during the year, because
+    their sales happened; the target sheet drops them, because a closed store
+    has no ongoing target. The difference IS those stores, to the rupee, and
+    the target sheet now says which estate it covers.
+    """
+    import portfolio_loader as PL
+    import report_td as RTD
+
+    pf = PL.load_portfolio()
+    asof = PL.as_of(pf)
+    mets = PL._gd_store_metrics(pf, asof)
+    sheet = RTD.target_vs_ach(pf, asof)
+
+    gd = sum(v.get("year_end", 0.0) for v in mets.values())
+    tva = sum(r.get("ttm") or 0.0 for r in sheet["rows"])
+    closed = sheet["closed_out"]
+    gone = sum(mets[c].get("year_end", 0.0) for c in closed if c in mets)
+
+    assert closed, "no store closed in-year; this fixture no longer bites"
+    assert abs((gd - gone) - tva) < 1.0, (
+        f"GD {gd:,.0f} - closed {gone:,.0f} != target sheet {tva:,.0f}")
+
+
+def test_only_in_year_closures_are_reported(on):
+    """Ten of the fourteen dropped codes shut in an EARLIER year and carry no
+    sales in this one. Counting those would overstate what the reader is
+    missing, so the note names only the in-year ones."""
+    import pandas as pd
+    import portfolio_loader as PL
+    import report_td as RTD
+    import loader as L
+
+    pf = PL.load_portfolio()
+    asof = PL.as_of(pf)
+    fy0 = pd.Timestamp(asof.year if asof.month >= 4 else asof.year - 1, 4, 1)
+    shut = L.closed_map()
+    for c in RTD.target_vs_ach(pf, asof)["closed_out"]:
+        assert fy0 <= pd.to_datetime(shut[c]) <= asof
+
+
+def test_the_target_sheet_declares_its_estate(on):
+    """A grand total that will not say what it covers cannot be reconciled."""
+    src = open("report_td.py", encoding="utf-8").read()
+    assert "trading stores only" in src
