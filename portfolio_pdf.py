@@ -818,7 +818,7 @@ def _to_num(s):
     return pd.to_numeric(s, errors="coerce")
 
 
-def build(pf, pf_all, asof, basis_label="", vfl_df=None):
+def build(pf, pf_all, asof, basis_label="", vfl_df=None, on_step=None):
     """Compile the five portfolio sheets into one PDF (bytes), in dashboard
     order: MW Data, GD Sheet, Brand-wise GD, Loc-wise GD, Average.
     `pf` = filtered portfolio frame; `pf_all` = unfiltered (MW Data ignores
@@ -831,6 +831,24 @@ def build(pf, pf_all, asof, basis_label="", vfl_df=None):
     # ★ WHICH CELLS ARE A RUN-RATE. Computed ONCE here, for every sheet — the
     # three GD reports each build their own frame and would otherwise each
     # need their own copy of the rule. Empty unless the trial is on.
+    # ★ PROGRESS, BECAUSE SILENCE READS AS A HANG (Manav, 11 Sep). This pack is
+    # five sheets plus a two-page MW grid and takes ~35s here, a couple of
+    # minutes on the Space's two vCPUs. `on_step(label, done, total)` is called
+    # before each piece so the tab can move a bar instead of showing a spinner
+    # that never changes. Optional: nothing else passes it.
+    _STEPS = ("GD Sheet", "Brand-wise GD", "Location-wise GD",
+              "Store productivity", "MW Data", "Laying out pages")
+    _done = {"n": 0}
+
+    def _tick(label):
+        if on_step is None:
+            return
+        try:
+            on_step(label, _done["n"], len(_STEPS))
+        except Exception:                      # a broken bar must not stop a report
+            pass
+        _done["n"] += 1
+
     import yearend as _YE
     # The tab has already loaded the VFL frame; reuse it rather than fetching a
     # second copy of the same sheet inside the stitch.
@@ -855,6 +873,7 @@ def build(pf, pf_all, asof, basis_label="", vfl_df=None):
         # establish) and inserted at the front, keeping the dashboard order.
 
         # 2) GD Sheet
+        _tick("GD Sheet")
         rep, rt = gd_sheet_report(pf, asof=asof)
         disp, money, pct = _prep_gd(rep)
         _add_sheet(contents, "GD Sheet — Growth / Degrowth", disp, rt,
@@ -862,6 +881,7 @@ def build(pf, pf_all, asof, basis_label="", vfl_df=None):
                    cell_rules=PORTFOLIO_CELL_RULES, hl_cells=_hl(disp))
 
         # 3) Brand-wise GD
+        _tick("Brand-wise GD")
         rep, rt = brand_wise_gd_report(pf, asof=asof)
         disp, money, pct = _prep_gd(rep)
         _add_sheet(contents, "Brand-wise Growth / Degrowth", disp, rt,
@@ -869,6 +889,7 @@ def build(pf, pf_all, asof, basis_label="", vfl_df=None):
                    cell_rules=PORTFOLIO_CELL_RULES, hl_cells=_hl(disp))
 
         # 4) Loc-wise GD
+        _tick("Location-wise GD")
         rep, rt = loc_wise_gd_report(pf, asof=asof)
         disp, money, pct = _prep_gd(rep)
         _add_sheet(contents, "Location-wise Growth / Degrowth", disp, rt,
@@ -876,6 +897,7 @@ def build(pf, pf_all, asof, basis_label="", vfl_df=None):
                    cell_rules=PORTFOLIO_CELL_RULES, hl_cells=_hl(disp))
 
         # 5) Average (store productivity)
+        _tick("Store productivity")
         rep, rt = average_report(pf, asof=asof)
         disp = rep.copy()
         if "Sum of GD_YTD_%" in disp.columns:
@@ -887,6 +909,7 @@ def build(pf, pf_all, asof, basis_label="", vfl_df=None):
                    money=[c for c in _AVG_MONEY if c in disp.columns],
                    pct=["Sum of GD_YTD_%"], sign=["Sum of GD_YTD_%"], money_dp=2)
 
+        _tick("MW Data")
         # MW Data (whole portfolio, unfiltered), across two pages. Page one puts
         # the CURRENT year on its own row with the two prior years beneath it —
         # the current year is what gets read, and giving it a full row lets the
@@ -954,6 +977,7 @@ def build(pf, pf_all, asof, basis_label="", vfl_df=None):
             MARGIN + FRAME + HEADER_H + PAD + FOOTER_H + FRAME + MARGIN)
         pages = []
         total = len(contents)
+        _tick("Laying out pages")
         for i, (section, content) in enumerate(contents, start=1):
             pages.append(_compose(content, section, asof_label, i, total, page_w,
                                   page_h=page_h))

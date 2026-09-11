@@ -118,6 +118,49 @@ def _load_cached():
             df.attrs.get("provisional_date"))
 
 
+
+# --------------------------------------------------------------------------- #
+# ★ A PROGRESS BAR, BECAUSE SILENCE READS AS A HANG (Manav, 11 Sep: "ADD A
+# PROGRESS BAR so its clear that the reports are generating"). A pack is ~35s
+# here and a couple of minutes on the Space's two vCPUs; `st.spinner` shows the
+# same frame throughout, so there is nothing to tell a slow report from a dead
+# one. This names what is being built and how far along it is.
+# --------------------------------------------------------------------------- #
+class _ReportProgress:
+    """Moves a bar across the reports picked, and within the long one.
+
+    `step(label)` advances one report. `sub(label, done, total)` is handed to
+    `portfolio_pdf.build` so the pack's own six pieces move the bar too —
+    without it the bar would sit still for the thirty seconds that pack takes,
+    which is the whole problem being fixed.
+    """
+
+    def __init__(self, total: int):
+        self.total = max(int(total), 1)
+        self.i = 0
+        self.label = ""
+        self.bar = st.progress(0.0, text="Starting…")
+
+    def _show(self, frac: float, text: str):
+        self.bar.progress(min(max(frac, 0.0), 1.0), text=text)
+
+    def step(self, label: str):
+        self.label = label
+        self._show(self.i / self.total,
+                   f"{label}…  ({self.i + 1} of {self.total})")
+        self.i += 1
+
+    def sub(self, label, done, total):
+        # progress WITHIN the current report, scaled into its own slice
+        base = (self.i - 1) / self.total
+        self._show(base + (done / max(total, 1)) / self.total,
+                   f"{self.label} — {label}…  ({self.i} of {self.total})")
+
+    def done(self, text="Done"):
+        self._show(1.0, text)
+        self.bar.empty()
+
+
 def get_data() -> pd.DataFrame:
     return _load_cached()[0]
 
@@ -1200,6 +1243,7 @@ def render_portfolio():
 
         if st.button("🧾 Generate", key="rp_gen", type="primary",
                      use_container_width=True, disabled=not chosen):
+            _prog = _ReportProgress(len(chosen))
             with st.spinner("Building…"):
                 try:
                     # Portfolio mode never loads the VFL frame, so pull it here
@@ -1210,20 +1254,26 @@ def render_portfolio():
                     tdb = f"Live to {v_asof:%d %b %Y}"
                     built = []
                     if "pack" in chosen:
+                        _prog.step("Portfolio pack")
                         built.append((
                             f"peanuts_portfolio_{pdf_asof:%Y%m%d}.pdf",
                             PPDF.build(pf, pf_all, pdf_asof, basis,
-                                       vfl_df=vdf)))
+                                       vfl_df=vdf, on_step=_prog.sub)))
                     if "south_ltol" in chosen:
+                        _prog.step("South L-to-L")
                         built.append(RTD.build_south_ltol(vdf, v_asof, tdb))
                     if "east_ltol" in chosen:
+                        _prog.step("East L-to-L")
                         built.append(RTD.build_east_ltol(pf_all, v_asof, tdb))
                     if "mw" in chosen:
+                        _prog.step("Month-wise")
                         built.append(
                             RTD.build_month_wise(pf_all, vdf, v_asof, tdb))
                     if "night_sms" in chosen:
+                        _prog.step("Night SMS")
                         built.append(RTD.build_night_sms(pf_all, basis_label=tdb))
                     if "reviews" in chosen:
+                        _prog.step("Google reviews")
                         import reviews as RV
                         rv, src = RV.load_best()
                         if rv is None or rv.empty:
@@ -1251,10 +1301,13 @@ def render_portfolio():
                                     basis_label=f"As of {_asof:%d %b %Y}",
                                     names=RV.store_display(vdf))))
                     if "tva" in chosen:
+                        _prog.step("Target vs achievement")
                         built.append(RTD.build_target_vs_ach(pf_all, pdf_asof,
                                                              basis))
                     for _i, _w in enumerate(_fw):
                         if f"festive_{_i}" in chosen:
+                            _prog.step(f"Festive — {_w.label}"
+                                       if hasattr(_w, "label") else "Festive")
                             # ★ THE ADMIN PACK IS NOW THE FESTIVE REPORT
                             # (Manav, 7 Sep). Seven pages instead of four
                             # grids: the season drawn, the day ladder split
@@ -1269,10 +1322,12 @@ def render_portfolio():
                             import festive_admin as FADM
                             built.append(FADM.build(
                                 pf_all, _w, basis_label=basis))
+                    _prog.done("Packaging…")
                     name, payload, mime = RTD.bundle(
                         built, zip_name=f"PORTFOLIO REPORTS {pdf_asof:%d-%m-%Y}.zip")
                     st.session_state["rp_out"] = (name, payload, mime)
                 except Exception as e:                    # surface, don't crash tab
+                    _prog.done()                          # never leave a bar mid-way
                     st.session_state["rp_out"] = None
                     st.error(f"Could not build: {e}")
 
@@ -2667,18 +2722,22 @@ if nav == "📄 REPORTS PDF":
     chosen = [k for k, v in picked.items() if v]
     if st.button("🧾 Generate", key="vrp_gen", type="primary",
                  use_container_width=True, disabled=not chosen):
+        _prog = _ReportProgress(len(chosen))
         with st.spinner("Building…"):
             try:
                 built = []
                 if "pack" in chosen:
+                    _prog.step("VFL pack")
                     built.append((
                         f"peanuts_vfl_{p_asof:%Y%m%d}.pdf",
                         vfl_pdf.build(df_exec, asof=p_asof,
                                       gen_date=pd.Timestamp(end_d),
                                       basis_label=p_basis)))
                 if "db" in chosen:
+                    _prog.step("Women's discount")
                     built.append(DISC.build_pdf(get_data(), p_asof, p_basis))
                 if "morning" in chosen:
+                    _prog.step("Morning snapshots")
                     import snapshots_a4 as A4
                     _bar = st.progress(0.0, text="Morning snapshots…")
                     try:
@@ -2719,10 +2778,12 @@ if nav == "📄 REPORTS PDF":
                     if f"festive_{_i}" in chosen:
                         built.append(FEST.build_festive_pdf(
                             df_exec, _w, basis_label=p_basis, vfl=True))
+                _prog.done("Packaging…")
                 name, payload, mime = RTD.bundle(
                     built, zip_name=f"VFL REPORTS {p_asof:%d-%m-%Y}.zip")
                 st.session_state["vrp_out"] = (name, payload, mime)
             except Exception as e:                        # surface, don't crash tab
+                _prog.done()                              # never leave a bar mid-way
                 st.session_state["vrp_out"] = None
                 st.error(f"Could not build: {e}")
     if st.session_state.get("vrp_out"):
