@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Daily Google review reading — NOW THE FALLBACK, not the primary.
+
+  ★ 11 Sep 2026: collection moved to GitHub Actions, riding on keep-warm.yml
+  (the only schedule GitHub honours in this repo — see that file). It has since
+  collected unattended. This job is kept because it costs nothing and the two
+  cannot collide: the collector keeps one row per store per day and the Actions
+  gate skips a day already on file. Retire it with:
+    launchctl unload ~/Library/LaunchAgents/com.peanuts.reviews.plist
+
+  launchd rather than cron because it RUNS A MISSED JOB once the machine wakes.
+  A skipped day is not lost either way — the next reading's delta covers the
+  elapsed days and is stored with the span it represents — but a reading taken
+  is better than a gap explained.
+
+  Install:
+    sed "s|__ROOT__|$PWD|g" com.peanuts.reviews.plist.template \
+      > ~/Library/LaunchAgents/com.peanuts.reviews.plist
+    launchctl load ~/Library/LaunchAgents/com.peanuts.reviews.plist
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.peanuts.reviews</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>__ROOT__/venv/bin/python</string>
+    <string>__ROOT__/scripts_collect_reviews.py</string>
+  </array>
+  <key>WorkingDirectory</key><string>__ROOT__</string>
+  <key>StartCalendarInterval</key>
+  <dict><key>Hour</key><integer>7</integer><key>Minute</key><integer>30</integer></dict>
+  <key>RunAtLoad</key><false/>
+  <key>StandardOutPath</key><string>__ROOT__/data/reviews.log</string>
+  <key>StandardErrorPath</key><string>__ROOT__/data/reviews.err</string>
+</dict>
+</plist>
