@@ -197,8 +197,12 @@ def _as_int(code):
 # be removable, and a one-line call is removable; a rewritten row builder is
 # not.
 
-COL_PF = "Sum of YEAR END"          # portfolio sheets' naming
-COL_VFL = "Year End"                # VFL sheets' naming
+# ★ THE HEADER NAMES BOTH BASES (Manav, 11 Sep). The column holds a measured
+# year for most rows and a run-rate for the young ones; a header saying only
+# "YEAR END" invites the reader to treat them as one kind of number. The
+# projected cells are also shaded — see `projected_codes`.
+COL_PF = "Sum of YEAR END PROJECTED/TTM"    # portfolio sheets' naming
+COL_VFL = "Year End Projected/TTM"          # VFL sheets' naming
 _PAIR_PF = ("Sum of PROJECTED YTD", "Sum of TTM SALES")
 _PAIR_VFL = ("Projected YTD", "TTM Sales")
 
@@ -302,3 +306,22 @@ def stitched_ly_full(pf: pd.DataFrame, vfl: pd.DataFrame | None, asof) -> pd.Ser
                 out[code] = float(v[L.COL_AMOUNT].sum()) + float(p["sales"].sum())
 
     return pd.Series(out, dtype=float)
+
+
+def projected_codes(pf: pd.DataFrame, vfl, asof) -> set:
+    """Store codes standing on a PROJECTION rather than a measured year.
+
+    These are the cells the sheets shade. Today it is one store — Dibrugarh,
+    which opened 18 Jan 2026 and reaches twelve months on 17 Jan 2027 — but the
+    set is derived every run, so a store leaves it on its own anniversary and
+    a newly opened store joins it without anyone editing a list.
+    """
+    ttm = stitched_ttm(pf, vfl, asof)
+    first = first_trade_map(pf, vfl)
+    out = set()
+    for code in pf["code"].unique():
+        v = ttm.get(code)
+        if not (has_full_year(first.get(code), asof) and v is not None
+                and pd.notna(v) and float(v) > 0):
+            out.add(_as_int(code))
+    return {c for c in out if c is not None}

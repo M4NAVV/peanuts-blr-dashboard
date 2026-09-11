@@ -372,3 +372,50 @@ def test_unit_delta_is_one_row_per_line():
     u = L.unit_delta(d)
     assert list(u.index) == list(d.index)
     assert u.sum() == L.sold_units(d)
+
+
+def test_a_group_total_cannot_be_less_productive_than_every_store_in_it():
+    """★ Manav, 11 Sep: the productivity sheet's totals "are not making sense".
+
+    They divided by the SUM of every store's operation days (stores x days) and
+    then PSFPD divided that again by the SUM of every store's carpet area — two
+    divisions by the store count. VFL's 22 stores printed PSFPD 1.25 while every
+    store in it ran between 4.16 and 90.02, and the Grand Total printed 0.53,
+    below all fifteen groups above it.
+    """
+    import pandas as pd
+    import portfolio_loader as PL
+    d, types = PL.average_report(PL.load_portfolio())
+    d = d.assign(_t=types)
+    stores = d[d["_t"] == "store"]
+    assert len(stores) > 1
+
+    for _, tot in d[d["_t"] != "store"].iterrows():
+        label = str(tot["PARENT"]).replace(" Total", "")
+        grp = stores if label == "Grand" else stores[stores["PARENT"] == label]
+        if not len(grp):
+            continue
+        lo, hi = grp["Sum of PSFPD"].min(), grp["Sum of PSFPD"].max()
+        assert lo - 0.01 <= tot["Sum of PSFPD"] <= hi + 0.01, (
+            f"{label}: total PSFPD {tot['Sum of PSFPD']:.2f} outside its own "
+            f"stores' range {lo:.2f}-{hi:.2f}")
+
+
+def test_a_group_of_one_store_equals_that_store():
+    """The decisive check: with a single store there is nothing to average, so
+    the total must reproduce it exactly."""
+    import portfolio_loader as PL
+    d, types = PL.average_report(PL.load_portfolio())
+    d = d.assign(_t=types)
+    stores = d[d["_t"] == "store"]
+    checked = 0
+    for _, tot in d[d["_t"] != "store"].iterrows():
+        label = str(tot["PARENT"]).replace(" Total", "")
+        grp = stores[stores["PARENT"] == label]
+        if len(grp) != 1:
+            continue
+        one = grp.iloc[0]
+        assert abs(tot["Sum of PSFPD"] - one["Sum of PSFPD"]) < 0.01, label
+        assert abs(tot["Sum of AVG DAY SALE"] - one["Sum of AVG DAY SALE"]) < 1
+        checked += 1
+    assert checked, "no single-store group to check"

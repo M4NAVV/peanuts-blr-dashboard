@@ -1726,9 +1726,25 @@ def average_report(df: pd.DataFrame, asof=None):
         d["Sum of YTD_LY"] = sdf["Sum of YTD_LY"].sum()
         d["Sum of YTD_TY"] = sdf["Sum of YTD_TY"].sum()
         d["Sum of GD_YTD_%"] = _gd_frac(d["Sum of YTD_TY"], d["Sum of YTD_LY"])
-        op_sum, ca_sum = sdf["_op"].sum(), sdf["_ca"].sum()
+        ca_sum = sdf["_ca"].sum()
         d["Average of OPERATION"] = sdf["_op"].mean()
-        ads = d["Sum of YTD_TY"] / op_sum if op_sum else 0.0
+        # ★★ A TOTAL IS THE GROUP'S OWN DAILY TAKINGS, NOT AN AVERAGE STORE
+        # (Manav, 19 Aug, on the L-to-L sheets; found wrong here 11 Sep).
+        #
+        # This divided by `_op.sum()` — the sum of every store's days, which is
+        # roughly stores x days — and then PSFPD divided THAT by the sum of
+        # every store's carpet area. Two divisions by the store count, so the
+        # bigger the group the smaller its productivity looked: VFL's 22 stores
+        # printed PSFPD 1.25 while every store in it ran between 4.16 and
+        # 90.02, and the Grand Total printed 0.53, below all fifteen groups
+        # above it. A total that sits outside the range of its own rows is not
+        # an average of anything.
+        #
+        # The span is the days the GROUP has been trading — its longest-open
+        # store — so a store that opened in July does not shorten the window for
+        # the ones that traded all year.
+        days = float(sdf["_op"].max()) if len(sdf) else 0.0
+        ads = d["Sum of YTD_TY"] / days if days else 0.0
         d["Sum of AVG DAY SALE"] = ads
         d["Sum of AVG MONTH SALE"] = ads * 30
         d["Sum of PSFPD"] = (ads / ca_sum) if ca_sum else 0.0

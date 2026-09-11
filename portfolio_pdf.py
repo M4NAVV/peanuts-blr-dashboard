@@ -116,6 +116,13 @@ BOLD_SIGN_CELLS = False
 # are NOT shared between the Portfolio and VFL reports.
 DAY_SALE_COL = "Sum of DAY SALE FIGURE"
 
+# ★ THE PROJECTED CELL IS SHADED (Manav, 11 Sep: "do a highlight for the cell,
+# so we know"). The year-end column holds a measured twelve months for most
+# stores and a run-rate for the ones too young to have one. Same column, two
+# kinds of number — so the run-rate ones are tinted. Amber, not the totals'
+# yellow and not the red that means degrowth here.
+HL_BG = (255, 235, 190)
+
 # Portfolio: one row is one store, so the rule is limited to data rows — the
 # total rows are already colour-coded and aggregate differently.
 DAY_SALE_FLOOR = 5000
@@ -298,6 +305,7 @@ def _measure_table(df, *, money=(), pct=(), sign=(), money_dp=0, num=(),
 
 
 def _render_chunk(m, row_types, rows, row_bg=None, cell_rules=(),
+                  hl_cells=frozenset(),
                   col_bg=None, row_ink=None):
     """Render the pale-blue column header + the given body `rows` (indices into
     the measured table) as one page-content image, so the header repeats per
@@ -351,6 +359,15 @@ def _render_chunk(m, row_types, rows, row_bg=None, cell_rules=(),
             for _j, _c in col_bg.items():
                 d.rectangle([_xs[_j], y, _xs[_j] + col_w[_j], y + row_h],
                             fill=_c)
+        # ★ PER-CELL SHADE. `i` is the index into the WHOLE table, not into
+        # this chunk, so a set built once before chunking stays correct on
+        # every page. Painted after the row and column fills and before the
+        # text, so the figure sits on top of its own tint.
+        if hl_cells:
+            for _j, _c in enumerate(cols):
+                if (i, _c) in hl_cells:
+                    d.rectangle([_xs[_j], y, _xs[_j] + col_w[_j], y + row_h],
+                                fill=HL_BG)
         x = 0
         for j, c in enumerate(cols):
             s = txt[i][j]
@@ -417,7 +434,8 @@ def _paginate(row_types, budget=ROWS_PER_PAGE):
 
 
 def _add_sheet(contents, section, disp, rt, *, money, pct, sign, money_dp,
-               row_bg=None, cell_rules=(), font_px=32, header_px=28,
+               row_bg=None, cell_rules=(), hl_cells=frozenset(),
+               font_px=32, header_px=28,
                col_cap=None, col_bg=None, row_ink=None):
     """Measure, paginate, and append one (possibly multi-page) sheet. The column
     header repeats on every page; continued pages are labelled 'k/total'.
@@ -434,6 +452,7 @@ def _add_sheet(contents, section, disp, rt, *, money, pct, sign, money_dp,
         label = section if n == 1 else f"{section} — {k + 1}/{n}"
         contents.append((label, _render_chunk(m, rt, rows, row_bg=row_bg,
                                               cell_rules=cell_rules,
+                                              hl_cells=hl_cells,
                                               col_bg=col_bg,
                                               row_ink=row_ink)))
 
@@ -764,6 +783,12 @@ def _cover(page_w, asof, basis_label, scope_rows,
 # --------------------------------------------------------------------------- #
 # Public entry
 # --------------------------------------------------------------------------- #
+# The year-end trial's column, named once so a rename cannot leave the money
+# declaration pointing at a column that no longer exists — which is exactly
+# what happened when it was renamed on 11 Sep.
+import yearend as _YE_NAMES
+YE_COL = _YE_NAMES.COL_PF
+
 _MONEY = ["Sum of YTD_LY", "Sum of YTD_TY", "Sum of MTD_LY", "Sum of MTD_TY",
           "Sum of DAY SALE FIGURE", "Sum of MONTH SALE LY", "Sum of PROJECTED MTD",
           "Sum of LY FULL SALES", "Sum of PROJECTED YTD", "Sum of TTM SALES",
@@ -772,11 +797,11 @@ _MONEY = ["Sum of YTD_LY", "Sum of YTD_TY", "Sum of MTD_LY", "Sum of MTD_TY",
           # that has happened here. Listed unconditionally: naming a column
           # that is not on the sheet costs nothing, and a flag-dependent money
           # list is exactly how the declaration gets lost again.
-          "Sum of YEAR END"]
+          YE_COL]
 _PCT = ["Sum of GD_YTD_%", "Sum of GD_MTD_%"]
 _AVG_MONEY = ["SBA", "CA", "Sum of YTD_LY", "Sum of YTD_TY", "Average of OPERATION",
               "Sum of AVG DAY SALE", "Sum of AVG MONTH SALE", "Sum of PSFPD",
-              "Sum of TTM SALES", "Sum of YEAR END"]
+              "Sum of TTM SALES", YE_COL]
 
 
 def _prep_gd(df, money=_MONEY):
@@ -803,6 +828,24 @@ def build(pf, pf_all, asof, basis_label="", vfl_df=None):
     asof = pd.Timestamp(asof)
     asof_label = f"As of {asof:%d %b %Y}" + (f" · {basis_label}" if basis_label else "")
 
+    # ★ WHICH CELLS ARE A RUN-RATE. Computed ONCE here, for every sheet — the
+    # three GD reports each build their own frame and would otherwise each
+    # need their own copy of the rule. Empty unless the trial is on.
+    import yearend as _YE
+    _proj = _YE.projected_codes(pf, vfl_df, asof) if _YE.enabled() else set()
+
+    def _hl(disp):
+        """The (row, column) pairs to shade on this sheet: the year-end figure
+        of any store standing on a projection. Total rows are never shaded —
+        a total mixes both bases and shading it would claim it is all one."""
+        if not _proj or _YE.COL_PF not in disp.columns \
+                or "STORE CODE" not in disp.columns:
+            return frozenset()
+        codes = pd.to_numeric(disp["STORE CODE"], errors="coerce")
+        return frozenset((i, _YE.COL_PF)
+                         for i, c in enumerate(codes)
+                         if pd.notna(c) and int(c) in _proj)
+
     with _LOCK:
         contents = []   # (section, content_image)
         # MW Data is built last (it is sized to the page box the report tables
@@ -813,21 +856,21 @@ def build(pf, pf_all, asof, basis_label="", vfl_df=None):
         disp, money, pct = _prep_gd(rep)
         _add_sheet(contents, "GD Sheet — Growth / Degrowth", disp, rt,
                    money=money, pct=pct, sign=pct, money_dp=0,
-                   cell_rules=PORTFOLIO_CELL_RULES)
+                   cell_rules=PORTFOLIO_CELL_RULES, hl_cells=_hl(disp))
 
         # 3) Brand-wise GD
         rep, rt = brand_wise_gd_report(pf, asof=asof)
         disp, money, pct = _prep_gd(rep)
         _add_sheet(contents, "Brand-wise Growth / Degrowth", disp, rt,
                    money=money, pct=pct, sign=pct, money_dp=0,
-                   cell_rules=PORTFOLIO_CELL_RULES)
+                   cell_rules=PORTFOLIO_CELL_RULES, hl_cells=_hl(disp))
 
         # 4) Loc-wise GD
         rep, rt = loc_wise_gd_report(pf, asof=asof)
         disp, money, pct = _prep_gd(rep)
         _add_sheet(contents, "Location-wise Growth / Degrowth", disp, rt,
                    money=money, pct=pct, sign=pct, money_dp=0,
-                   cell_rules=PORTFOLIO_CELL_RULES)
+                   cell_rules=PORTFOLIO_CELL_RULES, hl_cells=_hl(disp))
 
         # 5) Average (store productivity)
         rep, rt = average_report(pf, asof=asof)

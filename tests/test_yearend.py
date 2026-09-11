@@ -146,3 +146,39 @@ def test_the_column_says_when_it_holds_two_kinds_of_number(on):
     mixed = YE.column_label({YE.BASIS_TTM, YE.BASIS_PROJ})
     assert "TTM" in mixed and "PROJ" in mixed
     assert YE.note({YE.BASIS_TTM, YE.BASIS_PROJ}).strip() != ""
+
+
+def test_the_header_names_both_bases(on):
+    """Manav, 11 Sep: the column holds a measured year for most rows and a
+    run-rate for the young ones, so the header must not claim one kind."""
+    for name in (YE.COL_PF, YE.COL_VFL):
+        u = name.upper()
+        assert "PROJECTED" in u and "TTM" in u
+
+
+def test_only_the_young_stores_are_marked_for_shading(on):
+    pf, vfl = _feeds()
+    asof = pd.Timestamp("2026-09-09")
+    # 112 has VFL history across the seam; 1 has traded the whole window
+    assert YE.projected_codes(pf, vfl, asof) == set()
+    # without the VFL feed, South has no measured year and must be shaded
+    assert 112 in YE.projected_codes(pf, None, asof)
+
+
+def test_a_store_leaves_the_shaded_set_on_its_anniversary(on):
+    """The set is derived every run, so nobody maintains a list."""
+    import loader as L
+    opened = pd.Timestamp("2026-01-18")
+    pf = pd.DataFrame([{"code": 106, "date": d, "sales": 100.0,
+                        "takeover_date": opened}
+                       for d in pd.date_range(opened, "2027-01-17")])
+    arrives = opened + pd.DateOffset(years=1) - pd.Timedelta(days=1)
+    assert 106 in YE.projected_codes(pf, None, arrives - pd.Timedelta(days=1))
+    assert 106 not in YE.projected_codes(pf, None, arrives)
+
+
+def test_nothing_is_shaded_when_the_trial_is_off(monkeypatch):
+    monkeypatch.delenv("YEAR_END_VIEW", raising=False)
+    import portfolio_pdf as PP
+    assert not YE.enabled()
+    assert hasattr(PP, "HL_BG")          # the shade exists but goes unused
