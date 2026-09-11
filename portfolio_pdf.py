@@ -832,6 +832,9 @@ def build(pf, pf_all, asof, basis_label="", vfl_df=None):
     # three GD reports each build their own frame and would otherwise each
     # need their own copy of the rule. Empty unless the trial is on.
     import yearend as _YE
+    # The tab has already loaded the VFL frame; reuse it rather than fetching a
+    # second copy of the same sheet inside the stitch.
+    _YE.prime_feed(vfl_df)
     _proj = _YE.projected_codes(pf, vfl_df, asof) if _YE.enabled() else set()
 
     def _hl(disp):

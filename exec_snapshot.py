@@ -154,12 +154,9 @@ def _growth(cur, pri):
 # Metrics — portfolio
 # --------------------------------------------------------------------------- #
 def PL_vfl_for_exec():
-    """The VFL feed, for South's pre-takeover history. Never fatal."""
-    try:
-        import loader as L
-        return L.load_data()
-    except Exception:
-        return None
+    """The VFL feed, fetched ONCE — see `yearend.vfl_feed`."""
+    import yearend as _YE
+    return _YE.vfl_feed()
 
 
 def regions_of(df, vfl=False) -> list:

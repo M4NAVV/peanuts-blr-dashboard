@@ -1471,8 +1471,30 @@ _BRAND_VALUE_COLS = ["Sum of YTD_LY", "Sum of YTD_TY", "Sum of MTD_LY", "Sum of 
                      "Sum of PROJECTED MTD", "Sum of LY FULL SALES", "Sum of PROJECTED YTD", "Sum of TTM SALES"]
 
 
+_METRICS_MEMO: dict = {}
+
+
 def _gd_store_metrics(df: pd.DataFrame, asof: pd.Timestamp) -> dict:
-    """Per-store GD figures (identical to gd_sheet_report), keyed by store code."""
+    """Per-store GD figures (identical to gd_sheet_report), keyed by store code.
+
+    ★★ MEMOISED (11 Sep). Building the portfolio pack asks for this FIVE times
+    — brand-wise, loc-wise, average and the exec tiles each call it on the same
+    frame and the same day — at ~2.2s a call. Nothing mutates what it returns
+    (checked), so the repeats were pure waste, and they were waste before the
+    year-end work too. Keyed on the as-of date and the row count, which is what
+    separates one build from the next; the cache is small and self-clearing.
+    """
+    key = (str(pd.Timestamp(asof).date()), len(df))
+    if key in _METRICS_MEMO:
+        return _METRICS_MEMO[key]
+    out = _gd_store_metrics_uncached(df, asof)
+    if len(_METRICS_MEMO) >= 4:
+        _METRICS_MEMO.clear()
+    _METRICS_MEMO[key] = out
+    return out
+
+
+def _gd_store_metrics_uncached(df: pd.DataFrame, asof: pd.Timestamp) -> dict:
     attrs = gd_store_attrs_dyn(df, asof).set_index("code")
     mtd_cur, mtd_pri = _window_frames(df, "MTD", asof)
     ytd_cur, ytd_pri = _window_frames(df, "YTD", asof)
@@ -1524,14 +1546,9 @@ def _gd_store_metrics(df: pd.DataFrame, asof: pd.Timestamp) -> dict:
 
 
 def _vfl_for_stitch():
-    """The VFL feed, for South's pre-takeover history. Never fatal: without it
-    the stitch simply does not happen and those stores fall back to the
-    projection, which is the honest answer when the history cannot be read."""
-    try:
-        import loader as L
-        return L.load_data()
-    except Exception:
-        return None
+    """The VFL feed, fetched ONCE — see `yearend.vfl_feed`."""
+    import yearend as _YE
+    return _YE.vfl_feed()
 
 
 def brand_wise_gd_report(df: pd.DataFrame, asof=None):

@@ -2209,12 +2209,9 @@ def render_target_vs_ach(sheet, region=None) -> "Image":
 
 
 def _YE_vfl():
-    """The VFL feed, for South's pre-takeover history. Never fatal."""
-    try:
-        import loader as L
-        return L.load_data()
-    except Exception:
-        return None
+    """The VFL feed, fetched ONCE — see `yearend.vfl_feed`."""
+    import yearend as _YE
+    return _YE.vfl_feed()
 
 
 def build_target_vs_ach(pf_df, asof=None, basis_label="") -> tuple[str, bytes]:

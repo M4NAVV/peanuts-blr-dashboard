@@ -107,6 +107,45 @@ def has_full_year(first_trade, asof) -> bool:
     return pd.Timestamp(first_trade) <= start
 
 
+# ★ The stitch is a pure function of (portfolio, vfl, asof) and is asked for by
+# EVERY report on the page — gd_sheet, brand-wise, loc-wise, average and the
+# exec tiles all go through `_gd_store_metrics`. Recomputing it each time cost
+# ~13s on a portfolio pack. Keyed on a cheap fingerprint of the frame rather
+# than its identity, so a re-read of the same day reuses it and a genuinely
+# new day does not.
+_MEMO: dict = {}
+_MEMO_MAX = 8
+
+
+def _key(pf, asof, tag, vfl=None):
+    """A CHEAP fingerprint. The first version summed a column and counted
+    distinct codes on every lookup, which cost more than the work it was
+    guarding — the build got SLOWER. Row count plus the as-of date separates
+    every frame this app actually builds from.
+
+    ★ THE VFL FRAME IS PART OF THE KEY. Without it a call WITH the feed and one
+    WITHOUT collided, and the second silently got the first's answer — so a
+    caller that could not see South's history was handed a stitched figure
+    anyway. Caught by the test that asserts the no-feed path leaves those
+    stores out.
+    """
+    try:
+        return (tag, str(pd.Timestamp(asof).date()) if asof else "-", len(pf),
+                -1 if vfl is None else len(vfl))
+    except Exception:
+        return None
+
+
+def _memo(key, build):
+    if key is None:
+        return build()
+    if key not in _MEMO:
+        if len(_MEMO) >= _MEMO_MAX:
+            _MEMO.clear()
+        _MEMO[key] = build()
+    return _MEMO[key]
+
+
 def stitched_ttm(pf: pd.DataFrame, vfl: pd.DataFrame | None, asof) -> pd.Series:
     """Trailing twelve months per portfolio code, reaching across both feeds.
 
@@ -115,6 +154,10 @@ def stitched_ttm(pf: pd.DataFrame, vfl: pd.DataFrame | None, asof) -> pd.Series:
     error this guards against, and an absent entry makes the caller decide,
     which is `year_end`'s job.
     """
+    return _memo(_key(pf, asof, "ttm", vfl), lambda: _stitched_ttm(pf, vfl, asof))
+
+
+def _stitched_ttm(pf, vfl, asof) -> pd.Series:
     start, end = window(asof)
     out: dict = {}
 
@@ -128,20 +171,38 @@ def stitched_ttm(pf: pd.DataFrame, vfl: pd.DataFrame | None, asof) -> pd.Series:
 
     import loader as L
 
+    # ★★ THE VFL FRAME IS SLICED ONCE, NOT ONCE PER STORE (11 Sep). This used
+    # to filter all ~292k VFL rows twice for each of the eight South codes —
+    # sixteen full-frame scans per call, on a report that asks for this five
+    # times a page. On the Space's 2-vCPU box that is the difference between a
+    # report and a hang. One groupby replaces the lot.
+    v_sum: dict = {}
+    v_first: dict = {}
+    if vfl is not None and len(vfl):
+        want = set(SOUTH_VFL_LABEL.values())
+        vv = vfl[vfl[L.COL_STORE_LABEL].isin(want)]
+        if len(vv):
+            v_first = vv.groupby(L.COL_STORE_LABEL)["date"].min().to_dict()
+            vw = vv[(vv["date"] >= start) & (vv["date"] <= end)]
+            # (label, date) kept so each store's own seam can be applied below
+            v_sum = {lbl: g for lbl, g in vw.groupby(L.COL_STORE_LABEL)}
+
+    # the portfolio side, grouped once as well
+    p_by_code = {c: g for c, g in win.groupby("code")} if len(win) else {}
+
     for code, first in first_pf.items():
         label = SOUTH_VFL_LABEL.get(_as_int(code))
         seam = tko.get(code)
-        if label is not None and vfl is not None and pd.notna(seam):
+        if label is not None and label in v_sum and pd.notna(seam):
             seam = pd.Timestamp(seam)
-            # VFL strictly BEFORE the takeover, portfolio on and after it.
-            v = vfl[(vfl[L.COL_STORE_LABEL] == label)
-                    & (vfl["date"] >= start) & (vfl["date"] < seam)]
-            p = win[(win["code"] == code) & (win["date"] >= seam)]
-            if len(v):
-                v_first = vfl[vfl[L.COL_STORE_LABEL] == label]["date"].min()
-                if has_full_year(v_first, asof):
-                    out[code] = float(v[L.COL_AMOUNT].sum()) + float(p["sales"].sum())
-                    continue
+            g = v_sum[label]
+            before = g[g["date"] < seam]
+            if len(before) and has_full_year(v_first.get(label), asof):
+                pg = p_by_code.get(code)
+                after = 0.0 if pg is None else float(
+                    pg.loc[pg["date"] >= seam, "sales"].sum())
+                out[code] = float(before[L.COL_AMOUNT].sum()) + after
+                continue
         if has_full_year(first, asof):
             out[code] = float(by_code.get(code, 0.0))
 
@@ -151,6 +212,11 @@ def stitched_ttm(pf: pd.DataFrame, vfl: pd.DataFrame | None, asof) -> pd.Series:
 def first_trade_map(pf: pd.DataFrame, vfl: pd.DataFrame | None) -> pd.Series:
     """Earliest day each portfolio code traded, reaching into the VFL feed for
     the South stores whose portfolio history starts at the takeover."""
+    return _memo(_key(pf, None, "first", vfl),
+                 lambda: _first_trade_map(pf, vfl))
+
+
+def _first_trade_map(pf, vfl) -> pd.Series:
     import loader as L
 
     first = pf.groupby("code")["date"].min()
@@ -335,3 +401,57 @@ def projected_codes(pf: pd.DataFrame, vfl, asof) -> set:
                 and pd.notna(v) and float(v) > 0):
             out.add(_as_int(code))
     return {c for c in out if c is not None}
+
+
+# ── the VFL feed, fetched once ──────────────────────────────────────────────
+_FEED: dict = {"at": 0.0, "df": None}
+_FEED_TTL = 600.0        # seconds
+
+
+def vfl_feed(explicit=None):
+    """The VFL frame for stitching South's pre-takeover history.
+
+    ★★ THIS EXISTS BECAUSE THE PORTFOLIO PACK STOPPED GENERATING (11 Sep).
+    `_gd_store_metrics` called `loader.load_data()` twice, and the GD, brand-wise
+    and loc-wise reports each call it — so building the pack **downloaded the
+    whole VFL sheet 16 times: 207 seconds of a 256-second build.** Locally that
+    is slow; on the Space it is a report that never appears.
+
+    `loader.load_data()` has no cache of its own — the app caches it at the
+    Streamlit layer, which a report builder does not go through.
+
+    Pass `explicit` when the caller already holds the frame (the report tab
+    does). Otherwise it is fetched once and reused for `_FEED_TTL` seconds,
+    which collapses one build's calls into one download while keeping the
+    figure fresh between runs. The slice actually used is South's trading
+    BEFORE 19 Apr 2026, which cannot change.
+    """
+    if explicit is not None:
+        return explicit
+    import time
+    now = time.time()
+    if _FEED["df"] is None or now - _FEED["at"] > _FEED_TTL:
+        try:
+            import loader as L
+            _FEED["df"] = L.load_data()
+            _FEED["at"] = now
+        except Exception:
+            # Never fatal: without it South falls back to the projection, which
+            # is the honest answer when the history cannot be read.
+            return None
+    return _FEED["df"]
+
+
+def prime_feed(df) -> None:
+    """Hand `vfl_feed` a frame the caller already holds.
+
+    ★ The report tab loads the VFL frame anyway and passes it to
+    `portfolio_pdf.build`. Without this the stitch fetched its OWN second copy
+    — a whole extra download of the sheet on every pack, ~20s of a build that
+    was already the slowest thing on the page.
+    """
+    if df is None or not len(df):
+        return
+    import time
+    _FEED["df"] = df
+    _FEED["at"] = time.time()

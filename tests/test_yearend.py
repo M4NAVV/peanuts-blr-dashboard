@@ -341,3 +341,51 @@ def test_the_target_sheet_declares_its_estate(on):
     """A grand total that will not say what it covers cannot be reconciled."""
     src = open("report_td.py", encoding="utf-8").read()
     assert "trading stores only" in src
+
+
+# ── caching ─────────────────────────────────────────────────────────────────
+# ★★ THE PORTFOLIO PACK STOPPED GENERATING ON THE SPACE (Manav, 11 Sep: "the
+# reports in the portfolio tab arent really generating on the live dash").
+# `_gd_store_metrics` fetched the whole VFL sheet twice, three reports call it,
+# and the stitch then scanned that frame once per South store: 16 downloads and
+# a 256-second build, on a 2-vCPU box. These tests pin the fixes.
+
+def test_the_memo_does_not_confuse_with_and_without_the_feed(on):
+    """★ A REAL BUG THE SUITE CAUGHT. The first cache key ignored the VFL
+    frame, so a call WITH it and one WITHOUT collided and the second was handed
+    the first's answer — a stitched figure for a caller that could not see the
+    history it was stitched from."""
+    pf, vfl = _feeds()
+    asof = pd.Timestamp("2026-09-09")
+    with_feed = YE.stitched_ttm(pf, vfl, asof)
+    without = YE.stitched_ttm(pf, None, asof)
+    assert 112 in with_feed.index
+    assert 112 not in without.index
+    # and back again, to prove neither poisoned the other
+    assert 112 in YE.stitched_ttm(pf, vfl, asof).index
+
+
+def test_the_stitch_is_reused_within_a_build(on):
+    """Five reports on one page ask for the same stitch; it is computed once."""
+    pf, vfl = _feeds()
+    asof = pd.Timestamp("2026-09-09")
+    YE._MEMO.clear()
+    first = YE.stitched_ttm(pf, vfl, asof)
+    n = len(YE._MEMO)
+    again = YE.stitched_ttm(pf, vfl, asof)
+    assert len(YE._MEMO) == n, "a repeat call added a cache entry"
+    assert again.equals(first)
+
+
+def test_a_caller_can_hand_over_the_feed_it_already_has(on):
+    """★ `portfolio_pdf.build` is given the VFL frame by the tab. Without
+    `prime_feed` the stitch fetched a SECOND copy of the same sheet — ~20s on
+    every pack."""
+    pf, vfl = _feeds()
+    YE._FEED["df"] = None
+    YE.prime_feed(vfl)
+    assert YE.vfl_feed() is vfl
+    # an empty or missing frame must not poison the cache
+    YE._FEED["df"] = None
+    YE.prime_feed(None)
+    assert YE._FEED["df"] is None
