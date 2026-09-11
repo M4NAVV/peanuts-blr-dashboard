@@ -1,7 +1,9 @@
-"""The YEAR END trial — TTM where a store has one, the projection until it does.
+"""YEAR END — TTM where a store has one, the projection until it does.
 
-★ THE FIRST TEST IS THAT IT IS OFF. A trial that changes a live figure without
-being asked is not a trial. Everything else here sets the flag explicitly.
+★ LIVE since 11 Sep 2026 (Manav approved it after reading the trial pack), so
+the first tests here pin the DEFAULT and the escape hatch: `YEAR_END_VIEW=0`
+must still put every sheet back. The `on` fixture is kept so each test states
+the mode it means rather than leaning on whatever the default happens to be.
 """
 import os
 
@@ -17,19 +19,29 @@ def on(monkeypatch):
     yield
 
 
-def test_it_is_off_unless_asked(monkeypatch):
+def test_it_is_on_by_default(monkeypatch):
+    """Approved 11 Sep, so an unset environment means the sheets carry it."""
     monkeypatch.delenv("YEAR_END_VIEW", raising=False)
-    assert YE.enabled() is False
-    cols = ["A", "Sum of PROJECTED YTD", "Sum of TTM SALES", "B"]
-    assert YE.swap_cols(cols) == cols            # untouched
-    row = {"Sum of PROJECTED YTD": 1.0, "Sum of TTM SALES": 2.0}
-    assert YE.swap_row(row, 99.0) == row         # untouched
+    assert YE.enabled() is True
 
 
-def test_off_means_off_for_every_spelling(monkeypatch):
-    for v in ("", "0", "no", "off", "false"):
+def test_one_word_puts_every_sheet_back(monkeypatch):
+    """★ THE ESCAPE HATCH HAS TO KEEP WORKING. No code change, no deploy."""
+    for v in ("0", "no", "off", "false", "OFF", " 0 "):
         monkeypatch.setenv("YEAR_END_VIEW", v)
         assert YE.enabled() is False, v
+        cols = ["A", "Sum of PROJECTED YTD", "Sum of TTM SALES", "B"]
+        assert YE.swap_cols(cols) == cols            # untouched
+        row = {"Sum of PROJECTED YTD": 1.0, "Sum of TTM SALES": 2.0}
+        assert YE.swap_row(row, 99.0) == row         # untouched
+
+
+def test_an_unrecognised_value_leaves_it_ON(monkeypatch):
+    """A typo must not silently mean the opposite of what was intended: the
+    sheets stay as they are now unless someone writes a real off word."""
+    for v in ("", "1", "yes", "true", "maybe", "OFFF"):
+        monkeypatch.setenv("YEAR_END_VIEW", v)
+        assert YE.enabled() is True, v
 
 
 def test_the_pair_becomes_one_column(on):
@@ -177,8 +189,8 @@ def test_a_store_leaves_the_shaded_set_on_its_anniversary(on):
     assert 106 not in YE.projected_codes(pf, None, arrives)
 
 
-def test_nothing_is_shaded_when_the_trial_is_off(monkeypatch):
-    monkeypatch.delenv("YEAR_END_VIEW", raising=False)
+def test_nothing_is_shaded_when_it_is_switched_off(monkeypatch):
+    monkeypatch.setenv("YEAR_END_VIEW", "0")
     import portfolio_pdf as PP
     assert not YE.enabled()
     assert hasattr(PP, "HL_BG")          # the shade exists but goes unused

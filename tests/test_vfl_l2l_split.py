@@ -155,7 +155,7 @@ def test_an_empty_selection_still_renders(live):
     """A filter that matches nothing is a filter, not a fault."""
     df, asof = live
     rep, types = L.vfl_gd_report(df.iloc[0:0], asof=asof, gen_date=asof)
-    assert list(rep.columns) == L.VFL_GD_COLS
+    assert list(rep.columns) == L.vfl_gd_cols()
 
 
 def test_only_the_compared_columns_carry_figures_on_a_half(live):
@@ -165,9 +165,14 @@ def test_only_the_compared_columns_carry_figures_on_a_half(live):
     halves = rep.iloc[[i for i, t in enumerate(types) if t == "split"]]
     if halves.empty:
         pytest.skip("no store is clipped in this window")
+    # ★ The year-end column is named by the setting; whatever it is called, a
+    # half that only covers part of the window must not carry one — the figure
+    # describes a whole year and this row is not one.
+    import yearend as YE
     for col in ("Sum of DAY SALE FIGURE", "Sum of PROJECTED MTD",
-                "Sum of PROJECTED YTD", "Sum of LY FULL SALES",
-                "Sum of MONTH SALE LY"):
+                YE.COL_PF if YE.enabled() else "Sum of PROJECTED YTD",
+                "Sum of LY FULL SALES", "Sum of MONTH SALE LY"):
+        assert col in halves.columns, col
         assert halves[col].isna().all(), col
 
 

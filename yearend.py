@@ -1,11 +1,15 @@
 """
 YEAR END VIEW — one column that answers "where does this year finish".
 
-★★ A TRIAL, AND IT IS OFF BY DEFAULT (Manav, 10 Sep 2026). Nothing in this
-module changes a single figure on the live app unless `YEAR_END_VIEW=1` is set
-in the environment. `enabled()` is the only switch; delete this file and the
-three call sites and the dashboard is exactly as it was. That is deliberate —
-he asked for something we can revert at any time.
+★★ LIVE SINCE 11 SEP 2026 — APPROVED, AND STILL REVERSIBLE IN ONE WORD.
+Manav inspected the trial pack and said *"the new thing we did with ttm is also
+approved, so wire that change in to the live too"*. It was off by default from
+10-11 Sep while he read it.
+
+`enabled()` is still the only switch, now defaulting ON: setting
+**`YEAR_END_VIEW=0`** in the environment puts every sheet back exactly as it
+was, with no code change and no deploy. The off path is still exercised by the
+tests, so it stays a real escape hatch rather than a dead branch.
 
 The rule, his words:
 
@@ -73,9 +77,15 @@ SOUTH_VFL_LABEL = {
 }
 
 
+# Anything here turns it OFF. Spelled out rather than inverted from the "on"
+# list, because a typo in an env var must never silently mean the opposite of
+# what was intended — an unrecognised value leaves the sheets as they are now.
+_OFF = {"0", "false", "no", "off"}
+
+
 def enabled() -> bool:
-    """True only when the trial is switched on. Default OFF — see the header."""
-    return os.environ.get("YEAR_END_VIEW", "").strip().lower() in {"1", "true", "yes", "on"}
+    """True unless explicitly switched off. Default ON — see the header."""
+    return os.environ.get("YEAR_END_VIEW", "").strip().lower() not in _OFF
 
 
 def window(asof) -> tuple[pd.Timestamp, pd.Timestamp]:

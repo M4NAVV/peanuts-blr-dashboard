@@ -102,7 +102,11 @@ def test_the_reports_come_back_empty_so_a_tab_can_say_so():
                      (PL.average_report, PL.AVG_COLS)):
         rep, types = fn(df, ASOF)
         assert rep.empty and types == []
-        assert list(rep.columns) == list(cols)
+        # ★ The column list follows the year-end setting, so the expectation
+        # has to as well — comparing to the raw module constant asserts the
+        # config rather than the behaviour.
+        import yearend as YE
+        assert list(rep.columns) == YE.swap_cols(list(cols))
 
 
 def test_a_new_fiscal_year_with_no_sales_yet_behaves_the_same():
