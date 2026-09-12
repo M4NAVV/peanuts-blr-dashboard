@@ -33,8 +33,17 @@ def build(df, asof, gen_date=None, basis_label=""):
         gd, gd_rt = L.vfl_gd_report(df, asof=asof, gen_date=gen_date)
         # Day sales under 50k are flagged red on this sheet only — the two
         # gender sheets carry no day-sale column.
+        # ★ THE MONEY LIST MUST BE RESOLVED, NOT THE MODULE CONSTANT (12 Sep).
+        # `vfl_gd_cols()` swaps PROJECTED YTD + TTM SALES for the single
+        # "Sum of YEAR END PROJECTED/TTM" column, so the frame arriving here
+        # carries a column name that `VFL_GD_MONEY` has never heard of. Passing
+        # the raw constant left it in no bucket, and an undeclared numeric
+        # column prints as `str(v)` — `1106344252.8109756`, left-aligned,
+        # beside neighbours reading `1,07,25,02,127`. `app.py` already calls
+        # `vfl_gd_money()` for the on-screen table, which is why the screen was
+        # right and only the PDF was wrong.
         PP._add_sheet(contents, "VFL — Growth / Degrowth", gd, gd_rt,
-                      money=L.VFL_GD_MONEY, pct=L.VFL_GD_PCT, sign=L.VFL_GD_PCT,
+                      money=L.vfl_gd_money(), pct=L.VFL_GD_PCT, sign=L.VFL_GD_PCT,
                       money_dp=0, row_bg=PP.VFL_ROW_BG,
                       cell_rules=PP.VFL_CELL_RULES)
 
