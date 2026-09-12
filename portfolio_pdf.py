@@ -122,6 +122,13 @@ DAY_SALE_COL = "Sum of DAY SALE FIGURE"
 # kinds of number — so the run-rate ones are tinted. Amber, not the totals'
 # yellow and not the red that means degrowth here.
 HL_BG = (255, 235, 190)
+# ★ A CLOSED STORE'S YEAR IS OVER. Its year-end figure is neither a trailing
+# window nor a run-rate — it is simply what the store took before it shut, so
+# it must not read as a live forecast sitting beside ones that are still
+# moving. Grey rather than a third column label (Manav, 12 Sep: *"just
+# greyhighlight out the cells if the data is for a closed store, so we know it
+# visually"*). Darker than HL_BG so it wins visually where both could apply.
+CLOSED_BG = (214, 214, 214)
 
 # Portfolio: one row is one store, so the rule is limited to data rows — the
 # total rows are already colour-coded and aggregate differently.
@@ -305,7 +312,7 @@ def _measure_table(df, *, money=(), pct=(), sign=(), money_dp=0, num=(),
 
 
 def _render_chunk(m, row_types, rows, row_bg=None, cell_rules=(),
-                  hl_cells=frozenset(),
+                  hl_cells=frozenset(), dim_cells=frozenset(),
                   col_bg=None, row_ink=None):
     """Render the pale-blue column header + the given body `rows` (indices into
     the measured table) as one page-content image, so the header repeats per
@@ -368,6 +375,14 @@ def _render_chunk(m, row_types, rows, row_bg=None, cell_rules=(),
                 if (i, _c) in hl_cells:
                     d.rectangle([_xs[_j], y, _xs[_j] + col_w[_j], y + row_h],
                                 fill=HL_BG)
+        # Painted last, so a closed store greys out even where the projection
+        # shade would also have applied. A shut store is not "on a run-rate" in
+        # any sense the amber is trying to convey.
+        if dim_cells:
+            for _j, _c in enumerate(cols):
+                if (i, _c) in dim_cells:
+                    d.rectangle([_xs[_j], y, _xs[_j] + col_w[_j], y + row_h],
+                                fill=CLOSED_BG)
         x = 0
         for j, c in enumerate(cols):
             s = txt[i][j]
@@ -435,7 +450,7 @@ def _paginate(row_types, budget=ROWS_PER_PAGE):
 
 def _add_sheet(contents, section, disp, rt, *, money, pct, sign, money_dp,
                row_bg=None, cell_rules=(), hl_cells=frozenset(),
-               font_px=32, header_px=28,
+               dim_cells=frozenset(), font_px=32, header_px=28,
                col_cap=None, col_bg=None, row_ink=None):
     """Measure, paginate, and append one (possibly multi-page) sheet. The column
     header repeats on every page; continued pages are labelled 'k/total'.
@@ -453,6 +468,7 @@ def _add_sheet(contents, section, disp, rt, *, money, pct, sign, money_dp,
         contents.append((label, _render_chunk(m, rt, rows, row_bg=row_bg,
                                               cell_rules=cell_rules,
                                               hl_cells=hl_cells,
+                                              dim_cells=dim_cells,
                                               col_bg=col_bg,
                                               row_ink=row_ink)))
 
@@ -854,6 +870,20 @@ def build(pf, pf_all, asof, basis_label="", vfl_df=None, on_step=None):
     # second copy of the same sheet inside the stitch.
     _YE.prime_feed(vfl_df)
     _proj = _YE.projected_codes(pf, vfl_df, asof) if _YE.enabled() else set()
+    _shut = _YE.closed_codes(asof) if _YE.enabled() else set()
+
+    def _dim(disp):
+        """Year-end cells of stores that have CLOSED. Their figure is what the
+        store actually took before it shut, not a forecast, and the grey says
+        so without needing a third column label. Total rows are never dimmed —
+        a total mixes live and dead stores."""
+        if not _shut or _YE.COL_PF not in disp.columns \
+                or "STORE CODE" not in disp.columns:
+            return frozenset()
+        codes = pd.to_numeric(disp["STORE CODE"], errors="coerce")
+        return frozenset((i, _YE.COL_PF)
+                         for i, c in enumerate(codes)
+                         if pd.notna(c) and int(c) in _shut)
 
     def _hl(disp):
         """The (row, column) pairs to shade on this sheet: the year-end figure
@@ -878,7 +908,8 @@ def build(pf, pf_all, asof, basis_label="", vfl_df=None, on_step=None):
         disp, money, pct = _prep_gd(rep)
         _add_sheet(contents, "GD Sheet — Growth / Degrowth", disp, rt,
                    money=money, pct=pct, sign=pct, money_dp=0,
-                   cell_rules=PORTFOLIO_CELL_RULES, hl_cells=_hl(disp))
+                   cell_rules=PORTFOLIO_CELL_RULES, hl_cells=_hl(disp),
+                   dim_cells=_dim(disp))
 
         # 3) Brand-wise GD
         _tick("Brand-wise GD")
@@ -886,7 +917,8 @@ def build(pf, pf_all, asof, basis_label="", vfl_df=None, on_step=None):
         disp, money, pct = _prep_gd(rep)
         _add_sheet(contents, "Brand-wise Growth / Degrowth", disp, rt,
                    money=money, pct=pct, sign=pct, money_dp=0,
-                   cell_rules=PORTFOLIO_CELL_RULES, hl_cells=_hl(disp))
+                   cell_rules=PORTFOLIO_CELL_RULES, hl_cells=_hl(disp),
+                   dim_cells=_dim(disp))
 
         # 4) Loc-wise GD
         _tick("Location-wise GD")
@@ -894,7 +926,8 @@ def build(pf, pf_all, asof, basis_label="", vfl_df=None, on_step=None):
         disp, money, pct = _prep_gd(rep)
         _add_sheet(contents, "Location-wise Growth / Degrowth", disp, rt,
                    money=money, pct=pct, sign=pct, money_dp=0,
-                   cell_rules=PORTFOLIO_CELL_RULES, hl_cells=_hl(disp))
+                   cell_rules=PORTFOLIO_CELL_RULES, hl_cells=_hl(disp),
+                   dim_cells=_dim(disp))
 
         # 5) Average (store productivity)
         _tick("Store productivity")

@@ -1687,6 +1687,15 @@ def _gd_by(df: pd.DataFrame, keys, asof=None, anchor_takeover: bool = True,
     if _YE.enabled():
         out[_YE.COL_VFL] = out["TTM Sales"].where(out["TTM Sales"] > 0,
                                                   out["Projected YTD"])
+        # ★ Same closed-store rule. `_gd_by` groups by arbitrary keys, so a row
+        # only has a closure when it is keyed by store; `closed_map()` returns
+        # nothing for the others and the mask is simply empty for them.
+        if "code" in out.columns:
+            _shut = pd.to_datetime(out["code"].map(closed_map()),
+                                   errors="coerce")
+            _shut = _shut.notna() & (_shut <= asof)
+            if _shut.any():
+                out.loc[_shut, _YE.COL_VFL] = out.loc[_shut, "YTD TY"]
 
     ly_ytd = out["YTD LY"].replace(0, pd.NA)
     ly_mtd = out["MTD LY"].replace(0, pd.NA)
@@ -2012,6 +2021,12 @@ def vfl_gd_report(df: pd.DataFrame, asof=None, gen_date=None):
         _ttm = (sb["TTM Sales"] if "TTM Sales" in sb.columns
                 else pd.Series(0.0, index=sb.index))
         sb[_YE.COL_VFL] = _ttm.where(_ttm > 0, sb["Projected YTD"])
+        # ★ A CLOSED STORE TAKES ITS ACTUAL YEAR, NOT A TRAILING WINDOW. This
+        # path never goes through `yearend.year_end`, so the rule has to be
+        # applied here too — `Projected YTD` is already frozen at YTD TY for a
+        # shut store (see `shut` above), but the TTM branch would otherwise
+        # win and report a window that mostly predates the closure.
+        sb.loc[shut, _YE.COL_VFL] = sb.loc[shut, "YTD TY"]
 
     # Drop pure-return / all-zero brand-lines (no positive activity), like the sheet.
     keep = ((sb["YTD LY"] > 0) | (sb["YTD TY"] > 0)

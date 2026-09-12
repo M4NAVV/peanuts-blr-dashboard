@@ -231,6 +231,21 @@ def _first_trade_map(pf, vfl) -> pd.Series:
     return out
 
 
+def is_closed(closed, asof) -> bool:
+    """Has this store shut on or before the as-of date?
+
+    One definition, used by every surface that has to decide whether a figure
+    is still moving. A closure DATED in the future is not a closure yet — the
+    store is still trading and its year is still running.
+    """
+    if closed is None:
+        return False
+    c = pd.to_datetime(closed, errors="coerce")
+    if pd.isna(c):
+        return False
+    return c <= pd.Timestamp(asof)
+
+
 def year_end(achieved_ytd: float, ttm, first_trade, fy_start, doo, asof,
              closed=None) -> tuple[float, str]:
     """The year-end figure and the basis it stands on.
@@ -239,6 +254,22 @@ def year_end(achieved_ytd: float, ttm, first_trade, fy_start, doo, asof,
     Returns `(value, BASIS_TTM | BASIS_PROJ)` — never a bare number, because
     the caller has to be able to label it.
     """
+    # ★ A CLOSED STORE IS NEITHER PROJECTED NOR TRAILING — IT IS FINISHED.
+    # Manav, 12 Sep: *"for all stores which have closed, the ttm/projected
+    # metric should be the total sales for the year, because once the store
+    # closes, the ttm becomes irrelevant."*
+    #
+    # This check has to come FIRST. `project_ytd` already freezes a closed
+    # store at what it actually took (his call, 7 Aug — Planet Fashion was
+    # projecting 972,668 against 338,435), but that rule never reached here:
+    # the TTM branch was tested first and never looked at `closed`, so any
+    # closed store with twelve months of history reported a rolling window
+    # that mostly PREDATED its own closure. Planet Fashion read 6,590,928
+    # against 338,435 actually taken — 19.5x, and worse than the projection
+    # bug that was fixed in August.
+    if is_closed(closed, asof):
+        return float(achieved_ytd), BASIS_PROJ
+
     if has_full_year(first_trade, asof) and ttm is not None and pd.notna(ttm) \
             and float(ttm) > 0:
         return float(ttm), BASIS_TTM
@@ -382,6 +413,26 @@ def stitched_ly_full(pf: pd.DataFrame, vfl: pd.DataFrame | None, asof) -> pd.Ser
                 out[code] = float(v[L.COL_AMOUNT].sum()) + float(p["sales"].sum())
 
     return pd.Series(out, dtype=float)
+
+
+def closed_codes(asof) -> set:
+    """Store codes shut on or before `asof`.
+
+    One source for both PDFs, so the grey shading and the frozen figure can
+    never disagree about which stores are dead. Reads `loader.closed_map`,
+    which takes the STORE MASTER as the authority rather than the committed
+    snapshot — the snapshot knew three closures while the master knew
+    fourteen, and a sheet that greys three of ten shut stores is worse than
+    one that greys none, because it reads as a complete answer.
+    """
+    import loader as L
+    out = set()
+    for code, when in L.closed_map().items():
+        if is_closed(when, asof):
+            c = _as_int(code)
+            if c is not None:
+                out.add(c)
+    return out
 
 
 def projected_codes(pf: pd.DataFrame, vfl, asof) -> set:

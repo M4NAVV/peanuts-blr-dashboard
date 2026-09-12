@@ -26,6 +26,21 @@ def build(df, asof, gen_date=None, basis_label=""):
     gen_date = asof if gen_date is None else pd.Timestamp(gen_date)
     asof_label = f"As of {asof:%d %b %Y}" + (f" · {basis_label}" if basis_label else "")
 
+    import yearend as _YE
+    _shut = _YE.closed_codes(asof) if _YE.enabled() else set()
+
+    def _dim(disp):
+        """Year-end cells of CLOSED stores, greyed. Same rule and same source
+        as the portfolio PDF (`yearend.closed_codes`), so the two files can
+        never disagree about which stores are dead."""
+        if not _shut or _YE.COL_PF not in disp.columns \
+                or "STORE CODE" not in disp.columns:
+            return frozenset()
+        codes = pd.to_numeric(disp["STORE CODE"], errors="coerce")
+        return frozenset((i, _YE.COL_PF)
+                         for i, c in enumerate(codes)
+                         if pd.notna(c) and int(c) in _shut)
+
     with _LOCK:
         contents = []   # (section, content_image), each may span multiple pages
 
@@ -45,7 +60,7 @@ def build(df, asof, gen_date=None, basis_label=""):
         PP._add_sheet(contents, "VFL — Growth / Degrowth", gd, gd_rt,
                       money=L.vfl_gd_money(), pct=L.VFL_GD_PCT, sign=L.VFL_GD_PCT,
                       money_dp=0, row_bg=PP.VFL_ROW_BG,
-                      cell_rules=PP.VFL_CELL_RULES)
+                      cell_rules=PP.VFL_CELL_RULES, dim_cells=_dim(gd))
 
         # 2) VFL — Gender Contribution % (main table + Region × Gender summary)
         gmain, gm_rt, gsum, gs_rt = L.vfl_gender_report(df, asof=asof)

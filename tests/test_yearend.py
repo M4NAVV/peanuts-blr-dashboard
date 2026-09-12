@@ -389,3 +389,102 @@ def test_a_caller_can_hand_over_the_feed_it_already_has(on):
     YE._FEED["df"] = None
     YE.prime_feed(None)
     assert YE._FEED["df"] is None
+
+
+# --------------------------------------------------------------------------- #
+# A CLOSED STORE'S YEAR IS OVER (12 Sep 2026)
+#
+# Manav: *"for all stores which have closed, the ttm/projected metric should be
+# the total sales for the year, because once the store closes, the ttm becomes
+# irrelevant."*
+#
+# The rule already existed on the PROJECTION path (his call, 7 Aug, after
+# Planet Fashion projected 972,668 against 338,435 actually taken) but never
+# reached the TTM path: `year_end` tested TTM first and never looked at
+# `closed`, so any closed store with twelve months of history reported a
+# rolling window that mostly PREDATED its own closure. Planet Fashion read
+# 6,590,928 against 338,435 — 19.5x, worse than the bug fixed in August.
+# --------------------------------------------------------------------------- #
+
+ASOF = pd.Timestamp("2026-09-11")
+OLD_STORE = pd.Timestamp("2017-06-24")
+FY = pd.Timestamp("2026-04-01")
+
+
+def _ye(closed, achieved=338_435.0, ttm=6_590_928.0):
+    import yearend as YE
+    return YE.year_end(achieved, ttm, OLD_STORE, FY, OLD_STORE, ASOF, closed=closed)
+
+
+def test_closed_store_reports_what_it_actually_took():
+    val, _ = _ye(pd.Timestamp("2026-04-30"))
+    assert val == pytest.approx(338_435.0)
+
+
+def test_closed_store_does_not_report_its_trailing_twelve_months():
+    """The regression itself: the TTM branch used to win regardless."""
+    import yearend as YE
+    val, basis = _ye(pd.Timestamp("2026-04-30"))
+    assert val != pytest.approx(6_590_928.0)
+    assert basis != YE.BASIS_TTM
+
+
+def test_an_open_store_is_untouched():
+    import yearend as YE
+    val, basis = _ye(None)
+    assert val == pytest.approx(6_590_928.0)
+    assert basis == YE.BASIS_TTM
+
+
+def test_a_closure_dated_in_the_future_is_not_a_closure_yet():
+    """The store is still trading and its year is still running."""
+    import yearend as YE
+    val, basis = _ye(pd.Timestamp("2026-12-31"))
+    assert val == pytest.approx(6_590_928.0)
+    assert basis == YE.BASIS_TTM
+
+
+def test_closure_on_the_asof_date_counts_as_closed():
+    val, _ = _ye(ASOF)
+    assert val == pytest.approx(338_435.0)
+
+
+def test_a_store_that_took_nothing_this_year_reports_zero_not_its_old_ttm():
+    """The worst instance: stores shut BEFORE this FY began still had trailing
+    activity, so they showed lakhs against a year in which they took nothing."""
+    val, _ = _ye(pd.Timestamp("2026-01-31"), achieved=0.0, ttm=6_536_632.0)
+    assert val == pytest.approx(0.0)
+
+
+@pytest.mark.parametrize("closed,expected", [
+    (None, False),
+    ("", False),
+    (pd.NaT, False),
+    (pd.Timestamp("2026-04-30"), True),
+    (pd.Timestamp("2026-12-31"), False),
+])
+def test_is_closed_definition(closed, expected):
+    import yearend as YE
+    assert YE.is_closed(closed, ASOF) is expected
+
+
+def test_closed_cells_are_greyed_and_beat_the_projection_shade():
+    """No third column label — the grey is the label (his call). It is painted
+    after the amber so a closed store never reads as 'on a run-rate'."""
+    import portfolio_pdf as PP
+    assert PP.CLOSED_BG != PP.HL_BG
+    df = pd.DataFrame({"STORE CODE": [2], "Sum of YEAR END PROJECTED/TTM": [338435.0]})
+    m = PP._measure_table(df, money=["Sum of YEAR END PROJECTED/TTM"],
+                          money_dp=0, font_px=20, header_px=18)
+    cell = {(0, "Sum of YEAR END PROJECTED/TTM")}
+    img = PP._render_chunk(m, ["store"], [0], hl_cells=cell, dim_cells=cell).convert("RGB")
+
+    j = m["cols"].index("Sum of YEAR END PROJECTED/TTM")
+    x = sum(m["col_w"][:j]) + 3                      # just inside that column
+    y = m["head_h"] + m["row_h"] // 2
+    assert img.getpixel((x, y)) == PP.CLOSED_BG, (
+        f"year-end cell should be grey {PP.CLOSED_BG}, got {img.getpixel((x, y))}")
+
+    # and the amber alone still shades, so the two are distinguishable
+    amber = PP._render_chunk(m, ["store"], [0], hl_cells=cell).convert("RGB")
+    assert amber.getpixel((x, y)) == PP.HL_BG
