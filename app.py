@@ -806,6 +806,47 @@ def render_portfolio():
                 "day may still be the night fill, with takings in and bills not "
                 "yet.")
 
+        # ---- the same block, counted over a festival run-up --------------- #
+        st.divider()
+        st.markdown("**Festive run-up**")
+        try:
+            _fest = MB.build_festive(L, PL, get_data(), pf_all)
+            _fe = MB.build_festive(L, PL, get_data(), pf_all, only="East")
+            _fs = MB.build_festive(L, PL, get_data(), pf_all, only="South")
+        except Exception as e:
+            st.error(f"Could not build the run-up card: {e}")
+        else:
+            if _fest is None:
+                # A window that has not opened has no till-date, no average and
+                # no trend. Saying so beats drawing a card of zeros that reads
+                # like a reading. See [[feedback-silent-failure-must-speak]].
+                import festive as _F
+                _why = _F.last_problem()
+                st.info(
+                    "No festive window is open today. "
+                    + (f"({_why})" if _why else
+                       "The next one appears here the day it starts."))
+            else:
+                st.image(_fest[1], use_container_width=True)
+                f1, f2 = st.columns(2)
+                f1.download_button("⬇ Run-up · East & NE  (PNG)", _fe[1],
+                                   file_name=_fe[0], mime="image/png",
+                                   use_container_width=True)
+                f2.download_button("⬇ Run-up · South  (PNG)", _fs[1],
+                                   file_name=_fs[0], mime="image/png",
+                                   use_container_width=True)
+                st.caption(
+                    "ℹ️ **G/D is like to like** — this year's days so far "
+                    "against the same days of last year's window, and only "
+                    "over the span each store has BOTH years. A store opened "
+                    "since last Puja, or one that has closed, would otherwise "
+                    "move the number without either being growth. "
+                    "**Trending** extrapolates the daily average across the "
+                    "full tenure, as the workbook does; early in a run-up it "
+                    "reads low, because a season builds toward the festival "
+                    "and a flat average cannot know that. The G/D line is the "
+                    "honest read until the window matures.")
+
     # ================= Day calendar ================= #
     if nav == "🗓️ Day calendar":
         st.subheader("Last year, day by day")

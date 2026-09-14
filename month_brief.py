@@ -178,9 +178,13 @@ def panel(L, name, d, amt, asof, gd_mtd, gd_ytd, target=None):
     return name, rows
 
 
-def _draw(panels, asof):
+def _draw(panels, asof, title=None, subtitle=None):
     """Two Excel-style tables side by side: green title bar, black grid,
-    centred text, meaning-carrying fills."""
+    centred text, meaning-carrying fills.
+
+    `title`/`subtitle` default to the month brief's own heading, so the festive
+    card can reuse every pixel of this layout without either card drifting from
+    the other."""
     tt, ttb = A4._ft(44)
     sml, _ = A4._ft(24)
     hd, hdb = A4._ft(31)
@@ -213,10 +217,10 @@ def _draw(panels, asof):
 
     img = Image.new("RGB", (page_w, H), (255, 255, 255))
     d = ImageDraw.Draw(img)
-    d.text((PAD, PAD), f"Month brief  ·  {asof:%B %Y}", font=ttb, fill=BAND)
+    d.text((PAD, PAD), title or f"Month brief  ·  {asof:%B %Y}", font=ttb, fill=BAND)
     d.text((PAD, PAD + A4._h(ttb) + 6),
-           f"as of {asof:%d %b %Y}  ·  yesterday = {asof:%d %b}  ·  "
-           f"updates every day", font=sml, fill=SUB)
+           subtitle or (f"as of {asof:%d %b %Y}  ·  yesterday = {asof:%d %b}  ·  "
+                        f"updates every day"), font=sml, fill=SUB)
 
     def centre(x0, x1, y, h, text, font, ink):
         w = d.textlength(text, font=font)
@@ -325,6 +329,178 @@ def build(L, PL, df, pf, asof=None, only=None):
     else:
         stem = f"month_brief_{asof:%Y-%m-%d}"
     img = _draw(panels, asof)
+    buf = io.BytesIO()
+    img.save(buf, format="PNG", optimize=True)
+    return (f"{stem}.png", buf.getvalue())
+
+
+# --------------------------------------------------------------------------- #
+# The festive run-up card — the same block, counted over a festival window
+# instead of a calendar month (Manav, 12 Sep 2026, with the Puja 45 screenshot).
+#
+# Every line is the month card's line with the month swapped for the window, so
+# the two cards are the same object read over two different spans:
+#
+#   month  : 1 Sep -> today,  against the whole of Sep last year
+#   festive: window start -> today, against the SAME elapsed days last year
+#
+# ★ THE COMPARISON IS LIKE TO LIKE, and it has to be. `Window.ly_cut` is last
+# year's window truncated to the days this year has actually traded. Comparing
+# day 7 of 45 against last year's full 45 is the same fault that printed South
+# at -94.87% when it was up 14.13% (see `build` below) — a whole window as the
+# denominator makes every run-up read as a collapse until the last day.
+#
+# ★ `Puja Trending` extrapolates the daily average across the FULL tenure, which
+# is what the workbook does. `Shortfall` is measured against last year's whole
+# window, because that is the number the season is trying to beat.
+# --------------------------------------------------------------------------- #
+def festive_panel(L, name, d, amt, w, asof, gd_ytd, gd=None):
+    """One festive block as (name, rows), in the workbook's order.
+
+    `gd` arrives computed, exactly as `panel` receives `gd_mtd`/`gd_ytd`. It is
+    a LIKE TO LIKE rate and cannot be worked out from `d` alone — it needs each
+    store's comparable span — so the caller owns it and this function only
+    lays it out. See `gd_l2l_window`.
+    """
+    asof = pd.Timestamp(asof)
+    elapsed = max(int(w.elapsed), 0)
+    left = max(int(w.tenure) - elapsed, 0)
+
+    ly_full = d[(d["date"] >= w.ly_start) & (d["date"] <= w.ly_end)][amt].sum()
+    ty_td = d[(d["date"] >= w.ty_start) & (d["date"] <= w.ty_cut)][amt].sum()
+
+    avg = ty_td / elapsed if elapsed else 0.0
+    trending = avg * w.tenure
+    short_ly = ly_full - ty_td
+    yest = d[d["date"] == asof][amt].sum()
+    done = "window complete"
+
+    fest = w.festival
+    ly_yr, ty_yr = w.ly_end.year, w.ty_end.year
+    return name, [
+        (f"{fest} {w.tenure} Days {ly_yr} Achieved", _money(ly_full), "achieved"),
+        (f"{fest} {ty_yr} Till Date", _money(ty_td), "tilldate"),
+        (f"{fest} {ty_yr} Till Date Avg", _money(avg), "derived"),
+        (f"{fest} Trending", _money(trending), "derived"),
+        (f"Shortfall Vs {fest} {ly_yr}", _money(short_ly), "plain"),
+        ("No of days left", f"{left}", "days"),
+        ("Average Req. Daily",
+         _money(short_ly / left) if left > 0 else done, "derived"),
+        ("Yesterday Total Sale", _money(yest), "yesterday"),
+        ("G/D", _pct(gd), "plain"),
+        ("Ytd G/D", _pct(gd_ytd), "plain"),
+    ]
+
+
+def gd_l2l_window(frame, key, amt, bounds, w):
+    """A festive window's G/D on the LIKE TO LIKE basis (Manav, 13 Sep 2026).
+
+    ★ SAME DAYS WAS NOT ENOUGH. The first cut compared this year's elapsed days
+    against the same elapsed days of last year's window across EVERY store —
+    which is like to like on the calendar but not on the estate. A store that
+    opened since last Puja put its whole run-up into this year with nothing
+    behind it; a store that has closed put last year's run-up in with nothing
+    in front. Neither is growth, and both move the number.
+
+    Comparable stores means the same rule the rest of the report already uses:
+    `l2l_bounds` gives each store the span it has BOTH years, and `l2l_frames`
+    clips each side to it. Nothing is dropped wholesale — a store contributes
+    the part of the window it can be compared over.
+
+    `bounds` are in this year's dates and the prior side is shifted back a year,
+    which is why this works even though a festival MOVES: last year's Puja
+    window sits ~18 days earlier than this year's minus a year, but a store's
+    comparable span is a span, not a window, so the clip lands correctly on
+    either.
+    """
+    import exec_snapshot as ES
+    cur = frame[(frame["date"] >= w.ty_start) & (frame["date"] <= w.ty_cut)]
+    pri = frame[(frame["date"] >= w.ly_start) & (frame["date"] <= w.ly_cut)]
+    if cur.empty and pri.empty:
+        return None
+    c, p = ES.l2l_frames(cur, pri, bounds, key)
+    ty, ly = c[amt].sum(), p[amt].sum()
+    return ((ty - ly) / ly * 100) if ly else None
+
+
+def festive_windows_started(asof, windows=None):
+    """The run-ups actually under way on `asof`, longest tenure first.
+
+    A window that has not opened has no till-date, no average and no trend —
+    drawing one would put a card of zeros and dashes in front of someone who
+    reads it as a reading. Better to say it has not started."""
+    import festive as F
+    ws = F.festive_windows(asof=asof) if windows is None else windows
+    return sorted([w for w in ws if w.started],
+                  key=lambda w: (-w.tenure, w.festival))
+
+
+def build_festive(L, PL, df, pf, asof=None, only=None, window=None):
+    """(filename, PNG bytes) for the festive run-up card, or None if no window
+    is open. Same estates as the month card: East reads the portfolio, South
+    reads the VFL feed."""
+    asof = pd.Timestamp(PL.as_of(pf) if asof is None else asof)
+    w = window
+    if w is None:
+        started = festive_windows_started(asof)
+        if not started:
+            return None
+        w = started[0]
+
+    # The YTD lines are the month card's, computed the same way from the same
+    # call, so the two cards can never print different years.
+    e_m, e_y = _gd_l2l(PL, pf, "East & NE", asof)
+    east = pf[pf["region"] == "East & NE"]
+    south = df[df[L.COL_REGION] == "South"]
+
+    tk = pd.Timestamp(2026, 4, 19)
+    fy = asof.year if asof.month >= 4 else asof.year - 1
+    start = max(pd.Timestamp(fy, 4, 1), tk)
+    s_cur = south[(south["date"] >= start) & (south["date"] <= asof)][L.COL_AMOUNT].sum()
+    s_pri = south[(south["date"] >= start - pd.DateOffset(years=1))
+                  & (south["date"] <= asof - pd.DateOffset(years=1))][L.COL_AMOUNT].sum()
+    s_y = ((s_cur - s_pri) / s_pri * 100) if s_pri else None
+
+    # ★ THE WINDOW G/D IS LIKE TO LIKE, ON BOTH PANELS (Manav, 13 Sep 2026).
+    # Each side uses its OWN feed's spans — the portfolio is keyed by code, the
+    # VFL feed by store label — via the same two helpers the rest of the report
+    # compares over, so there is one definition of "comparable" here and not a
+    # third written for this card. See [[feedback-same-estate]].
+    import exec_snapshot as ES
+    e_bounds = ES.l2l_bounds(east, "code", "sales", PL.closed_map(), asof,
+                             opened=PL.opened_map(east, asof))
+    e_gd = gd_l2l_window(east, "code", "sales", e_bounds, w)
+    try:
+        s_bounds = L._l2l_spans_vfl(south, asof)
+        s_gd = gd_l2l_window(south, L.COL_STORE_LABEL, L.COL_AMOUNT, s_bounds, w)
+    except Exception:
+        # The VFL spans raise loudly when no store matches the master rather
+        # than silently spanning everything. A card that cannot state a
+        # comparable rate must print a dash, not an incomparable number.
+        s_gd = None
+
+    panels = [
+        festive_panel(L, "PRPL East", east, "sales", w, asof, e_y, gd=e_gd),
+        festive_panel(L, "PRPL South", south, L.COL_AMOUNT, w, asof, s_y, gd=s_gd),
+    ]
+    slug = w.festival.lower().replace(" ", "-")
+    if only:
+        want = "PRPL East" if str(only).lower().startswith("e") else "PRPL South"
+        panels = [p for p in panels if p[0] == want]
+        stem = f"{slug}{w.tenure}_{want.split()[1].lower()}_{asof:%Y-%m-%d}"
+    else:
+        stem = f"{slug}{w.tenure}_{asof:%Y-%m-%d}"
+
+    img = _draw(panels, asof,
+                title=f"{w.festival} run-up  ·  {w.tenure} days",
+                # `Window.basis()` writes an arrow the card font has no glyph
+                # for, and a missing glyph draws as a tofu box — the sheet
+                # would ship with a blank square in the middle of its own date
+                # range. Swapped here rather than in `festive`, whose caption
+                # is HTML on the reports tab and renders the arrow correctly.
+                subtitle=(f"{w.basis().replace(chr(0x2192), '->')}"
+                          f"  ·  as of {asof:%d %b %Y}  ·  "
+                          f"yesterday = {asof:%d %b}"))
     buf = io.BytesIO()
     img.save(buf, format="PNG", optimize=True)
     return (f"{stem}.png", buf.getvalue())
