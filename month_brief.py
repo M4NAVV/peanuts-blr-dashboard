@@ -423,16 +423,35 @@ def gd_l2l_window(frame, key, amt, bounds, w):
     return ((ty - ly) / ly * 100) if ly else None
 
 
-def festive_windows_started(asof, windows=None):
-    """The run-ups actually under way on `asof`, longest tenure first.
+# How long a finished run-up stays on the tab. Its final card is the season's
+# result and is most wanted the morning after it closes — but `started` alone
+# is true forever, so without a cut-off Durga Puja would still be on screen in
+# February, beside Diwali, both claiming to be current.
+FINISHED_GRACE_DAYS = 7
 
-    A window that has not opened has no till-date, no average and no trend —
-    drawing one would put a card of zeros and dashes in front of someone who
-    reads it as a reading. Better to say it has not started."""
+
+def festive_windows_started(asof, windows=None, grace=FINISHED_GRACE_DAYS):
+    """The run-ups worth drawing on `asof`, soonest to finish first.
+
+    Included when the window has OPENED and has not been closed longer than
+    `grace` days.
+
+    ★ NOT SIMPLY `w.started`. That is `elapsed > 0`, which stays true for the
+    rest of the season once a window opens, so a finished festival never left
+    the tab — measured: on 21 Oct, the day after Durga Puja ends, all four
+    cards were still shown as though both festivals were running.
+
+    ★ ORDER IS BY END DATE, not by tenure. The run-up closing soonest is the
+    one there is still time to act on; sorting by length put Diwali 45 above a
+    Durga Puja that had eight days left. Within a festival the 45 leads its 30,
+    which is how the workbook reads them.
+    """
     import festive as F
     ws = F.festive_windows(asof=asof) if windows is None else windows
-    return sorted([w for w in ws if w.started],
-                  key=lambda w: (-w.tenure, w.festival))
+    asof = pd.Timestamp(asof)
+    keep = [w for w in ws
+            if w.started and (asof - pd.Timestamp(w.ty_end)).days <= grace]
+    return sorted(keep, key=lambda w: (pd.Timestamp(w.ty_end), -w.tenure))
 
 
 def build_festive(L, PL, df, pf, asof=None, only=None, window=None):

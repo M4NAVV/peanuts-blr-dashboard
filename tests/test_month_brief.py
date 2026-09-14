@@ -160,3 +160,100 @@ def test_the_subtitle_carries_no_glyph_the_font_cannot_draw():
     import month_brief as MB
     sub = _win().basis().replace(chr(0x2192), "->")
     assert "→" not in sub and "->" in sub
+
+
+# --------------------------------------------------------------------------- #
+# Concurrent run-ups (13 Sep 2026). The windows OVERLAP — Durga Puja 45 runs
+# 6 Sep -> 20 Oct and Diwali 45 opens 25 Sep, so for ten days in October all
+# four are live at once. The tab draws one card each rather than picking one.
+# --------------------------------------------------------------------------- #
+def _two_windows():
+    import festive as F
+    asof = pd.Timestamp("2026-10-15")
+    def mk(name, ty_end, ly_end, tenure):
+        ty_start = ty_end - pd.Timedelta(days=tenure - 1)
+        return F.Window(festival=name, tenure=tenure,
+                        ty_start=ty_start, ty_end=ty_end,
+                        ly_start=ly_end - pd.Timedelta(days=tenure - 1),
+                        ly_end=ly_end,
+                        elapsed=int((min(asof, ty_end) - ty_start).days) + 1,
+                        asof=asof)
+    return asof, [
+        mk("Durga Puja", pd.Timestamp("2026-10-20"), pd.Timestamp("2025-10-02"), 45),
+        mk("Durga Puja", pd.Timestamp("2026-10-20"), pd.Timestamp("2025-10-02"), 30),
+        mk("Diwali", pd.Timestamp("2026-11-08"), pd.Timestamp("2025-10-20"), 45),
+        mk("Diwali", pd.Timestamp("2026-11-08"), pd.Timestamp("2025-10-20"), 30),
+    ]
+
+
+def test_every_started_run_up_is_offered_not_just_one():
+    """Picking the longest and dropping the rest would silently hide a season
+    that is already trading."""
+    import month_brief as MB
+    asof, ws = _two_windows()
+    got = MB.festive_windows_started(asof, windows=ws)
+    assert len(got) == 4
+    assert {(w.festival, w.tenure) for w in got} == {
+        ("Durga Puja", 45), ("Durga Puja", 30),
+        ("Diwali", 45), ("Diwali", 30)}
+
+
+def test_concurrent_windows_are_distinct_cards():
+    """Two run-ups open at once must not collapse to one filename, or the
+    second download silently overwrites the first."""
+    import month_brief as MB
+    asof, ws = _two_windows()
+    frame = _frame()
+    names = set()
+    for w in MB.festive_windows_started(asof, windows=ws):
+        nm, rows = MB.festive_panel(None, "T", frame, "sales", w, asof,
+                                    gd_ytd=1.0, gd=None)
+        stem = f"{w.festival.lower().replace(' ', '-')}{w.tenure}"
+        names.add(stem)
+        # each card names its own window in its own first row
+        assert f"{w.festival} {w.tenure} Days" in rows[0][0]
+    assert len(names) == 4
+
+
+def test_the_thirty_day_window_sits_inside_the_forty_five():
+    """Same end date, shorter run-up. They should agree on direction and differ
+    only in size; if they ever disagree, that is a bug worth chasing."""
+    asof, ws = _two_windows()
+    p45 = next(w for w in ws if w.festival == "Durga Puja" and w.tenure == 45)
+    p30 = next(w for w in ws if w.festival == "Durga Puja" and w.tenure == 30)
+    assert p45.ty_end == p30.ty_end
+    assert p45.ty_start < p30.ty_start
+    assert p45.elapsed > p30.elapsed
+
+
+def test_a_finished_run_up_leaves_the_tab():
+    """`started` is `elapsed > 0`, which stays true for the rest of the season.
+    Without a cut-off Durga Puja was still on screen the day after it ended —
+    and would have been in February, beside Diwali, both claiming to be
+    current."""
+    import month_brief as MB
+    _, ws = _two_windows()
+    puja = [w for w in ws if w.festival == "Durga Puja"]      # ends 20 Oct
+
+    day_after = pd.Timestamp("2026-10-21")
+    assert len(MB.festive_windows_started(day_after, windows=puja)) == 2
+
+    well_after = pd.Timestamp("2026-10-31")
+    assert MB.festive_windows_started(well_after, windows=puja) == []
+
+
+def test_cards_are_ordered_by_what_closes_soonest():
+    """The run-up closing soonest is the one there is still time to act on.
+    Sorting by tenure put Diwali 45 above a Durga Puja with eight days left."""
+    import month_brief as MB
+    _, ws = _two_windows()
+    got = MB.festive_windows_started(pd.Timestamp("2026-10-15"), windows=ws)
+    assert [(w.festival, w.tenure) for w in got] == [
+        ("Durga Puja", 45), ("Durga Puja", 30),   # ends 20 Oct, 45 leads its 30
+        ("Diwali", 45), ("Diwali", 30)]           # ends 8 Nov
+
+
+def test_a_window_that_has_not_opened_is_still_not_drawn():
+    import month_brief as MB
+    assert MB.festive_windows_started(pd.Timestamp("2026-09-11"),
+                                      windows=[_win(elapsed=0)]) == []

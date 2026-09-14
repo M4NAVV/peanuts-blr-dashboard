@@ -807,34 +807,62 @@ def render_portfolio():
                 "yet.")
 
         # ---- the same block, counted over a festival run-up --------------- #
+        # ★ ONE CARD PER RUN-UP THAT HAS STARTED, not one card. The windows
+        # OVERLAP: Durga Puja 45 runs 6 Sep -> 20 Oct and Diwali 45 opens
+        # 25 Sep, so from 10-20 Oct all four (both festivals x 45 and 30) are
+        # live at once. Picking one and dropping the rest would silently hide
+        # a season that is already trading. Enumerated the same way the REPORTS
+        # PDF tab enumerates them, so there is one mental model for both.
         st.divider()
-        st.markdown("**Festive run-up**")
+        st.markdown("**Festive run-ups**")
         try:
-            _fest = MB.build_festive(L, PL, get_data(), pf_all)
-            _fe = MB.build_festive(L, PL, get_data(), pf_all, only="East")
-            _fs = MB.build_festive(L, PL, get_data(), pf_all, only="South")
+            _wins = MB.festive_windows_started(PL.as_of(pf_all))
+            _cards = [(w,
+                       MB.build_festive(L, PL, get_data(), pf_all, window=w),
+                       MB.build_festive(L, PL, get_data(), pf_all, window=w,
+                                        only="East"),
+                       MB.build_festive(L, PL, get_data(), pf_all, window=w,
+                                        only="South"))
+                      for w in _wins]
         except Exception as e:
-            st.error(f"Could not build the run-up card: {e}")
+            st.error(f"Could not build the run-up cards: {e}")
         else:
-            if _fest is None:
+            if not _cards:
                 # A window that has not opened has no till-date, no average and
                 # no trend. Saying so beats drawing a card of zeros that reads
                 # like a reading. See [[feedback-silent-failure-must-speak]].
                 import festive as _F
                 _why = _F.last_problem()
                 st.info(
-                    "No festive window is open today. "
+                    "No festive run-up is open today. "
                     + (f"({_why})" if _why else
                        "The next one appears here the day it starts."))
             else:
-                st.image(_fest[1], use_container_width=True)
-                f1, f2 = st.columns(2)
-                f1.download_button("⬇ Run-up · East & NE  (PNG)", _fe[1],
-                                   file_name=_fe[0], mime="image/png",
-                                   use_container_width=True)
-                f2.download_button("⬇ Run-up · South  (PNG)", _fs[1],
-                                   file_name=_fs[0], mime="image/png",
-                                   use_container_width=True)
+                if len(_cards) > 1:
+                    # ★ THE WINDOWS SHARE DAYS, SO THE CARDS MUST NOT BE ADDED.
+                    # From 25 Sep a day's trading counts toward the Puja run-up
+                    # AND the Diwali one, on both years' sides. Each card is a
+                    # separate question about the same trade.
+                    st.warning(
+                        f"**{len(_cards)} run-ups are open at once, and they "
+                        "share days** — from 25 Sep a day's sales count toward "
+                        "Durga Puja and Diwali both, last year as well as this. "
+                        "Each card answers its own question about the same "
+                        "trade; **they cannot be added together**. The 30-day "
+                        "card of a festival sits INSIDE its 45-day card — same "
+                        "end date, shorter run-up — so the two should agree on "
+                        "direction and differ only in size.")
+                for _w, _all, _e, _s in _cards:
+                    st.markdown(f"**{_w.festival} · {_w.tenure} days** — {_w.basis()}")
+                    st.image(_all[1], use_container_width=True)
+                    f1, f2 = st.columns(2)
+                    _k = f"{_w.festival}{_w.tenure}".replace(" ", "")
+                    f1.download_button("⬇ East & NE  (PNG)", _e[1],
+                                       file_name=_e[0], mime="image/png",
+                                       key=f"dl_e_{_k}", use_container_width=True)
+                    f2.download_button("⬇ South  (PNG)", _s[1],
+                                       file_name=_s[0], mime="image/png",
+                                       key=f"dl_s_{_k}", use_container_width=True)
                 st.caption(
                     "ℹ️ **G/D is like to like** — this year's days so far "
                     "against the same days of last year's window, and only "
