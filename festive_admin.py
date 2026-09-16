@@ -661,6 +661,86 @@ def rollup_spec(rows):
             ("gd", "gd", "G/D\nCOMPARABLE")]
 
 
+def regions_phrase(frame):
+    """Name the regions actually present in a set, in the report's own order.
+
+    ★ THE COPY USED TO ASSERT THE ESTATE. It said "East & NE stores" and "the
+    eight South stores among them" as literals, which was true of the portfolio
+    pack — where South has no last year and is always held out — and FALSE the
+    moment the same pack was pointed at the VFL feed, where South carries the
+    previous operator's history and lands INSIDE the comparison. The page then
+    described 19 stores as East & NE while eight of them were Bengaluru.
+
+    A literal that states what the data happens to be today is a caption that
+    goes wrong silently. Derived instead — so both feeds, and any future
+    region, describe themselves. See [[feedback-silent-failure-must-speak]].
+    """
+    order = ["East & NE", "South"]
+    seen = [r for r in order if r in set(frame.get("region", []))]
+    seen += sorted(set(str(r) for r in frame.get("region", []))
+                   - set(order) - {"nan", ""})
+    if not seen:
+        return "all"
+    if len(seen) == 1:
+        return seen[0]
+    return " and ".join([", ".join(seen[:-1]), seen[-1]])
+
+
+def heldout_phrase(other, n_new, n_shut):
+    """What is being held out, counted rather than assumed."""
+    bits = []
+    if n_new:
+        south = int((other.get("region", pd.Series(dtype=object))
+                     .astype(str) == "South").sum()) if len(other) else 0
+        s = f"{n_new} with no last year at all"
+        if south:
+            s += f" — {south} of them South"
+        bits.append(s)
+    if n_shut:
+        bits.append(f"{n_shut} closed")
+    return " and ".join(bits) if bits else "none"
+
+
+def _vfl_as_portfolio(df):
+    """The VFL feed wearing the portfolio feed's column names.
+
+    `classify`, `daily_for` and `figures_for` read `date`, `code`, `sales` and
+    `region` off the RAW frame. The VFL feed carries `date`, a store LABEL,
+    `net_amount` and `region` — which is the whole reason this pack was
+    portfolio-only and said so.
+
+    Translating the frame is deliberately preferred to parameterising those
+    three helpers: the portfolio path is what is live and read every morning,
+    and it does not change by a character here. `vfl_figures` already resolves
+    the same label -> code mapping from the store master, so both sides of this
+    pack agree on what a store is by construction.
+
+    A label the master does not know cannot be classified, cannot be rolled up
+    by region, and must not be silently dropped into a total — so it is held
+    out and NAMED. See [[feedback-silent-failure-must-speak]].
+    """
+    import loader as L
+
+    master = L.load_store_master()
+    code_of = {str(n): int(c) for n, c in zip(master["tableau_name"], master["code"])
+               if pd.notna(c)}
+    lab = L.COL_STORE_LABEL
+
+    out = df.copy()
+    out["code"] = out[lab].astype(str).map(code_of)
+    unknown = sorted(set(out.loc[out["code"].isna(), lab].astype(str)))
+    if unknown:
+        import warnings
+        warnings.warn(
+            f"VFL festive pack: {len(unknown)} store(s) are not in the store "
+            f"master and are excluded from the pack — {unknown[:5]}",
+            RuntimeWarning, stacklevel=2)
+    out = out[out["code"].notna()].copy()
+    out["code"] = out["code"].astype(int)
+    out["sales"] = pd.to_numeric(out[L.COL_AMOUNT], errors="coerce").fillna(0.0)
+    return out
+
+
 def build(pf, w, basis_label="", vfl=False):
     """The whole run-up, as an admin pack. Every row, drawn to be read."""
     import snapshots_a4 as A4
@@ -671,6 +751,8 @@ def build(pf, w, basis_label="", vfl=False):
     if vfl:
         f = F.vfl_figures(pf, w)
         sales = pf.groupby("date")[L.COL_AMOUNT].sum()
+        # Everything below this line reads the portfolio feed's column names.
+        pf = _vfl_as_portfolio(pf)
     else:
         f = F.store_figures(pf, w)
         sales = pf.groupby("date")["sales"].sum()
@@ -727,15 +809,15 @@ def build(pf, w, basis_label="", vfl=False):
         ], W, label_px=25, value_px=42), gap=14)
         one.put(SN._cards_image([
             ("Not comparable — this year", "Rs " + money(oth["ty"])),
-            ("South, new and closed", f"{len(f) - n_l2l} stores"),
+            ("Held out — new, South, closed", f"{len(f) - n_l2l} stores"),
             ("Last year's run-up, comparable", "Rs " + money(fig["ly_full"])),
             ("Closed stores took", "Rs " + money(oth["ly_full"])),
         ], W, label_px=25, value_px=42), gap=18)
         one.put(A4._text_block(W, [(
-            f"The comparison above is {n_l2l} East & NE stores that traded "
-            f"both run-ups and are still open. The other {len(f) - n_l2l} are "
-            f"held out: {n_new} with no last year at all — the eight South "
-            f"stores among them — and {n_shut} closed, which carry "
+            f"The comparison above is {n_l2l} "
+            f"{regions_phrase(f[f['l2l']])} stores that traded both run-ups "
+            f"and are still open. The other {len(f) - n_l2l} are held out: "
+            f"{heldout_phrase(f[~f['l2l']], n_new, n_shut)}, carrying "
             f"Rs {money(oth['ly_full'])} of last year that cannot be traded "
             f"again. Left in, those would drag the comparison down by their own "
             f"history and inflate the target by the same amount.",
@@ -862,15 +944,16 @@ def build(pf, w, basis_label="", vfl=False):
         if len(s_l2l):
             pages += sheet(s_l2l, "store",
                            f"{w.festival} — comparable stores",
-                           f"the {len(s_l2l)} East & NE stores that traded both "
-                           f"run-ups and are still open  ·  biggest first  ·  "
+                           f"the {len(s_l2l)} {regions_phrase(s_l2l)} stores "
+                           f"that traded both run-ups and are still open  ·  "
+                           f"biggest first  ·  "
                            f"the bar is each store's share of this set")
         if len(s_oth):
             pages += sheet(s_oth, "store",
                            f"{w.festival} — not comparable",
                            f"{len(s_oth)} stores held out of the comparison  ·  "
-                           f"South and any store with no last year, plus every "
-                           f"store that has closed  ·  a G/D is not shown "
+                           f"any store with no last year, plus every store "
+                           f"that has closed  ·  a G/D is not shown "
                            f"because there is nothing to compare against",
                            reason=True)
         # ★ THE ROLLUPS COVER THE WHOLE ESTATE, with the three sets as

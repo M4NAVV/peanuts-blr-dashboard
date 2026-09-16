@@ -2817,7 +2817,17 @@ if nav == "📄 REPORTS PDF":
                         _sb.empty()
                 for _i, _w in enumerate(_fw):
                     if f"festive_{_i}" in chosen:
-                        built.append(FEST.build_festive_pdf(
+                        _prog.step(f"Festive — {_w.label}")
+                        # ★ THE ADMIN PACK ON THIS SIDE TOO (Manav, 16 Sep:
+                        # *"the kind of report formatting, and design and
+                        # tables should be like the portfolio one only. right
+                        # now, its the old version which is very boring"*).
+                        # Seven pages instead of four grids. `festive_admin`
+                        # was portfolio-only because it reads code/sales/region
+                        # off the raw frame; it now translates the VFL feed
+                        # first, so both sides draw the same pack.
+                        import festive_admin as FADM
+                        built.append(FADM.build(
                             df_exec, _w, basis_label=p_basis, vfl=True))
                 _prog.done("Packaging…")
                 name, payload, mime = RTD.bundle(
