@@ -121,3 +121,110 @@ jobs:
           # than clobber, because both are true.
           git pull --rebase --autostash origin "${GITHUB_REF_NAME}" || true
           git push
+
+  # ★★ THE WEEKLY BACKUP (18 Sep 2026). Everything this dashboard knows comes
+  # from one Google workbook; if a tab is deleted, renamed, or quietly stops
+  # being populated there is no second copy. This takes one.
+  #
+  # It rides HERE for the same reason the reviews collector does: this is the
+  # only schedule GitHub actually honours in this repo — roughly 94% of
+  # scheduled runs are dropped, so a `cron` of its own would have had about a
+  # one-in-eight chance of landing in any given week. A backup that silently
+  # never runs is the one failure a backup must not have.
+  #
+  # The gate keeps it to ONE run per ISO week: the first run of the week does
+  # the work and the rest cost one `ls`.
+  #
+  # ⚠️ THE SNAPSHOT GOES TO A PRIVATE REPO, NEVER THIS ONE. This repo is PUBLIC
+  # and the bill feed carries customer mobile numbers. They are hashed before
+  # anything is written, but a hash of a ten-digit number is brute-forceable if
+  # it ever sits beside its salt — so the data lives somewhere private and the
+  # salt lives only in secrets.
+  backup:
+    runs-on: ubuntu-latest
+    if: github.repository == 'M4NAVV/peanuts-blr-dashboard'
+    concurrency:
+      group: weekly-backup
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Is this week already backed up?
+        id: gate
+        env:
+          # A DEPLOY KEY, not a personal token: write access to the backup repo
+          # and nothing else, so a leak cannot reach anything but the snapshots.
+          SSH_KEY: ${{ secrets.BACKUP_SSH_KEY }}
+          REPO: ${{ secrets.BACKUP_REPO }}
+        run: |
+          if [ -z "$SSH_KEY" ] || [ -z "$REPO" ]; then
+            echo "todo=no" >> "$GITHUB_OUTPUT"
+            echo "::warning::BACKUP NOT TAKEN — BACKUP_SSH_KEY or BACKUP_REPO is"
+            echo "::warning::missing from this repository's secrets."
+            exit 0
+          fi
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -t ed25519 github.com >> ~/.ssh/known_hosts 2>/dev/null
+          WEEK="$(date -u +%G-W%V)"
+          echo "week=$WEEK" >> "$GITHUB_OUTPUT"
+          git clone --depth 1 --quiet "git@github.com:${REPO}.git" store || {
+              echo "::error::cannot clone ${REPO} — check BACKUP_REPO and the deploy key"; exit 1; }
+          if [ -d "store/$WEEK" ]; then
+            echo "todo=no" >> "$GITHUB_OUTPUT"
+            echo "$WEEK is already on file — nothing to do"
+          else
+            echo "todo=yes" >> "$GITHUB_OUTPUT"
+            echo "$WEEK not yet taken — backing up"
+          fi
+
+      - uses: actions/setup-python@v5
+        if: steps.gate.outputs.todo == 'yes'
+        with:
+          python-version: "3.12"
+
+      - name: Install
+        if: steps.gate.outputs.todo == 'yes'
+        run: |
+          python -m pip install --upgrade pip
+          pip install "pandas==2.2.3" "numpy==1.26.4" pyarrow requests
+
+      - name: Take the snapshot
+        if: steps.gate.outputs.todo == 'yes'
+        env:
+          SHEET_CSV_URL:     ${{ secrets.SHEET_CSV_URL }}
+          PORTFOLIO_CSV_URL: ${{ secrets.PORTFOLIO_CSV_URL }}
+          NIGHT_FILL_URL:    ${{ secrets.NIGHT_FILL_URL }}
+          TARGETS_URL:       ${{ secrets.TARGETS_URL }}
+          FESTIVE_DATES_URL: ${{ secrets.FESTIVE_DATES_URL }}
+          CITY_GROWTH_URL:   ${{ secrets.CITY_GROWTH_URL }}
+          STORE_MASTER_URL:  ${{ secrets.STORE_MASTER_URL }}
+          BACKUP_PII_SALT:   ${{ secrets.BACKUP_PII_SALT }}
+        run: |
+          if [ -z "$BACKUP_PII_SALT" ]; then
+            echo "::warning::BACKUP_PII_SALT is not set, so identity columns"
+            echo "::warning::will be DROPPED and the snapshot will NOT restore."
+          fi
+          # Exits non-zero on a partial pull. Keep what it got, but let the run
+          # go red so a half backup is never mistaken for a whole one.
+          python scripts_backup.py --out store/ || echo "PARTIAL=1" >> "$GITHUB_ENV"
+
+      - name: Commit it
+        if: steps.gate.outputs.todo == 'yes'
+        working-directory: store
+        run: |
+          git config user.name  "peanuts-backup"
+          git config user.email "backup@peanuts.invalid"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "nothing new to commit"; exit 0
+          fi
+          git commit -m "Weekly snapshot ${{ steps.gate.outputs.week }}"
+          git push
+
+      - name: Fail loudly if the backup was only partial
+        if: steps.gate.outputs.todo == 'yes' && env.PARTIAL == '1'
+        run: |
+          echo "::error::Some sources were NOT saved — read the log above."
+          exit 1
