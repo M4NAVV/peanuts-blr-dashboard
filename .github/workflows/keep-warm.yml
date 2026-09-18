@@ -169,9 +169,19 @@ jobs:
           ssh-keyscan -t ed25519 github.com >> ~/.ssh/known_hosts 2>/dev/null
           WEEK="$(date -u +%G-W%V)"
           echo "week=$WEEK" >> "$GITHUB_OUTPUT"
-          git clone --depth 1 --quiet "git@github.com:${REPO}.git" store || {
+          # ★ THE GATE MUST BE CHEAP. This job runs on every keep-warm tick —
+          # about nine times a day — and only writes once a week. A plain
+          # `--depth 1` clone pulls every snapshot's blobs: 10 MB today, and
+          # ~270 MB once a year of weeks has accumulated, nine times a day, to
+          # answer one yes/no question. Blobless and unchecked-out is 124 KB
+          # and still lists the weeks. The full clone happens in the commit
+          # step, on the one run a week that actually writes.
+          git clone --depth 1 --filter=blob:none --no-checkout --quiet \
+            "git@github.com:${REPO}.git" gate || {
               echo "::error::cannot clone ${REPO} — check BACKUP_REPO and the deploy key"; exit 1; }
-          if [ -d "store/$WEEK" ]; then
+          HAVE="$(git -C gate ls-tree --name-only HEAD)"
+          rm -rf gate
+          if printf '%s\n' "$HAVE" | grep -qx "$WEEK"; then
             echo "todo=no" >> "$GITHUB_OUTPUT"
             echo "$WEEK is already on file — nothing to do"
           else
@@ -189,6 +199,12 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install "pandas==2.2.3" "numpy==1.26.4" pyarrow requests
+
+      - name: Clone the store (only on the run that writes)
+        if: steps.gate.outputs.todo == 'yes'
+        env:
+          REPO: ${{ secrets.BACKUP_REPO }}
+        run: git clone --depth 1 --quiet "git@github.com:${REPO}.git" store
 
       - name: Take the snapshot
         if: steps.gate.outputs.todo == 'yes'
