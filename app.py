@@ -1377,17 +1377,25 @@ def render_portfolio():
                         if f"festive_{_i}" in chosen:
                             _prog.step(f"Festive — {_w.label}"
                                        if hasattr(_w, "label") else "Festive")
-                            # ★ THE ADMIN PACK IS NOW THE FESTIVE REPORT
+                            # ★ THE ADMIN PACK IS THE FESTIVE REPORT
                             # (Manav, 7 Sep). Seven pages instead of four
                             # grids: the season drawn, the day ladder split
                             # TOTAL / COMPARABLE / NON COMPARABLE on each side,
                             # and store, brand, location and region all in that
                             # same format with the comparable columns shaded.
                             #
-                            # ⚠️ PORTFOLIO ONLY. `festive_admin` classifies on
-                            # `code` and `region`, which the VFL frame does not
-                            # carry — the VFL tab and the 🪔 Festive tab still
-                            # use `build_festive_pdf`, deliberately.
+                            # ★ BOTH REPORT ZIPS DRAW THIS SAME PACK. It was
+                            # portfolio-only until 16 Sep (`2846324`), because
+                            # it classifies on `code` and `region` and the VFL
+                            # frame carries neither; `_vfl_as_portfolio` now
+                            # supplies them, and NAMES any store the master
+                            # does not know rather than dropping it into a
+                            # total unannounced.
+                            #
+                            # ⚠️ The 🪔 Festive tab is the one exception and
+                            # still builds the workbook-format sheets through
+                            # `festive.build_festive_pdf` — a different report
+                            # from this one, not an older version of it.
                             import festive_admin as FADM
                             built.append(FADM.build(
                                 pf_all, _w, basis_label=basis))
