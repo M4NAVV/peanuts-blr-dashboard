@@ -137,3 +137,30 @@ def test_the_existing_columns_are_untouched():
     f = pd.DataFrame([_row(ty=500.0, ly=300.0, ly_full=1000.0)])
     rep, _ = F.gd_report(f, w)
     assert list(rep.columns[:-1]) == F.GD_COLS
+
+
+# --------------------------------------------------------------------------- #
+# The admin pack — the festive report itself since 7 Sep
+# --------------------------------------------------------------------------- #
+def test_both_store_sheets_of_the_pack_carry_the_column():
+    """Guards the wiring, not the arithmetic — the rule is tested above. The
+    spec is built inside `build`, so this reads it the way
+    `test_festive_admin` reads the portfolio path."""
+    import inspect
+    import festive_admin as FADM
+    src = inspect.getsource(FADM.build)
+    assert '_ttm = ("ttm", "money", f"TTM\\n{w.tenure}D")' in src
+    # fed on every row and on the section total, not just declared
+    assert '"ttm": r["ttm"]' in src
+    assert '"ttm": frame["ttm"].sum()' in src
+    # both sheets: the held-out one and the comparable one
+    assert src.count("_ttm]") == 2
+
+
+def test_the_pack_reads_ttm_off_the_figures_both_feeds_build():
+    """`build` takes either feed through `store_figures` or `vfl_figures`, so
+    both must carry the column the pack now reads."""
+    import inspect
+    import festive as F
+    for fn in (F.store_figures, F.vfl_figures):
+        assert '"ttm"' in inspect.getsource(fn), fn.__name__

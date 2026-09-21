@@ -906,7 +906,7 @@ def build(pf, w, basis_label="", vfl=False):
                            "ly": r["ly"], "ty": r["ty"], "delta": r["delta"],
                            "gd": (None if not r["ly"]
                                   else (r["ty"] - r["ly"]) / r["ly"] * 100),
-                           "ly_full": r["ly_full"],
+                           "ly_full": r["ly_full"], "ttm": r["ttm"],
                            "why": r.get("why", ""),
                            "share": (r["ty"] / frame["ty"].sum() * 100
                                      if frame["ty"].sum() else None)})
@@ -917,17 +917,24 @@ def build(pf, w, basis_label="", vfl=False):
                    "gd": (None if not frame["ly"].sum() else
                           (frame["ty"].sum() - frame["ly"].sum())
                           / frame["ly"].sum() * 100),
-                   "ly_full": frame["ly_full"].sum(), "share": 100.0}
+                   "ly_full": frame["ly_full"].sum(),
+                   "ttm": frame["ttm"].sum(), "share": 100.0}
             sp = [("store", "text", "STORE"), ("loc", "text", "LOCATION"),
                   ("ty", "money", "THIS YEAR"), ("ty", "bar", "SHARE"),
                   ("share", "pct", "% OF\nSET")]
+            # ★ TTM SITS BESIDE `LY FULL RUN-UP` BECAUSE BOTH ARE WHOLE-WINDOW
+            # FIGURES. The elapsed-window columns are to their left and the two
+            # groups are never added across — the same separation the rollups
+            # keep. Manav, 21 Sep: this year's traded days plus last year's days
+            # still to come, over the tenure this sheet reports, not 12 months.
+            _ttm = ("ttm", "money", f"TTM\n{w.tenure}D")
             if reason:
                 sp += [("why", "text", "HELD OUT\nBECAUSE"),
-                       ("ly_full", "money", "LY FULL\nRUN-UP")]
+                       ("ly_full", "money", "LY FULL\nRUN-UP"), _ttm]
             else:
                 sp += [("ly", "money", "LAST YEAR"),
                        ("delta", "money", "CHANGE"), ("gd", "gd", "G/D"),
-                       ("ly_full", "money", "LY FULL\nRUN-UP")]
+                       ("ly_full", "money", "LY FULL\nRUN-UP"), _ttm]
             sh = A4._Sheet(w.label, asof, "", bounded=False, footer=True)
             sh.put(A4._heading(W, title, sub), gap=18)
             sh.put(table_image(rs, sp, W, font_px=24, bar_col="ty",
