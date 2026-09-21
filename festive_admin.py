@@ -807,10 +807,18 @@ def build(pf, w, basis_label="", vfl=False):
              ("—" if g is None else f"{g:+,.1f}%") if started else "—"),
             ("Comparable stores", f"{n_l2l} of {len(f)}"),
         ], W, label_px=25, value_px=42), gap=14)
+        # ★ THE TTM CARD IS SUMMED OFF THE STORE ROWS, not recomputed from
+        # `fig`. The comparable store sheet totals the same column, and a card
+        # and a table on the same pack describing the same set must not be able
+        # to disagree — which they could the moment the closed-store rule or the
+        # membership test moved on one side only. See [[feedback-same-estate]].
+        l2l_ttm = float(f.loc[f["l2l"], "ttm"].sum())
         one.put(SN._cards_image([
             ("Not comparable — this year", "Rs " + money(oth["ty"])),
             ("Held out — new, South, closed", f"{len(f) - n_l2l} stores"),
             ("Last year's run-up, comparable", "Rs " + money(fig["ly_full"])),
+            (f"Full run-up, TTM {w.tenure}D",
+             "Rs " + money(l2l_ttm) if started else "—"),
             ("Closed stores took", "Rs " + money(oth["ly_full"])),
         ], W, label_px=25, value_px=42), gap=18)
         one.put(A4._text_block(W, [(
@@ -820,7 +828,12 @@ def build(pf, w, basis_label="", vfl=False):
             f"{heldout_phrase(f[~f['l2l']], n_new, n_shut)}, carrying "
             f"Rs {money(oth['ly_full'])} of last year that cannot be traded "
             f"again. Left in, those would drag the comparison down by their own "
-            f"history and inflate the target by the same amount.",
+            f"history and inflate the target by the same amount. "
+            f"TTM is where the whole {fig['tenure']}-day run-up lands across "
+            f"those same comparable stores if the days still to come repeat "
+            f"last year exactly — not twelve months, the {fig['tenure']} days "
+            f"this pack reports, and a floor rather than a forecast while this "
+            f"year is running ahead.",
             A4._ft(22)[0], A4.SUB)]), gap=16)
         one.put(A4._caption(
             W, "The season so far, like for like" if started

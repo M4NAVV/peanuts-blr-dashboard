@@ -164,3 +164,17 @@ def test_the_pack_reads_ttm_off_the_figures_both_feeds_build():
     import festive as F
     for fn in (F.store_figures, F.vfl_figures):
         assert '"ttm"' in inspect.getsource(fn), fn.__name__
+
+
+def test_the_page_one_card_is_summed_off_the_same_rows_as_the_store_sheet():
+    """A card and a table on one pack describing the same set must not be able
+    to disagree. Recomputing the card from `fig` would let the closed-store
+    rule or the membership test move on one side only.
+    See [[feedback-same-estate]]."""
+    import inspect
+    import festive_admin as FADM
+    src = inspect.getsource(FADM.build)
+    assert 'l2l_ttm = float(f.loc[f["l2l"], "ttm"].sum())' in src
+    assert 'f"Full run-up, TTM {w.tenure}D"' in src
+    # and it says "—" rather than a figure before the run-up opens
+    assert '"Rs " + money(l2l_ttm) if started else "—"' in src
