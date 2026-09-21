@@ -213,6 +213,35 @@ def festive_windows(asof=None, url=None) -> list[Window]:
 # --------------------------------------------------------------------------- #
 # The figures
 # --------------------------------------------------------------------------- #
+def ttm(ty: float, ly: float, ly_full: float, closed, w: Window) -> float:
+    """The whole run-up: this year's traded days plus last year's days still to come.
+
+    ★ NOT TWELVE MONTHS. It is the tenure this sheet reports — 45 days or 30 —
+    part actual, part last year's tail. Manav, 21 Sep 2026: *"the days elapsed
+    this year, plus the days yet to elapse from last year."*
+
+    `ly_full - ly` IS last year's remaining days, by construction: `ly` is last
+    year truncated to the same elapsed day count (`ly_cut`), `ly_full` is its
+    whole window, and the two windows are aligned by DAY INDEX, not by date —
+    the festival moves about three weeks a year.
+
+    ★ A CLOSED STORE GETS NO TAIL. Nothing is "yet to elapse" for a shop that is
+    not open, and handing it last year's remaining days would lift the Grand
+    Total with sales nobody will make. `projections.project` freezes a closed
+    store at what it actually took for exactly this reason (Manav, 7 Aug), so
+    the TTM and PROJECTED columns on the same sheet agree on the rule.
+
+    A store with no last year keeps its own figure: `ly_full - ly` is 0, so its
+    remaining days count as nothing. It is already marked `new` in GDYTD, and
+    inventing a tail for it would be worse than showing none.
+    """
+    if not w.started:
+        return 0.0
+    if closed is not None and pd.notna(closed) and pd.Timestamp(closed) <= w.asof:
+        return float(ty)
+    return float(ty) + (float(ly_full) - float(ly))
+
+
 def store_figures(pf: pd.DataFrame, w: Window) -> pd.DataFrame:
     """One row per store: this year so far, last year to the same day, last
     year's whole window, today's sale, and the projection to the full tenure."""
@@ -236,6 +265,7 @@ def store_figures(pf: pd.DataFrame, w: Window) -> pd.DataFrame:
         doo = pd.to_datetime(a.get("doo"), errors="coerce")
         closed = pd.to_datetime(shut.get(c), errors="coerce")
         t = float(ty.get(c, 0.0))
+        l, lf = float(ly.get(c, 0.0)), float(ly_full.get(c, 0.0))
         start = max(w.ty_start, doo) if pd.notna(doo) else w.ty_start
         proj = PROJ.project(t, start, w.ty_cut,
                             None if pd.isna(closed) else closed,
@@ -249,11 +279,12 @@ def store_figures(pf: pd.DataFrame, w: Window) -> pd.DataFrame:
             "location_tl": a.get("location_tl", ""),
             "closed": "" if pd.isna(closed) else f"{closed:%d-%m-%Y}",
             "doo": "" if pd.isna(doo) else f"{doo:%d-%m-%Y}",
-            "ly": float(ly.get(c, 0.0)),
+            "ly": l,
             "ty": t,
-            "ly_full": float(ly_full.get(c, 0.0)),
+            "ly_full": lf,
             "day": float(day.get(c, 0.0)),
             "projected": float(proj),
+            "ttm": ttm(t, l, lf, None if pd.isna(closed) else closed, w),
         })
     f = pd.DataFrame(rows)
     # The workbook's GDYTD: this year as a PERCENTAGE OF last year, so 100 is
@@ -307,6 +338,8 @@ def vfl_figures(df: pd.DataFrame, w: Window) -> pd.DataFrame:
             "ly": float(ly.get(s, 0.0)), "ty": t,
             "ly_full": float(ly_full.get(s, 0.0)),
             "day": float(day.get(s, 0.0)), "projected": float(proj),
+            "ttm": ttm(t, float(ly.get(s, 0.0)), float(ly_full.get(s, 0.0)),
+                       None if pd.isna(closed) else closed, w),
         })
     f = pd.DataFrame(rows)
     f["gd"] = [(t / l * 100) if l else None for t, l in zip(f["ty"], f["ly"])]
@@ -326,6 +359,22 @@ def vfl_figures(df: pd.DataFrame, w: Window) -> pd.DataFrame:
 # yellow total row, so a festive sheet and a G/D sheet are one document.
 _MONEY_COLS = ("Sum of YTD_LY", "Sum of YTD_TY", "Sum of DAY SALE FIGURE",
                "Sum of LY FULL SALES", "Sum of PROJECTED YTD")
+
+# The TTM header names its own window — `Sum of TTM 45D` — because plain "TTM"
+# already means the YEAR-END figure on the G/D sheets, and this one is 45 days
+# or 30. A column in none of the money/pct/num buckets prints as a raw float,
+# so `_sheet_image` tests this prefix alongside `_MONEY_COLS`.
+# See [[feedback-declare-numeric-columns]].
+_TTM_PREFIX = "Sum of TTM "
+
+
+def ttm_col(w: Window) -> str:
+    return f"{_TTM_PREFIX}{w.tenure}D"
+
+
+def _with_ttm(cols, w: Window) -> list:
+    """The workbook's columns, verbatim, with TTM appended last."""
+    return list(cols) + [ttm_col(w)]
 
 GD_COLS = ["NEW/OLD", "STORE NAME", "LOCATION", "CLOSED", "DOO",
            "Sum of YTD_LY", "Sum of YTD_TY", "Sum of GDYTD",
@@ -354,7 +403,7 @@ def _gd_pct(ty, ly):
 
 def _totals(part):
     return {k: float(part[k].sum())
-            for k in ("ly", "ty", "day", "ly_full", "projected")}
+            for k in ("ly", "ty", "day", "ly_full", "projected", "ttm")}
 
 
 def _fill_figures(row, t):
@@ -364,6 +413,11 @@ def _fill_figures(row, t):
         row["Sum of DAY SALE FIGURE"] = t["day"]
     row["Sum of LY FULL SALES"] = t["ly_full"]
     row["Sum of PROJECTED YTD"] = t["projected"]
+    # The header carries its own tenure, so it can never be read as the year-end
+    # TTM that the GD sheets already print.
+    for k in row:
+        if str(k).startswith(_TTM_PREFIX):
+            row[k] = t["ttm"]
     return row
 
 
@@ -389,7 +443,7 @@ def _report(f, cols, group_col, second_col=None):
             if "DOO" in row:
                 row["DOO"] = r["doo"]
             rows.append(_fill_figures(row, {k: r[k] for k in
-                                            ("ly", "ty", "day", "ly_full", "projected")}))
+                                            ("ly", "ty", "day", "ly_full", "projected", "ttm")}))
             types.append("store")
         tr = {c: "" for c in cols}
         tr[cols[0]] = f"{g} Total"
@@ -402,23 +456,23 @@ def _report(f, cols, group_col, second_col=None):
     return pd.DataFrame(rows, columns=cols), types
 
 
-def gd_report(f):
+def gd_report(f, w: Window):
     """The GD sheet groups by NEW/OLD, which is a portfolio attribute. The VFL
     master carries no such flag, so that feed groups by brand line instead —
     and the column is HEADED brand line, rather than saying NEW/OLD over a
     column of brand names."""
     if f["new_old"].astype(str).str.strip().any():
-        return _report(f, GD_COLS, "new_old")
+        return _report(f, _with_ttm(GD_COLS, w), "new_old")
     cols = ["BRAND"] + GD_COLS[1:]
-    return _report(f, cols, "parent")
+    return _report(f, _with_ttm(cols, w), "parent")
 
 
-def brand_report(f):
-    return _report(f, BW_COLS, "parent")
+def brand_report(f, w: Window):
+    return _report(f, _with_ttm(BW_COLS, w), "parent")
 
 
-def location_report(f):
-    return _report(f, LW_COLS, "location_tl")
+def location_report(f, w: Window):
+    return _report(f, _with_ttm(LW_COLS, w), "location_tl")
 
 
 def day_ladder(sales: pd.Series, w: Window) -> pd.DataFrame:
@@ -484,10 +538,11 @@ def _sheet_image(df, types, w, title):
 
     header = list(df.columns)
     aligns = ["l" if c in _LEFT else "r" for c in header]
+    is_money = [c in _MONEY_COLS or str(c).startswith(_TTM_PREFIX) for c in header]
     grid = []
     for (_, row), t in zip(df.iterrows(), types):
         fill = RT.TOTAL_BG if t == "grand" else (RT.HDR_BG if t == "subtotal" else None)
-        cells = [RT.cell(RT._money(row[c]) if (c in _MONEY_COLS and row[c] != "")
+        cells = [RT.cell(RT._money(row[c]) if (is_money[i] and row[c] != "")
                          else (row[c] or ""),
                          align=aligns[i], fill=fill, bold=t in ("grand", "subtotal"))
                  for i, c in enumerate(header)]
@@ -531,9 +586,9 @@ def festive_sheets(f: pd.DataFrame, sales: pd.Series, w: Window) -> list[tuple]:
 
     Four sheets: the day ladder leads, then the three growth sheets.
     """
-    gd, gt = gd_report(f)
-    bw, bt = brand_report(f)
-    lw, lt = location_report(f)
+    gd, gt = gd_report(f, w)
+    bw, bt = brand_report(f, w)
+    lw, lt = location_report(f, w)
     return [
         (f"{w.label} — {w.tenure} days to {w.festival}",
          _ladder_image(day_ladder(sales, w), w)),
