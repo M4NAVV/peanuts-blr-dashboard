@@ -160,21 +160,39 @@ def test_a_finished_month_gets_the_summary_cards_instead():
     assert [c[0] for c in cards][:2] == ["Sep 2025 total", "Trading days"]
 
 
-def test_the_png_draws_and_is_the_width_it_was_asked_for():
+def test_the_png_draws_at_the_logical_width_times_its_density():
+    """`width` is the layout; the pixels are `width * scale`."""
     img = daycal.calendar_png(_month(), stats=[("A", "1", "x")],
-                              legend="hello", upto=21, width=1400)
-    assert img is not None and img.size[0] == 1400
-    assert img.size[1] > 200
+                              legend="hello", upto=21, width=1400, scale=2)
+    assert img is not None and img.size[0] == 2800
+    assert img.size[1] > 400
 
 
 def test_the_png_grows_a_row_for_a_month_that_needs_six_weeks():
     """Aug 2026 starts on a Saturday and has 31 days, so it spills into a
     sixth row. A fixed height would clip it."""
-    five = daycal.calendar_png(_month(), width=1400)        # Sep 2025, Mon, 5 rows
+    five = daycal.calendar_png(_month(), width=1400, scale=1)   # Sep 2025, 5 rows
     six_idx = pd.date_range("2026-08-01", "2026-08-31")
-    six = daycal.calendar_png(pd.Series(1.0, index=six_idx), width=1400)
+    six = daycal.calendar_png(pd.Series(1.0, index=six_idx), width=1400, scale=1)
     assert six.size[1] > five.size[1]
 
 
 def test_an_empty_month_draws_nothing_rather_than_an_empty_grid():
     assert daycal.calendar_png(pd.Series(dtype=float)) is None
+
+
+def test_quality_is_pixel_density_and_keeps_the_proportions():
+    """Scale multiplies geometry AND type together, so the drawing is the same
+    picture with more pixels in it — not a bigger layout.
+    See [[feedback-print-quality-is-pixels-per-page]]."""
+    one = daycal.calendar_png(_month(), stats=[("A", "1", "x")], width=1000, scale=1)
+    three = daycal.calendar_png(_month(), stats=[("A", "1", "x")], width=1000, scale=3)
+    assert three.size[0] == one.size[0] * 3
+    assert abs(three.size[1] - one.size[1] * 3) <= 3      # rounding only
+
+
+def test_the_card_says_21st_not_21th():
+    assert [daycal._ordinal(n) for n in (1, 2, 3, 11, 12, 13, 21, 22, 23)] == \
+        ["1st", "2nd", "3rd", "11th", "12th", "13th", "21st", "22nd", "23rd"]
+    cards = daycal.month_stats(_month(), _month(), _month(), upto=21, fmt=str)
+    assert cards[0][2].endswith("after the 21st")

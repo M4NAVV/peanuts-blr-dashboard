@@ -372,6 +372,16 @@ def live_labels(labels, code_of, closed, asof):
     return live, shut
 
 
+def _ordinal(n: int) -> str:
+    """`21st`, not `21th`. The card has read `21th` for as long as it has
+    existed. A label, not a key into a sheet, so it is safe to correct —
+    see [[feedback-fix-spelling-in-reports]]."""
+    n = int(n)
+    if 11 <= n % 100 <= 13:
+        return f"{n}th"
+    return f"{n}{ {1: 'st', 2: 'nd', 3: 'rd'}.get(n % 10, 'th') }"
+
+
 def month_stats(series, ly, ty, *, upto=None, fmt=str):
     """The four cards above the calendar, as [(label, value, sub), …].
 
@@ -388,7 +398,7 @@ def month_stats(series, ly, ty, *, upto=None, fmt=str):
         start = ly.index[0]
         return [
             (f"Still to come · {days_left} days", fmt(left_ly),
-             f"what last year took after the {upto}th"),
+             f"what last year took after the {_ordinal(upto)}"),
             (f"1–{upto} {start:%b} this year", fmt(done_ty),
              (f"{delta:+.1f}% vs last year" if delta is not None else None)),
             (f"1–{upto} {start:%b} last year", fmt(done_ly), "same days only"),
@@ -419,11 +429,19 @@ def _rgb(css: str):
 
 
 def calendar_png(series, *, stats=(), legend="", compare=None, upto=None,
-                 cap_pct: float = 0.95, width: int = 2000):
+                 cap_pct: float = 0.95, width: int = 2000, scale: int = 3):
     """The month as a wall calendar, drawn — cards on top, legend underneath.
 
     The same figures, ramp, ring and cap as `calendar_html`, so the image and
     the screen cannot show different months of the same store.
+
+    ★ `scale` IS THE WHOLE OF THE QUALITY. Layout is fixed in logical units and
+    every one of them — padding, cell, corner radius, stroke AND type size — is
+    multiplied by it, so the proportions never move and only the pixel density
+    changes. Drawn at scale 1 this laid ~34px of type on a 2000px canvas and
+    read soft on any screen worth looking at; the packs are sharp because they
+    put 486 ppi on a fixed page, not because they are bigger.
+    See [[feedback-print-quality-is-pixels-per-page]].
     """
     from PIL import Image, ImageDraw
     import portfolio_pdf as PP
@@ -431,29 +449,38 @@ def calendar_png(series, *, stats=(), legend="", compare=None, upto=None,
     if series.empty:
         return None
 
-    lab_f, _ = PP._ft(15)
-    _, val_f = PP._ft(34)
-    sub_f, _ = PP._ft(14)
-    hd_f, _ = PP._ft(15)
-    _, day_v = PP._ft(19)
-    dnum_f, _ = PP._ft(13)
-    _, chip_f = PP._ft(12)
-    leg_f, _ = PP._ft(15)
+    k = max(1, int(scale))
 
-    pad = PP._px(22)
-    gap = PP._px(5)
-    W = width
+    def px(n):
+        return int(round(n * k))
+
+    def ft(n, bold=False):
+        reg, emp = PP._fonts(int(round(n * k)))
+        return emp if bold else reg
+
+    lab_f = ft(15)
+    val_f = ft(34, bold=True)
+    sub_f = ft(14)
+    hd_f = ft(15)
+    day_v = ft(19, bold=True)
+    dnum_f = ft(13)
+    chip_f = ft(12, bold=True)
+    leg_f = ft(15)
+
+    pad = px(22)
+    gap = px(5)
+    W = width * k
     inner = W - pad * 2
     col_w = (inner - gap * 6) // 7
-    cell_h = PP._px(74)
+    cell_h = px(74)
 
     first = series.index[0]
     lead = first.weekday()
     n_weeks = (lead + len(series) + 6) // 7
 
-    card_h = PP._px(86) if stats else 0
-    head_h = PP._px(30)
-    leg_h = PP._px(30) if legend else 0
+    card_h = px(86) if stats else 0
+    head_h = px(30)
+    leg_h = px(30) if legend else 0
     H = pad + card_h + head_h + n_weeks * (cell_h + gap) + leg_h + pad
 
     img = Image.new("RGB", (W, H), _PAPER)
@@ -466,13 +493,13 @@ def calendar_png(series, *, stats=(), legend="", compare=None, upto=None,
         for i, (label, value, sub) in enumerate(stats):
             x = pad + i * cw
             if i:
-                d.line([(x - PP._px(10), y + PP._px(6)),
-                        (x - PP._px(10), y + card_h - PP._px(14))],
+                d.line([(x - px(10), y + px(6)),
+                        (x - px(10), y + card_h - px(14))],
                        fill=_CARD_RULE, width=1)
             d.text((x, y), str(label).upper(), font=lab_f, fill=PP.MUTED)
-            d.text((x, y + PP._px(22)), str(value), font=val_f, fill=INK_RGB)
+            d.text((x, y + px(22)), str(value), font=val_f, fill=INK_RGB)
             if sub:
-                d.text((x, y + PP._px(62)), str(sub), font=sub_f, fill=PP.MUTED)
+                d.text((x, y + px(62)), str(sub), font=sub_f, fill=PP.MUTED)
         y += card_h
 
     # ---- weekday header, weekends on their own tint
@@ -481,7 +508,7 @@ def calendar_png(series, *, stats=(), legend="", compare=None, upto=None,
     for i, name in enumerate(WEEKDAYS):
         x = pad + i * (col_w + gap)
         tw = d.textlength(name, font=hd_f)
-        d.text((x + (col_w - tw) / 2, y + PP._px(7)), name, font=hd_f, fill=PP.MUTED)
+        d.text((x + (col_w - tw) / 2, y + px(7)), name, font=hd_f, fill=PP.MUTED)
     y += head_h
 
     # ---- the days
@@ -493,23 +520,23 @@ def calendar_png(series, *, stats=(), legend="", compare=None, upto=None,
         yy = y + r * (cell_h + gap)
         t = min(float(val) / hi, 1.0) if hi else 0.0
         future = upto is not None and day.day > upto
-        d.rounded_rectangle([x, yy, x + col_w, yy + cell_h], radius=PP._px(6),
+        d.rounded_rectangle([x, yy, x + col_w, yy + cell_h], radius=px(6),
                             fill=_rgb(_tint(t)),
                             outline=MAROON_RGB if future else _CARD_RULE,
-                            width=PP._px(2) if future else 1)
+                            width=px(2) if future else 1)
         ink = (255, 255, 255) if (t or 0) > 0.55 else INK_RGB
-        d.text((x + PP._px(8), yy + PP._px(6)), str(day.day), font=dnum_f, fill=ink)
-        d.text((x + PP._px(8), yy + cell_h - PP._px(28)),
+        d.text((x + px(8), yy + px(6)), str(day.day), font=dnum_f, fill=ink)
+        d.text((x + px(8), yy + cell_h - px(28)),
                "—" if val == 0 else _short(val), font=day_v, fill=ink)
         if compare is not None and day in compare.index and not future:
             was = float(compare.loc[day])
             if was > 0:
                 pct = (float(val) / was - 1) * 100
-                d.text((x + PP._px(8), yy + cell_h - PP._px(13)), f"{pct:+.0f}%",
+                d.text((x + px(8), yy + cell_h - px(13)), f"{pct:+.0f}%",
                        font=chip_f, fill=(19, 122, 58) if pct >= 0 else (192, 20, 60))
         slot += 1
     y += n_weeks * (cell_h + gap)
 
     if legend:
-        d.text((pad, y + PP._px(6)), legend, font=leg_f, fill=PP.MUTED)
+        d.text((pad, y + px(6)), legend, font=leg_f, fill=PP.MUTED)
     return img

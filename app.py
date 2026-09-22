@@ -1656,8 +1656,14 @@ def _calendar_png_download(df, *, date_col, value_col, store_col, id_cols,
         opt_pick = f"Pick {label}s"
         scope = c1.radio("Which", [ALL, opt_live, opt_pick],
                          key=f"{key}_png_scope", horizontal=True)
-        wide = c2.select_slider("Image width", [1400, 2000, 2600], value=2000,
-                                key=f"{key}_png_w")
+        # ★ QUALITY IS PIXEL DENSITY, not a bigger layout. Everything —
+        # padding, cells, strokes and type — scales together, so the image
+        # looks the same and simply has more pixels in it.
+        # See [[feedback-print-quality-is-pixels-per-page]].
+        _Q = {"Standard": 2, "High": 3, "Maximum": 4}
+        qual = c2.select_slider("Quality", list(_Q), value="High",
+                                key=f"{key}_png_q")
+        wide, k = 2000, _Q[qual]
 
         if scope == ALL:
             chosen = ["All stores"]
@@ -1675,7 +1681,8 @@ def _calendar_png_download(df, *, date_col, value_col, store_col, id_cols,
             f"{len(chosen)} image{'s' if len(chosen) != 1 else ''} · "
             f"{'last year' if show_ly else 'this year'}, "
             f"{(ly_start if show_ly else ty_start):%B %Y} · the month and year "
-            f"follow the two pickers at the top of this tab."
+            f"follow the two pickers at the top of this tab. "
+            f"{wide * k:,}px wide."
             + (f" {len(shut)} closed {label}s are left out."
                if scope == opt_live and shut else ""))
 
@@ -1699,7 +1706,7 @@ def _calendar_png_download(df, *, date_col, value_col, store_col, id_cols,
                                        upto=upto if is_current else None, fmt=inr)
             img = daycal.calendar_png(
                 series, stats=stats, compare=compare,
-                upto=upto if show_ly else None, width=int(wide),
+                upto=upto if show_ly else None, width=wide, scale=k,
                 legend=_cal_legend(series, name, show_ly, upto, compare))
             buf = io.BytesIO()
             img.save(buf, "PNG")
