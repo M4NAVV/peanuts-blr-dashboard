@@ -883,9 +883,17 @@ def render_portfolio():
             "what is coming. Pick a store; the calendar shows every day of "
             "that month."
         )
+        import daycal as _dc
+        _p = pf[["brand", "location", "code"]].dropna().drop_duplicates()
+        _ident = _dc.store_identity(_p, ("brand", "location"))
+        _code_of = {}
+        for _lab, _c in zip(_ident, _p["code"]):
+            _code_of.setdefault(_lab, []).append(_c)
+        _live, _shut = _dc.live_labels(_ident, _code_of, PL.closed_map(), asof)
         render_day_calendar(
             pf, date_col="date", value_col="sales", store_col="location",
-            asof=asof, key="pf_cal", label="store")
+            asof=asof, key="pf_cal", label="store", live=_live, shut=_shut,
+            id_cols=("brand", "location"))
         return
 
     # ===================== Executive ===================== #
@@ -1470,7 +1478,8 @@ def _png_degrowth(df, asof, kind):
 
 
 def render_day_calendar(df, *, date_col, value_col, store_col, asof,
-                        stores=None, key="cal", label="store"):
+                        stores=None, key="cal", label="store",
+                        live=None, shut=(), id_cols=None):
     """Last year's version of the month we are in, day by day.
 
     Shared by both data views so the two cannot drift apart. See `daycal` for
@@ -1590,6 +1599,98 @@ def render_day_calendar(df, *, date_col, value_col, store_col, asof,
                             "Same day, other year": lambda v: inr(v),
                             "Change": "{:+.0f}%"}, na_rep="—"),
             use_container_width=True, hide_index=True, height=300)
+
+    _monthly_sales_download(df, date_col=date_col, value_col=value_col,
+                            store_col=store_col, asof=asof, live=live,
+                            shut=shut, selected=store, key=key, label=label,
+                            id_cols=id_cols)
+
+
+def _monthly_sales_download(df, *, date_col, value_col, store_col, asof,
+                            live, shut, selected, key, label, id_cols=None):
+    """Store-wise monthly sales, taken off this tab in one click.
+
+    Manav, 22 Sep: *"one click, and we can download all the current live stores
+    monthly sales, or we can select our preferred store."*
+
+    ★ IT DEFAULTS TO THE STORES THAT STILL EXIST. A closed shop's months of
+    zeros dragged into a grid read as a collapse rather than as a closure, and
+    the estate is the thing people total. The closed ones are one radio away
+    and their count is always on screen, so nothing is hidden — only kept out
+    of the default. See [[feedback-same-estate]].
+    """
+    import daycal
+
+    with st.expander("⬇️ Download store-wise monthly sales"):
+        # ★ KEYED ON THE STORE, NOT ON THE PICKER ABOVE. That selector is
+        # LOCATION-grained, and in the portfolio a location is not a store —
+        # `City Centre` is a Siliguri mall holding eleven brands. So the grid
+        # is built on `brand + location`, which separates all 63 codes, and
+        # the note below says how many stores that is.
+        work = df[[date_col, value_col]].copy()
+        work["Store"] = daycal.store_identity(df, id_cols or store_col)
+        if live is None:                    # a caller that cannot say
+            live, shut = sorted({str(x) for x in work["Store"].dropna()}), []
+
+        c1, c2 = st.columns([1.7, 1])
+        opt_live = f"Live {label}s ({len(live)})"
+        opt_all = f"Everything, incl. {len(shut)} closed"
+        opt_pick = f"Pick {label}s"
+        scope = c1.radio("Which stores", [opt_live, opt_all, opt_pick],
+                         key=f"{key}_dl_scope", horizontal=True)
+
+        # ★ THE YEARS COME OFF THE DATA, not off a literal. A hard-coded list
+        # freezes on 1 Apr. See [[feedback-silent-failure-must-speak]].
+        _d = pd.to_datetime(work[date_col], errors="coerce").dt
+        _fy = _d.year.where(_d.month >= 4, _d.year - 1).dropna()
+        years = sorted({int(y) for y in _fy.unique()}, reverse=True)
+        ALL = "Everything the feed holds"
+        choice = c2.selectbox("Period", [daycal.fiscal_label(y) for y in years] + [ALL],
+                              key=f"{key}_dl_fy")
+        fy = None if choice == ALL else int(choice.split("-")[0])
+
+        if scope == opt_pick:
+            chosen = st.multiselect(
+                f"Which {label}s", live + shut,
+                default=[selected] if selected in (live + shut) else [],
+                key=f"{key}_dl_pick")
+            if not chosen:
+                st.info(f"Pick at least one {label}, or switch to "
+                        f"“{opt_live}”.")
+                return
+        else:
+            chosen = live if scope == opt_live else live + shut
+
+        frame, note = daycal.monthly_matrix(
+            work, date_col, value_col, "Store", stores=chosen, fy=fy, asof=asof)
+        if frame.empty:
+            st.info(f"Nothing recorded for that selection — {note}.")
+            return
+
+        st.caption(f"{note}. Every figure is a month's total sales in ₹.")
+        money_cols = [c for c in frame.columns if c != "Store"]
+        st.dataframe(frame.style.format({c: (lambda v: inr(v)) for c in money_cols}),
+                     use_container_width=True, hide_index=True, height=320)
+
+        tag = ("live" if scope == opt_live else
+               "all" if scope == opt_all else f"{len(chosen)} {label}s")
+        stem = (f"Monthly sales {tag} "
+                f"{choice.replace(' ', '-') if fy else 'all-years'} "
+                f"{pd.Timestamp(asof):%d-%m-%Y}")
+
+        import io
+        buf = io.BytesIO()
+        with pd.ExcelWriter(buf, engine="openpyxl") as xl:
+            frame.to_excel(xl, index=False, sheet_name="Monthly sales")
+        d1, d2 = st.columns(2)
+        d1.download_button("⬇ Download (Excel)", buf.getvalue(),
+                           file_name=f"{stem}.xlsx", use_container_width=True,
+                           mime=("application/vnd.openxmlformats-officedocument"
+                                 ".spreadsheetml.sheet"),
+                           key=f"{key}_dl_xlsx")
+        d2.download_button("⬇ Download (CSV)", frame.to_csv(index=False).encode(),
+                           file_name=f"{stem}.csv", mime="text/csv",
+                           use_container_width=True, key=f"{key}_dl_csv")
 
 
 # ---- Top-level data mode: whole-Portfolio breadth vs VFL depth ----
@@ -2291,10 +2392,18 @@ if nav == "🗓️ Day calendar":
         "What the rest of this month looked like a year ago, so you know what "
         "is coming. Pick a store; the calendar shows every day of that month."
     )
+    import daycal as _dc
+    _mst = L.load_store_master()
+    _code_of = {}
+    for _n, _c in zip(_mst["tableau_name"], _mst["code"]):
+        _code_of.setdefault(str(_n), []).append(_c)
+    _live, _shut = _dc.live_labels(
+        df_all[L.COL_STORE_LABEL].dropna().unique(), _code_of,
+        L.closed_map(), pd.Timestamp(end_d))
     render_day_calendar(
         df_all, date_col="date", value_col=L.COL_AMOUNT,
         store_col=L.COL_STORE_LABEL, asof=pd.Timestamp(end_d),
-        key="vfl_cal", label="store")
+        key="vfl_cal", label="store", live=_live, shut=_shut)
 
 
 # =========================================================================== #

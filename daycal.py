@@ -221,3 +221,150 @@ def stat_row(items) -> str:
             f'{tail}</div>')
     return (f'<div style="display:grid;grid-template-columns:repeat({len(out)},1fr);'
             f'gap:14px;margin:10px 0 14px">{"".join(out)}</div>')
+
+
+# --------------------------------------------------------------------------- #
+#  Store-wise monthly sales, for download
+# --------------------------------------------------------------------------- #
+def fiscal_year_of(ts) -> int:
+    """The April–March year a date belongs to, named by its opening April."""
+    ts = pd.Timestamp(ts)
+    return ts.year if ts.month >= 4 else ts.year - 1
+
+
+def fiscal_label(fy: int) -> str:
+    return f"{fy}-{str(fy + 1)[2:]}"
+
+
+def monthly_matrix(df, date_col, value_col, store_col, *,
+                   stores=None, fy=None, asof=None):
+    """One row per store, one column per month, summing `value_col`.
+
+    Columns run in the order the month actually happened. With `fy` set that is
+    April to March, because this business reports on a fiscal year and a
+    January column sitting before its own April would be a different year's.
+
+    ★ THE LAST MONTH IS ALMOST ALWAYS PART-TRADED, and its header says so:
+    `Sep 2026 (1–22)`. A part month sitting unlabelled beside a whole one
+    invites a comparison that is not one. See [[feedback-provisional-day]].
+
+    ★ A SELECTED STORE WITH NO ROWS STILL GETS A ROW, of zeros. Dropping it
+    would quietly answer a different question from the one asked — the user
+    picked that store and is owed an answer about it.
+
+    Returns (frame, note). The frame carries a Total column and a TOTAL row;
+    `note` says what the figures cover, for printing beside them.
+    """
+    d = df[[date_col, value_col, store_col]].copy()
+    d[date_col] = pd.to_datetime(d[date_col], errors="coerce")
+    d = d.dropna(subset=[date_col])
+
+    if stores is not None:
+        stores = list(stores)
+        d = d[d[store_col].isin(stores)]
+    if fy is not None:
+        d = d[(d[date_col] >= pd.Timestamp(fy, 4, 1))
+              & (d[date_col] <= pd.Timestamp(fy + 1, 3, 31))]
+
+    if d.empty and not stores:
+        return pd.DataFrame(), "no rows in the period selected"
+
+    d["_m"] = d[date_col].values.astype("datetime64[M]")
+    piv = (d.pivot_table(index=store_col, columns="_m", values=value_col,
+                         aggfunc="sum", fill_value=0.0)
+           if not d.empty else pd.DataFrame())
+    if stores:
+        piv = piv.reindex(sorted(stores)).fillna(0.0)
+    piv = piv.reindex(sorted(piv.columns), axis=1)
+
+    last_day = d[date_col].max() if not d.empty else None
+    asof = pd.Timestamp(asof) if asof is not None else last_day
+
+    names, partial = [], None
+    for m in piv.columns:
+        m = pd.Timestamp(m)
+        end = m + pd.offsets.MonthEnd(0)
+        if last_day is not None and last_day < end and m <= last_day:
+            names.append(f"{m:%b %Y} (1–{last_day.day})")
+            partial = f"{m:%B %Y}"
+        else:
+            names.append(f"{m:%b %Y}")
+    piv.columns = names
+
+    piv["Total"] = piv.sum(axis=1)
+    piv.index.name = "Store"
+    out = piv.reset_index()
+    total = {c: (out[c].sum() if c != "Store" else "TOTAL") for c in out.columns}
+    out = pd.concat([out, pd.DataFrame([total])], ignore_index=True)
+
+    span = (f"{d[date_col].min():%d %b %Y} to {last_day:%d %b %Y}"
+            if last_day is not None else "no dated rows")
+    note = f"{len(piv)} stores · {span}"
+    if partial:
+        note += f" · {partial} is part-traded"
+    return out, note
+
+
+def store_identity(df, id_cols, sep=" — "):
+    """One label per STORE, from however many columns it takes to be unique.
+
+    ★ A LOCATION IS NOT A STORE in the portfolio feed. `City Centre` is a mall
+    in Siliguri holding ELEVEN brands — Van Heusen, Madame, Manyavar, Turtle
+    and the rest — so a grid keyed on location would silently add eleven shops
+    into one line. 63 codes sit under 34 locations; only `brand + location`
+    separates them. See [[feedback-same-estate]].
+    """
+    cols = [id_cols] if isinstance(id_cols, str) else list(id_cols)
+    out = df[cols[0]].astype(str).str.strip()
+    for c in cols[1:]:
+        out = out + sep + df[c].astype(str).str.strip()
+    return out
+
+
+def live_labels(labels, code_of, closed, asof):
+    """Split store labels into (live, shut) as at `asof`.
+
+    ★ A LABEL MAY CARRY SEVERAL CODES, and is live if ANY of them is. A plain
+    `dict(zip(...))` keeps the LAST code per label, which read Rajarhat CC2 as
+    shut: its old code 99 closed in Aug 2025 while the live code 90 has traded
+    every day since. `code_of` may therefore map a label to one code or to an
+    iterable of them.
+
+    A store is live unless the store master gives it a closure date on or
+    before that day — the same authority `closed_map` is for every other
+    figure here, so a download cannot disagree with the sheets about which
+    shops exist.
+
+    ★ A LABEL THE MASTER DOES NOT KNOW IS KEPT, and the caller is told how many
+    there are. Dropping it would quietly answer a different question from the
+    one asked. See [[feedback-silent-failure-must-speak]].
+    """
+    asof = pd.Timestamp(asof)
+    shut_codes = set()
+    for code, when in (closed or {}).items():
+        when = pd.to_datetime(when, errors="coerce")
+        if pd.notna(when) and when <= asof:
+            try:
+                shut_codes.add(int(code))
+            except (TypeError, ValueError):
+                shut_codes.add(code)
+
+    def _norm(c):
+        try:
+            return int(c)
+        except (TypeError, ValueError):
+            return c
+
+    live, shut = [], []
+    for lab in sorted({str(x) for x in labels if pd.notna(x)}):
+        got = (code_of or {}).get(lab)
+        if got is None:
+            codes = []
+        elif isinstance(got, (list, tuple, set, frozenset)):
+            codes = [_norm(c) for c in got]
+        else:
+            codes = [_norm(got)]
+        # unknown to the master, or any code still trading -> live
+        is_shut = bool(codes) and all(c in shut_codes for c in codes)
+        (shut if is_shut else live).append(lab)
+    return live, shut
