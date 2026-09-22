@@ -125,6 +125,8 @@ def summary(series, same_days: int | None = None) -> dict:
 # --------------------------------------------------------------------------- #
 MAROON = "#7A1F2B"
 INK = "#2B2B2B"
+INK_RGB = (43, 43, 43)          # the same ink, for the drawn version
+MAROON_RGB = (122, 31, 43)
 MUTED = "#8A8A8A"
 LINE = "#ECE4D6"
 GREEN = "#137A3A"
@@ -368,3 +370,146 @@ def live_labels(labels, code_of, closed, asof):
         is_shut = bool(codes) and all(c in shut_codes for c in codes)
         (shut if is_shut else live).append(lab)
     return live, shut
+
+
+def month_stats(series, ly, ty, *, upto=None, fmt=str):
+    """The four cards above the calendar, as [(label, value, sub), …].
+
+    ★ ONE SOURCE FOR THE SCREEN AND THE PNG. These used to be built inline in
+    the tab; a downloaded image whose headline figures were computed by a
+    second copy of the arithmetic is exactly how two correct-looking numbers
+    come to disagree. See [[feedback-same-estate]].
+    """
+    if upto:
+        done_ly, done_ty = ly.iloc[:upto].sum(), ty.iloc[:upto].sum()
+        left_ly = ly.iloc[upto:].sum()
+        days_left = len(ly) - upto
+        delta = (done_ty / done_ly - 1) * 100 if done_ly else None
+        start = ly.index[0]
+        return [
+            (f"Still to come · {days_left} days", fmt(left_ly),
+             f"what last year took after the {upto}th"),
+            (f"1–{upto} {start:%b} this year", fmt(done_ty),
+             (f"{delta:+.1f}% vs last year" if delta is not None else None)),
+            (f"1–{upto} {start:%b} last year", fmt(done_ly), "same days only"),
+            (f"All of {start:%b} last year", fmt(ly.sum()),
+             f"{int((ly > 0).sum())} trading days"),
+        ]
+    sm = summary(series)
+    return [
+        (f"{series.index[0]:%b %Y} total", fmt(sm["total"]), None),
+        ("Trading days", f"{sm['days']}", None),
+        ("Weekend share",
+         f"{sm['weekend']/sm['total']*100:.0f}%" if sm["total"] else "—", "Sat + Sun"),
+        ("Best day", f"{sm['best_day']:%a %d}" if sm["best_day"] is not None else "—",
+         fmt(sm["best_val"])),
+    ]
+
+
+# --------------------------------------------------------------------------- #
+#  The same calendar, as a PNG you can put in a message
+# --------------------------------------------------------------------------- #
+_PAPER = (251, 247, 241)
+_CARD_RULE = (232, 224, 212)
+
+
+def _rgb(css: str):
+    n = css[css.index("(") + 1:css.index(")")].split(",")
+    return tuple(int(x) for x in n)
+
+
+def calendar_png(series, *, stats=(), legend="", compare=None, upto=None,
+                 cap_pct: float = 0.95, width: int = 2000):
+    """The month as a wall calendar, drawn — cards on top, legend underneath.
+
+    The same figures, ramp, ring and cap as `calendar_html`, so the image and
+    the screen cannot show different months of the same store.
+    """
+    from PIL import Image, ImageDraw
+    import portfolio_pdf as PP
+
+    if series.empty:
+        return None
+
+    lab_f, _ = PP._ft(15)
+    _, val_f = PP._ft(34)
+    sub_f, _ = PP._ft(14)
+    hd_f, _ = PP._ft(15)
+    _, day_v = PP._ft(19)
+    dnum_f, _ = PP._ft(13)
+    _, chip_f = PP._ft(12)
+    leg_f, _ = PP._ft(15)
+
+    pad = PP._px(22)
+    gap = PP._px(5)
+    W = width
+    inner = W - pad * 2
+    col_w = (inner - gap * 6) // 7
+    cell_h = PP._px(74)
+
+    first = series.index[0]
+    lead = first.weekday()
+    n_weeks = (lead + len(series) + 6) // 7
+
+    card_h = PP._px(86) if stats else 0
+    head_h = PP._px(30)
+    leg_h = PP._px(30) if legend else 0
+    H = pad + card_h + head_h + n_weeks * (cell_h + gap) + leg_h + pad
+
+    img = Image.new("RGB", (W, H), _PAPER)
+    d = ImageDraw.Draw(img)
+    y = pad
+
+    # ---- the cards, evenly across the width, divided by a hairline
+    if stats:
+        cw = inner // max(len(stats), 1)
+        for i, (label, value, sub) in enumerate(stats):
+            x = pad + i * cw
+            if i:
+                d.line([(x - PP._px(10), y + PP._px(6)),
+                        (x - PP._px(10), y + card_h - PP._px(14))],
+                       fill=_CARD_RULE, width=1)
+            d.text((x, y), str(label).upper(), font=lab_f, fill=PP.MUTED)
+            d.text((x, y + PP._px(22)), str(value), font=val_f, fill=INK_RGB)
+            if sub:
+                d.text((x, y + PP._px(62)), str(sub), font=sub_f, fill=PP.MUTED)
+        y += card_h
+
+    # ---- weekday header, weekends on their own tint
+    # The web version tints the weekend headers against a white page; on this
+    # cream paper the block reads as a smudge, so the header stays plain.
+    for i, name in enumerate(WEEKDAYS):
+        x = pad + i * (col_w + gap)
+        tw = d.textlength(name, font=hd_f)
+        d.text((x + (col_w - tw) / 2, y + PP._px(7)), name, font=hd_f, fill=PP.MUTED)
+    y += head_h
+
+    # ---- the days
+    hi = float(np.nanpercentile(series.values, cap_pct * 100)) or 1.0
+    slot = lead
+    for day, val in series.items():
+        r, c = divmod(slot, 7)
+        x = pad + c * (col_w + gap)
+        yy = y + r * (cell_h + gap)
+        t = min(float(val) / hi, 1.0) if hi else 0.0
+        future = upto is not None and day.day > upto
+        d.rounded_rectangle([x, yy, x + col_w, yy + cell_h], radius=PP._px(6),
+                            fill=_rgb(_tint(t)),
+                            outline=MAROON_RGB if future else _CARD_RULE,
+                            width=PP._px(2) if future else 1)
+        ink = (255, 255, 255) if (t or 0) > 0.55 else INK_RGB
+        d.text((x + PP._px(8), yy + PP._px(6)), str(day.day), font=dnum_f, fill=ink)
+        d.text((x + PP._px(8), yy + cell_h - PP._px(28)),
+               "—" if val == 0 else _short(val), font=day_v, fill=ink)
+        if compare is not None and day in compare.index and not future:
+            was = float(compare.loc[day])
+            if was > 0:
+                pct = (float(val) / was - 1) * 100
+                d.text((x + PP._px(8), yy + cell_h - PP._px(13)), f"{pct:+.0f}%",
+                       font=chip_f, fill=(19, 122, 58) if pct >= 0 else (192, 20, 60))
+        slot += 1
+    y += n_weeks * (cell_h + gap)
+
+    if legend:
+        d.text((pad, y + PP._px(6)), legend, font=leg_f, fill=PP.MUTED)
+    return img

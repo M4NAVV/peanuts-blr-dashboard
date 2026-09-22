@@ -1600,10 +1600,138 @@ def render_day_calendar(df, *, date_col, value_col, store_col, asof,
                             "Change": "{:+.0f}%"}, na_rep="—"),
             use_container_width=True, hide_index=True, height=300)
 
+    _calendar_png_download(
+        df, date_col=date_col, value_col=value_col, store_col=store_col,
+        id_cols=id_cols, live=live, shut=shut, selected=store, key=key,
+        label=label, windows=(ly_start, ly_end, ty_start, ty_end),
+        show_ly=show_ly, upto=upto, is_current=is_current)
     _monthly_sales_download(df, date_col=date_col, value_col=value_col,
                             store_col=store_col, asof=asof, live=live,
                             shut=shut, selected=store, key=key, label=label,
                             id_cols=id_cols)
+
+
+def _cal_legend(series, store, show_ly, upto, compare):
+    """The line under the calendar, worded as the screen words it."""
+    t = (f"{series.index[0]:%B %Y} for {store}. Darker is a bigger day · "
+         f"a dash is a day it took nothing")
+    if show_ly and upto:
+        t += " · ringed days are the ones still ahead of you this month"
+    if compare is not None:
+        t += " · the small figure is that day against the same date last year"
+    return t + "."
+
+
+def _calendar_png_download(df, *, date_col, value_col, store_col, id_cols,
+                           live, shut, selected, key, label, windows,
+                           show_ly, upto, is_current):
+    """The calendar on screen, as a PNG per store — one click for the estate.
+
+    Manav, 22 Sep: *"i want to download pngs like this, with the calendar and
+    the tabs above it."*
+
+    ★ IT FOLLOWS THE CONTROLS ABOVE IT. Month, and Last year vs This year so
+    far, are read off the same selections the page is showing, so an image in
+    a WhatsApp thread cannot be a different month from the one the sender was
+    looking at.
+
+    ★ AND IT DRAWS FROM `daycal`, the same series, ramp, cap and ring as the
+    screen — not a second copy of the arithmetic.
+    """
+    import daycal
+    import io
+    import zipfile
+
+    ly_start, ly_end, ty_start, ty_end = windows
+
+    with st.expander("🖼️ Download calendars (PNG)"):
+        work = df[[date_col, value_col]].copy()
+        work["_id"] = daycal.store_identity(df, id_cols or store_col)
+        if live is None:
+            live, shut = sorted({str(x) for x in work["_id"].dropna()}), []
+
+        ALL = "All stores together"
+        c1, c2 = st.columns([1.7, 1])
+        opt_live = f"Every live {label} ({len(live)})"
+        opt_pick = f"Pick {label}s"
+        scope = c1.radio("Which", [ALL, opt_live, opt_pick],
+                         key=f"{key}_png_scope", horizontal=True)
+        wide = c2.select_slider("Image width", [1400, 2000, 2600], value=2000,
+                                key=f"{key}_png_w")
+
+        if scope == ALL:
+            chosen = ["All stores"]
+        elif scope == opt_live:
+            chosen = live
+        else:
+            chosen = st.multiselect(f"Which {label}s", live + shut,
+                                    default=[selected] if selected in (live + shut) else [],
+                                    key=f"{key}_png_pick")
+            if not chosen:
+                st.info(f"Pick at least one {label}.")
+                return
+
+        st.caption(
+            f"{len(chosen)} image{'s' if len(chosen) != 1 else ''} · "
+            f"{'last year' if show_ly else 'this year'}, "
+            f"{(ly_start if show_ly else ty_start):%B %Y} · the month and year "
+            f"follow the two pickers at the top of this tab."
+            + (f" {len(shut)} closed {label}s are left out."
+               if scope == opt_live and shut else ""))
+
+        if not st.button("Build the images", key=f"{key}_png_go", type="primary"):
+            return
+
+        built, empty = [], []
+        bar = st.progress(0.0)
+        for i, name in enumerate(chosen, 1):
+            ly = daycal.daily_series(work, date_col, value_col, ly_start, ly_end,
+                                     "_id", name)
+            ty = daycal.daily_series(work, date_col, value_col, ty_start, ty_end,
+                                     "_id", name)
+            series = ly if show_ly else ty
+            if series.sum() == 0:
+                empty.append(name)          # said out loud, never dropped quietly
+                bar.progress(i / len(chosen))
+                continue
+            compare = ly if (not show_ly and is_current) else None
+            stats = daycal.month_stats(series, ly, ty,
+                                       upto=upto if is_current else None, fmt=inr)
+            img = daycal.calendar_png(
+                series, stats=stats, compare=compare,
+                upto=upto if show_ly else None, width=int(wide),
+                legend=_cal_legend(series, name, show_ly, upto, compare))
+            buf = io.BytesIO()
+            img.save(buf, "PNG")
+            safe = re.sub(r"[^\w \-—&]", "-", str(name)).strip()
+            built.append((f"{safe} {series.index[0]:%b %Y}.png", buf.getvalue()))
+            bar.progress(i / len(chosen))
+        bar.empty()
+
+        if empty:
+            st.warning(f"Nothing recorded in that month for: {', '.join(empty)}. "
+                       f"No image was made for them.")
+        if not built:
+            st.info("No image to download.")
+            return
+
+        stamp = f"{(ly_start if show_ly else ty_start):%b %Y}"
+        if len(built) == 1:
+            st.image(built[0][1], use_container_width=True)
+            st.download_button("⬇ Download (PNG)", built[0][1],
+                               file_name=built[0][0], mime="image/png",
+                               use_container_width=True, key=f"{key}_png_one")
+        else:
+            zbuf = io.BytesIO()
+            with zipfile.ZipFile(zbuf, "w", zipfile.ZIP_DEFLATED) as z:
+                for fn, data in built:
+                    z.writestr(fn, data)
+            st.download_button(
+                f"⬇ Download {len(built)} calendars (ZIP)", zbuf.getvalue(),
+                file_name=f"Day calendars {stamp}.zip", mime="application/zip",
+                use_container_width=True, key=f"{key}_png_zip")
+            st.image(built[0][1], use_container_width=True)
+            st.caption(f"Showing the first of {len(built)}.")
 
 
 def _monthly_sales_download(df, *, date_col, value_col, store_col, asof,

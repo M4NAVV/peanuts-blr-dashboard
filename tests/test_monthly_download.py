@@ -133,3 +133,48 @@ def test_fiscal_helpers_name_the_year_by_its_opening_april():
     assert daycal.fiscal_year_of("2027-02-14") == 2026
     assert daycal.fiscal_year_of("2026-04-01") == 2026
     assert daycal.fiscal_label(2026) == "2026-27"
+
+
+# --------------------------------------------------------------------------- #
+# The calendar as a PNG
+# --------------------------------------------------------------------------- #
+def _month(total=100.0):
+    idx = pd.date_range("2025-09-01", "2025-09-30")
+    return pd.Series([total * (1 + i % 5) for i in range(len(idx))], index=idx)
+
+
+def test_the_cards_are_computed_once_for_the_screen_and_the_image():
+    """Two copies of this arithmetic is how a downloaded image comes to
+    disagree with the page it was taken from."""
+    ly, ty = _month(), _month(120.0)
+    cards = daycal.month_stats(ly, ly, ty, upto=21, fmt=lambda v: f"{v:,.0f}")
+    assert len(cards) == 4
+    assert cards[0][0].startswith("Still to come · 9 days")
+    assert cards[0][1] == f"{ly.iloc[21:].sum():,.0f}"
+    assert "same days only" in cards[2]
+
+
+def test_a_finished_month_gets_the_summary_cards_instead():
+    cards = daycal.month_stats(_month(), _month(), _month(), upto=None,
+                               fmt=lambda v: f"{v:,.0f}")
+    assert [c[0] for c in cards][:2] == ["Sep 2025 total", "Trading days"]
+
+
+def test_the_png_draws_and_is_the_width_it_was_asked_for():
+    img = daycal.calendar_png(_month(), stats=[("A", "1", "x")],
+                              legend="hello", upto=21, width=1400)
+    assert img is not None and img.size[0] == 1400
+    assert img.size[1] > 200
+
+
+def test_the_png_grows_a_row_for_a_month_that_needs_six_weeks():
+    """Aug 2026 starts on a Saturday and has 31 days, so it spills into a
+    sixth row. A fixed height would clip it."""
+    five = daycal.calendar_png(_month(), width=1400)        # Sep 2025, Mon, 5 rows
+    six_idx = pd.date_range("2026-08-01", "2026-08-31")
+    six = daycal.calendar_png(pd.Series(1.0, index=six_idx), width=1400)
+    assert six.size[1] > five.size[1]
+
+
+def test_an_empty_month_draws_nothing_rather_than_an_empty_grid():
+    assert daycal.calendar_png(pd.Series(dtype=float)) is None
