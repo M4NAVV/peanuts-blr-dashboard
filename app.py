@@ -621,7 +621,8 @@ def _cr(x) -> str:
 _PF_TABS = ["📈 MW Data", "🧾 GD Sheet", "🏷️ Brand-wise GD", "🗺️ Loc-wise GD",
             "📐 Average", "📊 Executive", "📋 MTD / YTD Report", "📉 Degrowth",
             "🎯 Day Targets", "🥧 Contribution", "🏙️ City-wise G/D", "🏬 Stores",
-            "📅 Monthly", "🗓️ Day calendar", "🧾 Samir Report", "📄 REPORTS PDF"]
+            "📅 Monthly", "🗓️ Day calendar", "🧾 Samir Report",
+            "🧮 Excel Builder", "📄 REPORTS PDF"]
 
 
 def render_portfolio():
@@ -894,6 +895,11 @@ def render_portfolio():
             pf, date_col="date", value_col="sales", store_col="location",
             asof=asof, key="pf_cal", label="store", live=_live, shut=_shut,
             id_cols=("brand", "location"))
+        return
+
+    # ================= Excel Builder ================= #
+    if nav == "🧮 Excel Builder":
+        render_pivot_builder(pf, feed="portfolio", key="pf_pivot", asof=asof)
         return
 
     # ===================== Executive ===================== #
@@ -1828,6 +1834,150 @@ def _monthly_sales_download(df, *, date_col, value_col, store_col, asof,
                            use_container_width=True, key=f"{key}_dl_csv")
 
 
+_PIVOT_PRESETS = {
+    "vfl": {
+        "Store × Month sales": (["Store"], "Month", ["Sales (₹)", "Bills", "Avg Bill Value / ATV (₹)"]),
+        "Division × gender": (["Division", "Men/Women/Child"], None, ["Sales (₹)", "Units", "Bills"]),
+        "Salesperson": (["Salesperson", "Store"], None, ["Sales (₹)", "Bills", "Avg Bill Value / ATV (₹)"]),
+        "Category mix by store": (["Store", "Division"], None, ["Sales (₹)", "Units"]),
+        "Size and colour": (["Division", "Size", "Color"], None, ["Units", "Sales (₹)"]),
+        "Daily sales by store": (["Day", "Store"], None, ["Sales (₹)", "Bills"]),
+    },
+    "portfolio": {
+        "Store × Month sales": (["Store"], "Month", ["Sales (₹)"]),
+        "Brand × Month": (["Brand"], "Month", ["Sales (₹)"]),
+        "City × Month": (["City"], "Month", ["Sales (₹)"]),
+        "Region summary": (["Region", "Brand"], None, ["Sales (₹)", "Active stores"]),
+        "Daily sales by store": (["Day", "Store"], None, ["Sales (₹)"]),
+    },
+}
+
+
+def render_pivot_builder(df, *, feed, key, asof):
+    """Pick the table you need off the raw feed and take it as Excel.
+
+    Manav, 22 Sep: *"all the different divisions in the company need different
+    types of datapoints from this raw feed."*
+
+    ★ IT DOES NOT RESTATE THE ARITHMETIC. `pivot` aggregates through the same
+    primitives the rest of the app uses, so a figure exported here and the same
+    figure on a sheet come from one definition.
+    """
+    import pivot as PV
+
+    F = PV.fields(feed)
+    dims = F["time"] + F["cats"]
+
+    st.subheader("Build an Excel")
+    st.caption(
+        "Pick what goes down the side, optionally what goes across the top, "
+        "and which measures. The file comes out formatted, with real numbers "
+        "you can pivot again, a total row, and a sheet saying how it was built."
+    )
+
+    pre = _PIVOT_PRESETS.get(feed, {})
+    st.write("**Start from**")
+    cols_p = st.columns(len(pre))
+    for i, (name, spec) in enumerate(pre.items()):
+        if cols_p[i].button(name, key=f"{key}_pre{i}", use_container_width=True):
+            st.session_state[f"{key}_rows"] = spec[0]
+            st.session_state[f"{key}_cols"] = spec[1] or "(none)"
+            st.session_state[f"{key}_meas"] = spec[2]
+            st.rerun()
+
+    c1, c2, c3 = st.columns([2, 1.2, 2])
+    rows = c1.multiselect("Down the side (rows)", dims,
+                          default=st.session_state.get(f"{key}_rows", ["Store"]),
+                          key=f"{key}_rows")
+    across = c2.selectbox("Across the top", ["(none)"] + dims,
+                          key=f"{key}_cols")
+    meas = c3.multiselect("Measures", F["measures"],
+                          default=st.session_state.get(f"{key}_meas", ["Sales (₹)"]),
+                          key=f"{key}_meas")
+
+    d = pd.to_datetime(df["date"], errors="coerce")
+    lo, hi = d.min().date(), d.max().date()
+    fy_start = pd.Timestamp(asof).replace(month=4, day=1)
+    if pd.Timestamp(asof).month < 4:
+        fy_start = fy_start.replace(year=fy_start.year - 1)
+    c4, c5, c6 = st.columns([1, 1, 1])
+    f_from = c4.date_input("From", value=max(fy_start.date(), lo),
+                           min_value=lo, max_value=hi, key=f"{key}_from")
+    f_to = c5.date_input("To", value=hi, min_value=lo, max_value=hi,
+                         key=f"{key}_to")
+    top = c6.number_input("Keep only the top N rows (0 = all)", 0, 5000, 0,
+                          step=25, key=f"{key}_top")
+
+    filters = {}
+    with st.expander("Narrow it down (optional)"):
+        pick = st.multiselect("Filter on", F["cats"], key=f"{key}_fdims")
+        for dim in pick:
+            import pivot as _PV
+            tmp = (_PV._pf_prepare(df) if feed == "portfolio" else df.copy())
+            col, _o = _PV._dim(tmp, dim, "_x")
+            vals = sorted({str(v) for v in tmp[col].dropna().unique()})
+            got = st.multiselect(dim, vals, key=f"{key}_f_{dim}")
+            if got:
+                filters[dim] = got
+
+    if feed == "vfl" and "Discount %" in meas:
+        st.warning(
+            "**Discount % is a flag here, not a depth.** `Promotion Amount` has "
+            "equalled the bill amount since June and menswear has never carried "
+            "one, so read it as *whether* a promotion was recorded, not how deep "
+            "it was.")
+    cov = PV.coverage(df, feed)
+    thin = [m for m in meas if cov.get(m, 1) < 0.5]
+    if thin:
+        st.info("Sparsely recorded in this feed, so a small total is probably "
+                "missing data rather than a small number: "
+                + ", ".join(f"**{m}** ({cov[m]:.0%} of rows)" for m in thin))
+
+    if not rows or not meas:
+        st.info("Pick at least one row field and one measure.")
+        return
+
+    try:
+        frame, meta = PV.build(
+            df, feed=feed, rows=rows, cols=None if across == "(none)" else across,
+            measures=meas, date_from=f_from, date_to=f_to, filters=filters,
+            top=int(top) or None)
+    except Exception as e:                       # surface, never crash the tab
+        st.error(f"Could not build that table: {e}")
+        return
+    if frame.empty:
+        st.info(meta.get("note", "Nothing matches that selection."))
+        return
+
+    st.caption(f"**{len(frame):,} rows × {len(frame.columns)} columns** · "
+               f"{meta['span']} · built from {meta['rows_out']:,} source rows"
+               + (" · " + " · ".join(meta["filters"]) if meta["filters"] else ""))
+    st.dataframe(frame, use_container_width=True, hide_index=True, height=420)
+
+    name = " by ".join([", ".join(rows)] + ([across] if across != "(none)" else []))
+    title = f"{'VFL' if feed == 'vfl' else 'Portfolio'} — {name}"
+    meta["about"] = {
+        "Feed": "VFL (bill lines)" if feed == "vfl" else "Portfolio (day x store)",
+        "Rows": ", ".join(rows),
+        "Across the top": across if across != "(none)" else "(none)",
+        "Measures": ", ".join(meas),
+        "Period": meta["span"],
+        "Filters": "; ".join(meta["filters"]) or "(none)",
+        "Source rows used": f"{meta['rows_out']:,} of {meta['rows_in']:,}",
+        "Built": f"{pd.Timestamp.now():%d %b %Y %H:%M}",
+        "Note": ("Ratios are re-derived at every level, so a total is not the "
+                 "sum of the ratios above it."),
+    }
+    payload = PV.to_excel(frame, meta, title=title,
+                          subtitle=f"Measures: {', '.join(meas)}")
+    st.download_button(
+        "⬇ Download (Excel)", payload, use_container_width=True, type="primary",
+        file_name=f"{title} {pd.Timestamp(asof):%d-%m-%Y}.xlsx".replace("/", "-"),
+        mime=("application/vnd.openxmlformats-officedocument"
+              ".spreadsheetml.sheet"),
+        key=f"{key}_dl")
+
+
 # ---- Top-level data mode: whole-Portfolio breadth vs VFL depth ----
 _MODE_VFL, _MODE_PORTFOLIO = "🔷 VFL", "🌐 Portfolio"
 _mode = st.sidebar.radio(
@@ -2488,7 +2638,7 @@ _TAB_LABELS = [
     "⚖️ Gender Mix",
     "📊 Executive", "🎯 Day Targets", "🏙️ City-wise G/D", "📅 Monthly Contribution",
     "📐 Store Productivity", "Overview", "🏬 Stores",
-    "🔧 Build your view", "Trends", "Category mix", "Salespeople",
+    "🧮 Excel Builder", "🔧 Build your view", "Trends", "Category mix", "Salespeople",
     "Customers", "Colors & sizes",
 ]
 # ★ ALL OF THEM ON SCREEN (21 Aug). Twelve sections used to sit behind a "More"
@@ -2539,6 +2689,14 @@ if nav == "🗓️ Day calendar":
         df_all, date_col="date", value_col=L.COL_AMOUNT,
         store_col=L.COL_STORE_LABEL, asof=pd.Timestamp(end_d),
         key="vfl_cal", label="store", live=_live, shut=_shut)
+
+
+# =========================================================================== #
+# EXCEL BUILDER — the raw feed, pivoted into whatever a division needs
+# =========================================================================== #
+if nav == "🧮 Excel Builder":
+    render_pivot_builder(df_all, feed="vfl", key="vfl_pivot",
+                         asof=pd.Timestamp(end_d))
 
 
 # =========================================================================== #
