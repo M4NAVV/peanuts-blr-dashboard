@@ -56,6 +56,24 @@ def in_degrowth(r):
     return g is not None and not pd.isna(g) and g < 0
 
 
+def ttm_gd(ttm, ly_full, ty):
+    """TTM measured against last year's WHOLE run-up.
+
+    ★ THE BASE IS THE WHOLE WINDOW, not the days elapsed, because TTM is a
+    whole-window figure. `ttm - ly_full` reduces exactly to `ty - ly`, so this
+    is the SAME GAIN as the G/D beside it over a bigger base — it must read
+    closer to flat mid-season, and the gap closes as the run-up runs. Reading
+    both: we are up this much on the days traded, and the season lands up this
+    much if the days still to come repeat last year.
+
+    ★ A STORE WITH NO LAST YEAR SAYS SO. An empty cell beside a -100% reads as
+    a zero, and a new store has no growth to state — it can only be new.
+    """
+    if ly_full:
+        return (ttm - ly_full) / ly_full * 100
+    return "new" if ty else ""
+
+
 def _hh(f):
     a, b = f.getmetrics()
     return a + b
@@ -231,7 +249,10 @@ def table_image(df, spec, width, font_px=26, bar_col=None, bar_label="",
         if kind == "money":
             return money(v)
         if kind in ("pct", "gd"):
-            return f"{v:,.1f}%"
+            # ★ A G/D CELL MAY HOLD A WORD. A store with no last year has no
+            # growth to state, and printing an empty cell beside a -100% reads
+            # as zero; it says `new` instead. Numbers still format as numbers.
+            return f"{v:,.1f}%" if isinstance(v, (int, float)) else str(v)
         if kind == "int":
             return f"{int(v):,}"
         return str(v)
@@ -349,7 +370,8 @@ def table_image(df, spec, width, font_px=26, bar_col=None, bar_label="",
                 # the row; a growth speaks for itself.
                 if k == "gd" and txt[i][j]:
                     val = src.get(c)
-                    if val is not None and not pd.isna(val):
+                    # `new` is not a growth and gets neither ink
+                    if isinstance(val, (int, float)) and not pd.isna(val):
                         ink = BAD if val < 0 else (GOOD if val > 0 else PP.INK)
                 if k == "text":
                     _text(d, (x + pad_x, y + pad_y), txt[i][j], f, ink)
@@ -813,12 +835,16 @@ def build(pf, w, basis_label="", vfl=False):
         # to disagree — which they could the moment the closed-store rule or the
         # membership test moved on one side only. See [[feedback-same-estate]].
         l2l_ttm = float(f.loc[f["l2l"], "ttm"].sum())
+        l2l_ttm_gd = ttm_gd(l2l_ttm, fig["ly_full"], fig["ty"])
         one.put(SN._cards_image([
             ("Not comparable — this year", "Rs " + money(oth["ty"])),
             ("Held out — new, South, closed", f"{len(f) - n_l2l} stores"),
             ("Last year's run-up, comparable", "Rs " + money(fig["ly_full"])),
             (f"Full run-up, TTM {w.tenure}D",
-             "Rs " + money(l2l_ttm) if started else "—"),
+             (f"Rs {money(l2l_ttm)}"
+              + (f"   {l2l_ttm_gd:+,.1f}%"
+                 if isinstance(l2l_ttm_gd, float) else ""))
+             if started else "—"),
             ("Closed stores took", "Rs " + money(oth["ly_full"])),
         ], W, label_px=25, value_px=42), gap=18)
         one.put(A4._text_block(W, [(
@@ -920,6 +946,7 @@ def build(pf, w, basis_label="", vfl=False):
                            "gd": (None if not r["ly"]
                                   else (r["ty"] - r["ly"]) / r["ly"] * 100),
                            "ly_full": r["ly_full"], "ttm": r["ttm"],
+                           "ttm_gd": ttm_gd(r["ttm"], r["ly_full"], r["ty"]),
                            "why": r.get("why", ""),
                            "share": (r["ty"] / frame["ty"].sum() * 100
                                      if frame["ty"].sum() else None)})
@@ -931,7 +958,10 @@ def build(pf, w, basis_label="", vfl=False):
                           (frame["ty"].sum() - frame["ly"].sum())
                           / frame["ly"].sum() * 100),
                    "ly_full": frame["ly_full"].sum(),
-                   "ttm": frame["ttm"].sum(), "share": 100.0}
+                   "ttm": frame["ttm"].sum(),
+                   "ttm_gd": ttm_gd(frame["ttm"].sum(), frame["ly_full"].sum(),
+                                    frame["ty"].sum()),
+                   "share": 100.0}
             sp = [("store", "text", "STORE"), ("loc", "text", "LOCATION"),
                   ("ty", "money", "THIS YEAR"), ("ty", "bar", "SHARE"),
                   ("share", "pct", "% OF\nSET")]
@@ -940,14 +970,15 @@ def build(pf, w, basis_label="", vfl=False):
             # groups are never added across — the same separation the rollups
             # keep. Manav, 21 Sep: this year's traded days plus last year's days
             # still to come, over the tenure this sheet reports, not 12 months.
-            _ttm = ("ttm", "money", f"TTM\n{w.tenure}D")
+            _ttm = [("ttm", "money", f"TTM\n{w.tenure}D"),
+                    ("ttm_gd", "gd", f"G/D\nTTM {w.tenure}D")]
             if reason:
                 sp += [("why", "text", "HELD OUT\nBECAUSE"),
-                       ("ly_full", "money", "LY FULL\nRUN-UP"), _ttm]
+                       ("ly_full", "money", "LY FULL\nRUN-UP")] + _ttm
             else:
                 sp += [("ly", "money", "LAST YEAR"),
                        ("delta", "money", "CHANGE"), ("gd", "gd", "G/D"),
-                       ("ly_full", "money", "LY FULL\nRUN-UP"), _ttm]
+                       ("ly_full", "money", "LY FULL\nRUN-UP")] + _ttm
             sh = A4._Sheet(w.label, asof, "", bounded=False, footer=True)
             sh.put(A4._heading(W, title, sub), gap=18)
             sh.put(table_image(rs, sp, W, font_px=24, bar_col="ty",
@@ -973,8 +1004,11 @@ def build(pf, w, basis_label="", vfl=False):
                            f"{w.festival} — not comparable",
                            f"{len(s_oth)} stores held out of the comparison  ·  "
                            f"any store with no last year, plus every store "
-                           f"that has closed  ·  a G/D is not shown "
-                           f"because there is nothing to compare against",
+                           f"that has closed  ·  the only G/D here is on TTM, "
+                           f"against last year's WHOLE run-up — so a closed "
+                           f"store reads its loss in full, and a store with no "
+                           f"last year reads new because it has no growth to "
+                           f"state",
                            reason=True)
         # ★ THE ROLLUPS COVER THE WHOLE ESTATE, with the three sets as
         # columns. Built from `s` and not from `s_l2l`, so South is present.

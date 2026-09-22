@@ -366,15 +366,20 @@ _MONEY_COLS = ("Sum of YTD_LY", "Sum of YTD_TY", "Sum of DAY SALE FIGURE",
 # so `_sheet_image` tests this prefix alongside `_MONEY_COLS`.
 # See [[feedback-declare-numeric-columns]].
 _TTM_PREFIX = "Sum of TTM "
+_TTM_GD_PREFIX = "Sum of GDTTM "
 
 
 def ttm_col(w: Window) -> str:
     return f"{_TTM_PREFIX}{w.tenure}D"
 
 
+def ttm_gd_col(w: Window) -> str:
+    return f"{_TTM_GD_PREFIX}{w.tenure}D"
+
+
 def _with_ttm(cols, w: Window) -> list:
-    """The workbook's columns, verbatim, with TTM appended last."""
-    return list(cols) + [ttm_col(w)]
+    """The workbook's columns, verbatim, with TTM and its G/D appended last."""
+    return list(cols) + [ttm_col(w), ttm_gd_col(w)]
 
 GD_COLS = ["NEW/OLD", "STORE NAME", "LOCATION", "CLOSED", "DOO",
            "Sum of YTD_LY", "Sum of YTD_TY", "Sum of GDYTD",
@@ -418,6 +423,17 @@ def _fill_figures(row, t):
     for k in row:
         if str(k).startswith(_TTM_PREFIX):
             row[k] = t["ttm"]
+        elif str(k).startswith(_TTM_GD_PREFIX):
+            # ★ THE WORKBOOK'S CONVENTION, the same one `Sum of GDYTD` uses on
+            # the column beside it: this year as a PERCENTAGE of last year, so
+            # 100 is flat. A true growth rate here would put two columns headed
+            # G/D on one sheet meaning different things.
+            #
+            # ★ AND THE BASE IS LAST YEAR'S WHOLE WINDOW, because TTM is a
+            # whole-window figure. `ttm - ly_full` reduces exactly to
+            # `ty - ly`, so this is the same gain as GDYTD measured against a
+            # bigger base — it must read closer to flat, and that is not a bug.
+            row[k] = _gd_pct(t["ttm"], t["ly_full"])
     return row
 
 

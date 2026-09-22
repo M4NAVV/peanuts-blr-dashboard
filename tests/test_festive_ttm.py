@@ -93,10 +93,11 @@ def test_a_window_that_has_not_opened_has_no_ttm():
 # --------------------------------------------------------------------------- #
 @pytest.mark.parametrize("build", ["gd_report", "brand_report", "location_report"])
 def test_every_sheet_carries_the_column_last(build):
+    """TTM closes the sheet, with its own G/D immediately after it."""
     w = _w()
     f = pd.DataFrame([_row(ty=500.0, ly=300.0, ly_full=1000.0)])
     rep, _ = getattr(F, build)(f, w)
-    assert rep.columns[-1] == "Sum of TTM 45D"
+    assert list(rep.columns[-2:]) == ["Sum of TTM 45D", "Sum of GDTTM 45D"]
 
 
 def test_the_header_names_its_own_window_so_it_cannot_read_as_twelve_months():
@@ -136,7 +137,7 @@ def test_the_existing_columns_are_untouched():
     w = _w()
     f = pd.DataFrame([_row(ty=500.0, ly=300.0, ly_full=1000.0)])
     rep, _ = F.gd_report(f, w)
-    assert list(rep.columns[:-1]) == F.GD_COLS
+    assert list(rep.columns[:-2]) == F.GD_COLS
 
 
 # --------------------------------------------------------------------------- #
@@ -149,12 +150,14 @@ def test_both_store_sheets_of_the_pack_carry_the_column():
     import inspect
     import festive_admin as FADM
     src = inspect.getsource(FADM.build)
-    assert '_ttm = ("ttm", "money", f"TTM\\n{w.tenure}D")' in src
+    assert '("ttm", "money", f"TTM\\n{w.tenure}D")' in src
+    assert '("ttm_gd", "gd", f"G/D\\nTTM {w.tenure}D")' in src
     # fed on every row and on the section total, not just declared
     assert '"ttm": r["ttm"]' in src
     assert '"ttm": frame["ttm"].sum()' in src
+    assert '"ttm_gd": ttm_gd(r["ttm"], r["ly_full"], r["ty"])' in src
     # both sheets: the held-out one and the comparable one
-    assert src.count("_ttm]") == 2
+    assert src.count("] + _ttm") == 2
 
 
 def test_the_pack_reads_ttm_off_the_figures_both_feeds_build():
@@ -177,4 +180,77 @@ def test_the_page_one_card_is_summed_off_the_same_rows_as_the_store_sheet():
     assert 'l2l_ttm = float(f.loc[f["l2l"], "ttm"].sum())' in src
     assert 'f"Full run-up, TTM {w.tenure}D"' in src
     # and it says "—" rather than a figure before the run-up opens
-    assert '"Rs " + money(l2l_ttm) if started else "—"' in src
+    assert 'if started else "—"' in src
+
+
+# --------------------------------------------------------------------------- #
+# The G/D on TTM — the whole run-up against last year's whole run-up
+# --------------------------------------------------------------------------- #
+def test_ttm_gd_is_measured_against_last_years_whole_window():
+    import festive_admin as FADM
+    assert FADM.ttm_gd(ttm=110.0, ly_full=100.0, ty=50.0) == pytest.approx(10.0)
+
+
+def test_ttm_gd_carries_the_same_gain_as_todays_gd_over_a_bigger_base():
+    """`ttm - ly_full` reduces exactly to `ty - ly`, so the two G/Ds differ
+    only in what they divide by. TTM's must read closer to flat mid-window —
+    that is arithmetic, not a bug, and the pack says so on its face."""
+    import festive_admin as FADM
+    w = _w(tenure=45, elapsed=16)
+    ty, ly, ly_full = 500.0, 300.0, 1000.0
+    t = F.ttm(ty, ly, ly_full, None, w)
+    assert t - ly_full == ty - ly
+    today = (ty - ly) / ly * 100
+    whole = FADM.ttm_gd(t, ly_full, ty)
+    assert whole == pytest.approx((t - ly_full) / ly_full * 100)
+    assert abs(whole) < abs(today)
+
+
+def test_a_store_with_no_last_year_says_new_rather_than_showing_a_blank():
+    """A blank beside a -100% reads as a zero."""
+    import festive_admin as FADM
+    assert FADM.ttm_gd(ttm=800.0, ly_full=0.0, ty=800.0) == "new"
+    assert FADM.ttm_gd(ttm=0.0, ly_full=0.0, ty=0.0) == ""
+
+
+def test_a_closed_store_reads_its_loss_in_full():
+    """It gets no tail, so against last year's whole run-up it is -100%."""
+    import festive_admin as FADM
+    assert FADM.ttm_gd(ttm=0.0, ly_full=964116.0, ty=0.0) == pytest.approx(-100.0)
+
+
+def test_a_word_in_a_gd_cell_neither_crashes_nor_takes_the_growth_ink():
+    """`gd` cells assumed a number before `new` could appear in one."""
+    import festive_admin as FADM
+    import inspect
+    src = inspect.getsource(FADM.table_image)
+    assert 'if isinstance(v, (int, float)) else str(v)' in src
+    assert 'if isinstance(val, (int, float)) and not pd.isna(val):' in src
+
+
+@pytest.mark.parametrize("build", ["gd_report", "brand_report", "location_report"])
+def test_the_workbook_sheets_keep_their_own_percentage_convention(build):
+    """`Sum of GDYTD` is this year as a PERCENTAGE of last year, 100 = flat —
+    not a growth rate. Two columns headed G/D on one sheet must not mean two
+    different things, so TTM's follows it."""
+    w = _w()
+    f = pd.DataFrame([_row(ty=500.0, ly=300.0, ly_full=1000.0)])
+    rep, _ = getattr(F, build)(f, w)
+    assert list(rep.columns[-2:]) == ["Sum of TTM 45D", "Sum of GDTTM 45D"]
+    # 1200 of 1000 = 120.00, in the workbook's convention, not "+20.0%"
+    assert rep["Sum of GDTTM 45D"].iloc[0] == "120.00"
+
+
+def test_the_workbook_sheet_says_new_where_there_is_no_last_year():
+    w = _w()
+    f = pd.DataFrame([_row(ty=800.0, ly=0.0, ly_full=0.0)])
+    rep, _ = F.gd_report(f, w)
+    assert rep["Sum of GDTTM 45D"].iloc[0] == "new"
+
+
+def test_the_page_one_card_shows_the_growth_beside_the_landing_figure():
+    import inspect
+    import festive_admin as FADM
+    src = inspect.getsource(FADM.build)
+    assert 'l2l_ttm_gd = ttm_gd(l2l_ttm, fig["ly_full"], fig["ty"])' in src
+    assert 'f"   {l2l_ttm_gd:+,.1f}%"' in src
