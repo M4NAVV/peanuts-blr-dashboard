@@ -221,19 +221,32 @@ def discover(svc):
                     "region": region, "store_code": code, "pr": pr,
                     "folder": entry["name"], "name": f["name"], "id": f["id"],
                     "kind": "parking" if "parking" in low else "alter",
-                    "modified": f["modifiedTime"][:10]})
+                    "modified": f["modifiedTime"]})
     return sources, loose, folders
 
 
-def fetch(svc, fid, dest: Path):
+def fetch(svc, fid, dest: Path, modified: str = ""):
+    """Download, unless the copy on disk is already this version.
+
+    ★ DRIVE'S OWN `modifiedTime` IS THE CACHE KEY. Re-downloading thirteen
+    unchanged workbooks cost 31 seconds on every read — which is most of the
+    time the tab took, spent fetching bytes we already had. A store that has
+    not typed anything since the last read is now free.
+    """
     from googleapiclient.http import MediaIoBaseDownload
     dest.parent.mkdir(parents=True, exist_ok=True)
+    stamp = dest.with_suffix(".stamp")
+    if modified and dest.exists() and stamp.exists() \
+            and stamp.read_text().strip() == modified:
+        return dest
     req = svc.files().get_media(fileId=fid, supportsAllDrives=True)
     with open(dest, "wb") as fh:
         dl = MediaIoBaseDownload(fh, req)
         done = False
         while not done:
             _status, done = dl.next_chunk()
+    if modified:
+        stamp.write_text(modified)
     return dest
 
 
@@ -274,7 +287,21 @@ def last_problem() -> str:
     return _LAST_PROBLEM
 
 
-def load(cache_dir="data/tailoring/cache"):
+def registry():
+    """(sources, loose, folders) — the folder tree, which almost never moves.
+
+    ★ CACHED SEPARATELY FROM THE FILES. Walking two drives is ~24 API calls and
+    was the whole remaining cost of a read once downloads became conditional.
+    A store is added perhaps twice a year; a store types into its book every
+    day. The two deserve different lifetimes.
+    """
+    key = creds_path()
+    if not Path(key).exists():
+        raise FileNotFoundError(key)
+    return discover(drive(key))
+
+
+def load(cache_dir="data/tailoring/cache", reg=None):
     """(frame, notes, folders, sources). Everything, from Drive, parsed.
 
     ★ IT NEVER RAISES INTO THE PAGE. A missing key, an unreachable Drive or a
@@ -291,7 +318,7 @@ def load(cache_dir="data/tailoring/cache"):
         return pd.DataFrame(), [_LAST_PROBLEM], [], []
     try:
         svc = drive(key)
-        sources, loose, folders = discover(svc)
+        sources, loose, folders = reg if reg is not None else discover(svc)
     except Exception as e:                       # network, auth, API
         _LAST_PROBLEM = f"could not read Drive ({type(e).__name__}: {e})"
         return pd.DataFrame(), [_LAST_PROBLEM], [], []
@@ -301,7 +328,7 @@ def load(cache_dir="data/tailoring/cache"):
     for s in sources:
         local = cache / f"{s['store_code']}_{s['kind']}_{s['id'][:8]}.xlsx"
         try:
-            fetch(svc, s["id"], local)
+            fetch(svc, s["id"], local, s.get("modified", ""))
         except Exception as e:
             notes.append(f"{s['store_code']}/{s['kind']}: download failed ({e})")
             continue

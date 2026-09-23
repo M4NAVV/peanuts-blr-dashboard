@@ -165,3 +165,50 @@ def test_the_folder_name_is_the_store_master():
     ])
     assert got[107] == "Grand Kamraj"
     assert "AGARTALA" in got[91].upper()
+
+
+# --------------------------------------------------------------------------- #
+# In the VFL reports pack
+# --------------------------------------------------------------------------- #
+def _app():
+    from pathlib import Path
+    return Path("app.py").read_text()
+
+
+def test_the_report_is_offered_in_the_vfl_pack():
+    src = _app()
+    assert 'picked["alterations"] = st.checkbox(' in src
+    assert '"alterations" in chosen' in src
+
+
+def test_the_helper_is_defined_before_the_pack_uses_it():
+    """Streamlit runs the file top to bottom; a helper defined after the pack
+    would work on the tab and raise a NameError only when somebody generated
+    the zip."""
+    src = _app().splitlines()
+    define = next(i for i, l in enumerate(src) if l.startswith("def _tailoring()"))
+    use = [i for i, l in enumerate(src) if "_tailoring()" in l and not l.startswith("def")]
+    assert use and min(use) > define
+
+
+def test_a_drive_failure_does_not_take_the_whole_pack_down():
+    """★ This is the only report here that reads Drive rather than the feed, so
+    it is the only one that can fail for a reason outside this dashboard. The
+    other reports must still build."""
+    src = _app()
+    i = src.index('"alterations" in chosen')
+    block = src[i:i + 1200]
+    assert "if _tf.empty:" in block and "st.warning(" in block
+    assert "last_problem()" in block
+
+
+def test_the_pdf_builds_from_an_empty_estate_without_raising():
+    """A pack generated before any store has typed anything must still produce
+    a page, not a stack trace."""
+    import tailoring_pdf as TP
+    empty = pd.DataFrame(columns=["store_code", "kind", "date", "bill_no",
+                                  "billed", "due", "due_paid", "total",
+                                  "cash", "card_upi", "done_by", "source_id"])
+    empty["date"] = pd.to_datetime(empty["date"])
+    name, payload, pages = TP.build(empty, [], [], asof="2026-09-23")
+    assert payload and pages >= 1 and name.endswith(".pdf")

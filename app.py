@@ -2695,13 +2695,28 @@ if nav == "🗓️ Day calendar":
 # =========================================================================== #
 # ALTERATIONS & PARKING — the store-kept workbooks in Drive
 # =========================================================================== #
+@st.cache_data(ttl=86400, show_spinner=False)
+def _tailoring_registry():
+    """Which store folder holds which workbook. A store is added maybe twice a
+    year, so this is walked once a day and not on every read."""
+    import tailoring as TLR
+    return TLR.registry()
+
+
 @st.cache_data(ttl=3600, show_spinner=False)
 def _tailoring():
-    """Read every store's workbook. Cached for an hour — the stores type into
-    them through the day, so this is never more than an hour behind them, and a
-    page load never waits on thirteen downloads."""
+    """Read every store's workbook, hourly.
+
+    ★ ONLY WHAT CHANGED IS DOWNLOADED — Drive's own `modifiedTime` is the cache
+    key, so a store that has not typed since the last read costs nothing. The
+    stores enter bills through the day; an hour behind them is close enough,
+    and a page load never waits on thirteen downloads."""
     import tailoring as TLR
-    return TLR.load()
+    try:
+        reg = _tailoring_registry()
+    except Exception:
+        reg = None                 # no credentials: load() says so properly
+    return TLR.load(reg=reg)
 
 
 if nav == "✂️ Alterations":
@@ -3299,6 +3314,15 @@ if nav == "📄 REPORTS PDF":
                  "and sets their name in gold; anybody whose year is zero or "
                  "negative is in red. One page whatever the size of the team. "
                  "Full estate, never the sidebar filters.")
+        picked["alterations"] = st.checkbox(
+            "Parking & alteration charges  ·  one page",
+            key="vrp_alter",
+            help="What the stores' own alteration and parking books hold — "
+                 "store by store on the day, the month and the year, then "
+                 "split South against East & NE. Typed by hand in Drive, so "
+                 "the page also names any store that has not written in its "
+                 "book for over a week: a zero there is a book nobody opened, "
+                 "not a day nobody took money.")
 
     with c2:
         st.markdown("**Festive run-ups**")
@@ -3379,6 +3403,22 @@ if nav == "📄 REPORTS PDF":
                         import festive_admin as FADM
                         built.append(FADM.build(
                             df_exec, _w, basis_label=p_basis, vfl=True))
+                if "alterations" in chosen:
+                    _prog.step("Parking & alterations")
+                    # ★ IT READS DRIVE, NOT THE FEED, so it is the one report
+                    # here that can fail for a reason outside this dashboard —
+                    # a missing credential, an unshared folder. It says which,
+                    # in the pack's own warning line, and the other reports
+                    # still build. See [[feedback-silent-failure-must-speak]].
+                    import tailoring as TLR
+                    import tailoring_pdf as TLRPDF
+                    _tf, _tn, _tfold, _ = _tailoring()
+                    if _tf.empty:
+                        st.warning("Parking & alterations: "
+                                   + (TLR.last_problem() or "no rows were read"))
+                    else:
+                        built.append(TLRPDF.build(_tf, _tfold, _tn,
+                                                  asof=p_asof)[:2])
                 _prog.done("Packaging…")
                 name, payload, mime = RTD.bundle(
                     built, zip_name=f"VFL REPORTS {p_asof:%d-%m-%Y}.zip")
