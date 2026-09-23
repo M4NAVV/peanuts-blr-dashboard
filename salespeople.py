@@ -121,6 +121,17 @@ def store_table(L, df, asof, store):
     for t in ("d", "m", "q", "y"):
         b = float(_sb.get(t) or k[f"{t}_bills"].sum())
         tot[f"{t}_sales"] = float(k[f"{t}_sales"].sum())
+        # ★ UNITS ARE A PLAIN SUM, AND WERE SIMPLY MISSING (23 Sep). The key
+        # was never set, so `_detail_frame`'s `.get(..., 0.0)` printed a zero:
+        # every team sheet has gone out reporting 0 pieces for the day, the
+        # month and the year while the columns above it were full.
+        #
+        # ★ A sum is right here where it is wrong for BILLS. A bill with two
+        # salespeople on it is ONE bill for the store, which is why `b` comes
+        # from `store_bills` — but its PIECES are attributed line by line, so
+        # they add up. Checked against the feed before trusting it: Jayanagar
+        # 24 / 1,278 / 10,797, matching to the piece.
+        tot[f"{t}_units"] = float(k[f"{t}_units"].sum())
         tot[f"{t}_abv"] = tot[f"{t}_sales"] / b if b else 0.0
         tot[f"{t}_abs"] = float((k[f"{t}_abs"] * k[f"{t}_bills"]).sum()) / b if b else 0.0
         tot[f"{t}_single"] = float((k[f"{t}_single"] * k[f"{t}_bills"]).sum()) / b if b else 0.0
