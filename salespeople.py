@@ -1075,10 +1075,17 @@ def detailed_sheet(L, df, asof, store, code=None):
         _colbg = {j: _band[c.split()[0]] for j, c in enumerate(_D_ORDER)
                   if c.split()[0] in _band}
 
-        # ★ AND THE TWO ROW STATES. "Sold nothing" is judged on the YEAR, not
-        # the day or the month: somebody who simply did not work yesterday is
-        # not idle, and greying them for it would be wrong on most of the team
-        # most mornings.
+        # ★ AND THE TWO ROW STATES. The WHOLE LINE goes red only on the YEAR:
+        # somebody who simply did not work yesterday is not idle, and reddening
+        # the row for it would be wrong on most of the team most mornings.
+        #
+        # ★★ THE DAY AND THE MONTH ARE MARKED PER CELL (Manav, 23 Sep:
+        # *"anybody with zero sales for the day, month or year is also
+        # highlighted red"*). Measured on this sheet before choosing the shape:
+        # only SIX of the 27 sold anything on 21 Sep, so a whole-line rule
+        # would have reddened TWENTY-ONE ROWS and the marker would have stopped
+        # meaning anything. The zero itself is reddened instead — the same rule
+        # he asked for, in the only form that survives a Monday.
         #
         # ★★ ZERO SALES MEANS ZERO SALES, NOT ZERO ACTIVITY. A first pass also
         # demanded zero BILLS and nobody was marked — Ganesh Chandrakant Palke
@@ -1097,9 +1104,24 @@ def detailed_sheet(L, df, asof, store, code=None):
             elif id(r) in won:
                 _ink[i] = _INK_STAR
 
+        # ★★ AND THE DAY AND THE MONTH, PER CELL (Manav, 23 Sep: *"anybody
+        # with zero sales for the day, month or year is also highlighted
+        # red"*). Measured on this sheet before choosing the shape: only SIX of
+        # the 27 sold anything on 21 Sep, so reddening the whole LINE for a
+        # zero day would have marked twenty-one rows and the colour would have
+        # stopped meaning anything. The zero itself is reddened instead — his
+        # rule, in the only form that survives a Monday.
+        #
+        # Restricted to `person` rows so it stays off the yellow total, where a
+        # red figure reads as an error rather than as a fact.
+        _dead = (lambda v: v <= 0)
+        _cell_rules = tuple((c, _dead, _INK_DEAD, ("person",))
+                            for c in ("DAY SALES", "MTD SALES", "YTD SALES"))
+
         _wm = A4._widen(m, W)
         _body = PP._render_chunk(_wm, ptypes, list(range(len(disp))),
-                                 col_bg=_colbg, row_ink=_ink)
+                                 col_bg=_colbg, row_ink=_ink,
+                                 cell_rules=_cell_rules)
         _draw_stars(_body, _wm, [id(r) in won for r in people] + [False])
         sheet.put(_body, gap=20)
         out = sheet.pdf()
