@@ -1115,7 +1115,9 @@ def detailed_sheet(L, df, asof, store, code=None):
         # Restricted to `person` rows so it stays off the yellow total, where a
         # red figure reads as an error rather than as a fact.
         _dead = (lambda v: v <= 0)
-        _cell_rules = tuple((c, _dead, _INK_DEAD, ("person",))
+        # Colour only — see the note in `_render_chunk`. Bolding every zero in
+        # three columns made the page read as heavy; the red already carries it.
+        _cell_rules = tuple((c, _dead, _INK_DEAD, ("person",), False)
                             for c in ("DAY SALES", "MTD SALES", "YTD SALES"))
 
         _wm = A4._widen(m, W)

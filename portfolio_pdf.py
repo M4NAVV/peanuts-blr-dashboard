@@ -392,12 +392,23 @@ def _render_chunk(m, row_types, rows, row_bg=None, cell_rules=(),
             # coloured — it has to read at a glance on a phone.
             # Conditional formatting and negative figures both colour the TEXT
             # rather than filling the cell — see NEG_INK.
-            for rcol, test, ink, rtypes in cell_rules:
+            # ★ A RULE MAY COLOUR WITHOUT BOLDING. The workbook convention is
+            # that a conditional figure is emphasised as well as tinted, and
+            # that is right when a handful of cells qualify. It is wrong when
+            # many do: the team sheet reddens every zero in three columns, and
+            # bolding all of them made a 300 ppi page read as muddy — the
+            # weight, not the resolution. A fifth element opts out; four-tuples
+            # behave exactly as before.
+            for rule in cell_rules:
+                rcol, test, ink, rtypes = rule[:4]
+                emphasise = rule[4] if len(rule) > 4 else True
                 if c != rcol or (rtypes is not None and t not in rtypes):
                     continue
                 v = m["raw"][i][j]
                 if v is not None and not pd.isna(v) and test(float(v)):
-                    color, f = ink, bold
+                    color = ink
+                    if emphasise:
+                        f = bold
             if c in sign and s not in ("", "—"):
                 if s.lstrip().startswith("-"):
                     color, f = NEG_INK, bold
