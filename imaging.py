@@ -15,6 +15,7 @@ app script would be recreated each time and protect nothing).
 from __future__ import annotations
 
 import io
+import contextlib
 import os
 import threading
 from functools import lru_cache
@@ -51,6 +52,28 @@ _WEIGHT_REG, _WEIGHT_EMPH = "Regular", "SemiBold"
 
 
 @lru_cache(maxsize=16)
+@contextlib.contextmanager
+def weights(regular: str, emphasis: str):
+    """Temporarily change the two faces every report draws with.
+
+    ★ SCOPED, NOT GLOBAL. `_WEIGHT_REG` is shared by every PDF the dashboard
+    makes — the A4 briefing, the festive packs, the G/D sheets — so a sheet
+    that wants more weight borrows it for its own render and hands it back.
+    Changing the module constant would silently restyle the whole estate.
+
+    ★ AND BOTH MOVE TOGETHER. Lifting the body to Medium while emphasis stayed
+    SemiBold would leave one step between them where there had been two, and
+    the total rows would stop standing out.
+    """
+    global _WEIGHT_REG, _WEIGHT_EMPH
+    was = _WEIGHT_REG, _WEIGHT_EMPH
+    _WEIGHT_REG, _WEIGHT_EMPH = regular, emphasis
+    try:
+        yield
+    finally:
+        _WEIGHT_REG, _WEIGHT_EMPH = was
+
+
 def _fonts(size: int = 22):
     """(regular, emphasis) at `size`. Two independent font objects — a variation
     is set on the instance, so they must not be shared."""

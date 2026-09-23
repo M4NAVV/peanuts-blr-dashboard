@@ -979,6 +979,15 @@ def detailed_sheet(L, df, asof, store, code=None):
     people = sorted(people, key=lambda r: str(r["who"]).upper())
     _day, _pm = meta.get("day"), meta.get("prev_month")
 
+    # ★ A LITTLE MORE WEIGHT, JUST HERE (Manav, 23 Sep: *"the font weight is
+    # too light, can u bolden it a little, not too much"*). Noto Sans is a
+    # variable font, so this is one named step — Regular to Medium — not a
+    # thicker fake. Emphasis moves with it so the total row keeps its
+    # separation. Borrowed for this render only and handed back in `finally`:
+    # the weight is shared by every PDF the dashboard makes.
+    import imaging as _IM
+    _weights = _IM.weights("Medium", "Bold")
+    _weights.__enter__()
     _keep = (A4.MARGIN, A4.CONTENT_W, PP.PAD_Y)
     A4.MARGIN = A4.PRINT_MARGIN
     A4.CONTENT_W = A4.PAGE_W - 2 * A4.MARGIN
@@ -1129,6 +1138,7 @@ def detailed_sheet(L, df, asof, store, code=None):
         out = sheet.pdf()
         npages = len(sheet.pages)
     finally:
+        _weights.__exit__(None, None, None)
         A4.MARGIN, A4.CONTENT_W, PP.PAD_Y = _keep
 
     tag = f"{code}_" if code is not None else ""
