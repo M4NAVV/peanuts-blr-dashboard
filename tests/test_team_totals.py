@@ -99,3 +99,53 @@ def test_every_displayed_measure_is_present_on_the_total():
     for key, _label in SP._MEASURES:
         for period, _tag in SP._PERIODS:
             assert f"{period}_{key}" in total, f"{period}_{key} missing"
+
+
+# --------------------------------------------------------------------------- #
+# The font-weight context the detailed sheet borrows
+# --------------------------------------------------------------------------- #
+def test_the_weight_context_can_be_entered_more_than_once():
+    """★ THE REGRESSION. `weights` was accidentally given `_fonts`'s
+    `@lru_cache` — inserting a function directly above another one put it
+    between that function and its decorator. A cached context manager returns
+    the SAME object every time, and a contextlib one is single-use, so the
+    first store built and every store after it died with
+    `'_GeneratorContextManager' object has no attribute 'args'`."""
+    import imaging as IM
+    a, b = IM.weights("Medium", "Bold"), IM.weights("Medium", "Bold")
+    assert a is not b
+    for cm in (a, b):
+        with cm:
+            assert IM._WEIGHT_REG == "Medium"
+    assert IM._WEIGHT_REG == "Regular" and IM._WEIGHT_EMPH == "SemiBold"
+
+
+def test_the_weights_are_part_of_the_font_cache_key():
+    """Cached on size alone, a size already warmed outside the context would be
+    handed back at the OLD weight — the change vanishing with no error."""
+    import imaging as IM
+    outside = IM._fonts(31)[0]
+    with IM.weights("Medium", "Bold"):
+        inside = IM._fonts(31)[0]
+    assert inside is not outside
+    assert IM._fonts(31)[0] is outside          # and the cache still works
+
+
+def test_the_context_restores_the_weights_even_when_the_body_raises():
+    import imaging as IM
+    import pytest as _pt
+    with _pt.raises(ValueError):
+        with IM.weights("Medium", "Bold"):
+            raise ValueError("boom")
+    assert IM._WEIGHT_REG == "Regular"
+
+
+def test_two_detailed_sheets_can_be_built_in_one_run():
+    """`store_sheets` builds twenty in a row; anything that only works once
+    takes nineteen stores down with it."""
+    import loader as L
+    df = _feed()
+    for _ in range(2):
+        rows, types, _m = SP.store_table(L, df, pd.Timestamp("2026-09-22"),
+                                         "Jayanagar")
+        assert [t for t in types if t == "subtotal"]

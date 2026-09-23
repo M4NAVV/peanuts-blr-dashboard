@@ -51,7 +51,6 @@ _FONT_FILE = os.path.join(_FONT_DIR, "NotoSans.ttf")
 _WEIGHT_REG, _WEIGHT_EMPH = "Regular", "SemiBold"
 
 
-@lru_cache(maxsize=16)
 @contextlib.contextmanager
 def weights(regular: str, emphasis: str):
     """Temporarily change the two faces every report draws with.
@@ -74,7 +73,8 @@ def weights(regular: str, emphasis: str):
         _WEIGHT_REG, _WEIGHT_EMPH = was
 
 
-def _fonts(size: int = 22):
+@lru_cache(maxsize=64)
+def _fonts_at(size: int, regular: str, emphasis: str):
     """(regular, emphasis) at `size`. Two independent font objects — a variation
     is set on the instance, so they must not be shared."""
     def at(weight):
@@ -84,7 +84,16 @@ def _fonts(size: int = 22):
         except Exception:                     # static build / no varfont support
             pass
         return f
-    return at(_WEIGHT_REG), at(_WEIGHT_EMPH)
+    return at(regular), at(emphasis)
+
+
+def _fonts(size: int = 22):
+    """★ THE WEIGHTS ARE PART OF THE CACHE KEY. This was cached on `size`
+    alone, which was correct while there was exactly one weight pair. Once
+    `weights()` could change them, a size already cached would have been handed
+    back at the OLD weight and the change would have vanished with no error —
+    the quietest kind of wrong."""
+    return _fonts_at(int(size), _WEIGHT_REG, _WEIGHT_EMPH)
 
 
 def _hex(c: str):
