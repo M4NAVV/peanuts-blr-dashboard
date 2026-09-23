@@ -42,3 +42,8 @@ out_a4/
 
 # The year-end trial's pack is a build artefact, ~49MB, rebuilt on demand.
 YEAR END TRIAL *.zip
+
+# ★ The downloaded store workbooks and the table built from them. Revenue
+# data, and reproducible from Drive in a minute — the repo is PUBLIC, so it
+# carries the reader and never the readings.
+data/tailoring/

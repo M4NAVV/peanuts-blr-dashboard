@@ -10,3 +10,6 @@ openpyxl==3.1.5
 pillow==12.3.0
 requests==2.34.2
 pyarrow==18.1.0
+# Reads the store-kept alteration workbooks out of the Store Ops drive (read-only service account).
+google-api-python-client==2.*
+google-auth==2.*

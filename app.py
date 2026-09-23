@@ -2638,7 +2638,8 @@ _TAB_LABELS = [
     "⚖️ Gender Mix",
     "📊 Executive", "🎯 Day Targets", "🏙️ City-wise G/D", "📅 Monthly Contribution",
     "📐 Store Productivity", "Overview", "🏬 Stores",
-    "🧮 Excel Builder", "🔧 Build your view", "Trends", "Category mix", "Salespeople",
+    "🧮 Excel Builder", "✂️ Alterations", "🔧 Build your view", "Trends",
+    "Category mix", "Salespeople",
     "Customers", "Colors & sizes",
 ]
 # ★ ALL OF THEM ON SCREEN (21 Aug). Twelve sections used to sit behind a "More"
@@ -2689,6 +2690,117 @@ if nav == "🗓️ Day calendar":
         df_all, date_col="date", value_col=L.COL_AMOUNT,
         store_col=L.COL_STORE_LABEL, asof=pd.Timestamp(end_d),
         key="vfl_cal", label="store", live=_live, shut=_shut)
+
+
+# =========================================================================== #
+# ALTERATIONS & PARKING — the store-kept workbooks in Drive
+# =========================================================================== #
+@st.cache_data(ttl=3600, show_spinner=False)
+def _tailoring():
+    """Read every store's workbook. Cached for an hour — the stores type into
+    them through the day, so this is never more than an hour behind them, and a
+    page load never waits on thirteen downloads."""
+    import tailoring as TLR
+    return TLR.load()
+
+
+if nav == "✂️ Alterations":
+    import tailoring as TLR
+    st.subheader("Alterations & parking")
+    st.caption(
+        "Each store keeps its own workbook in the Store Ops drive and types "
+        "into it as alterations are booked. This reads all of them. **A figure "
+        "here is only as current as the last person to open that file** — which "
+        "is why the first table is when each store last recorded, not how much "
+        "it collected."
+    )
+    with st.spinner("Reading the store workbooks…"):
+        _tf, _tnotes, _tfolders, _tsources = _tailoring()
+
+    if _tf.empty:
+        # A feed that cannot run must say why, on the page.
+        st.error("**No alteration data could be read.** "
+                 + (TLR.last_problem() or "no workbooks returned any rows."))
+        for _n in _tnotes:
+            st.caption("· " + _n)
+    else:
+        _names = TLR.store_names(_tfolders)
+        _asof = pd.Timestamp(end_d)
+        _alt = _tf[_tf["kind"] == "alter"]
+        _park = _tf[_tf["kind"] == "parking"]
+        _fr = TLR.freshness(_tf, _asof)
+        _stale = int((_fr[_fr.kind == "alter"]["days_since"] > 7).sum())
+
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Alterations, year to date", inr(_alt["total"].sum()))
+        c2.metric("Parking", inr(_park["total"].sum()))
+        c3.metric("Stores recording", f"{_fr['store_code'].nunique()} of "
+                                      f"{len({f['store_code'] for f in _tfolders})}")
+        c4.metric("Not recorded in a week", f"{_stale}",
+                  help="A store that stopped typing reads exactly like a store "
+                       "that stopped selling. Only one is worth acting on.")
+
+        st.markdown("**When each store last recorded**")
+        _f1 = _fr.sort_values("days_since", ascending=False).copy()
+        _f1["Store"] = _f1["store_code"].map(lambda c: _names.get(c, str(c)))
+        _f1["Last recorded"] = _f1["last_bill"].dt.strftime("%d %b %Y")
+        _f1["Ago"] = _f1["days_since"].map(
+            lambda d: "today" if d == 0 else ("1 day" if d == 1 else f"{int(d)} days"))
+        _disp = _f1[["Store", "kind", "Last recorded", "Ago", "rows", "total"]]
+        _disp.columns = ["Store", "Book", "Last recorded", "Ago", "Bills", "Collected"]
+        st.dataframe(_disp.style.format({"Collected": lambda v: inr(v),
+                                         "Bills": "{:,.0f}"}),
+                     use_container_width=True, hide_index=True)
+        if _stale:
+            st.caption(f"⚠️ {_stale} store(s) have recorded nothing for over a "
+                       f"week. Their figures below are not wrong — they are "
+                       f"simply not being kept.")
+
+        st.markdown("**Alterations, month by month**")
+        _m = TLR.by_month(_alt)
+        _m.columns = [pd.Timestamp(c).strftime("%b %Y") for c in _m.columns]
+        _m.index = [_names.get(i, str(i)) for i in _m.index]
+        _m["Total"] = _m.sum(axis=1)
+        _m = _m.sort_values("Total", ascending=False)
+        _m.loc["TOTAL"] = _m.sum()
+        st.dataframe(_m.style.format(lambda v: inr(v)),
+                     use_container_width=True)
+
+        st.markdown("**How alterations were paid**")
+        _sp = _alt.groupby("store_code")[["cash", "card_upi", "total"]].sum()
+        _sp["Card %"] = (_sp.card_upi / _sp.total.where(_sp.total != 0) * 100)
+        _sp.index = [_names.get(i, str(i)) for i in _sp.index]
+        _sp.columns = ["Cash", "Card / UPI", "Total", "Card %"]
+        st.dataframe(_sp.sort_values("Total", ascending=False).style.format(
+            {"Cash": lambda v: inr(v), "Card / UPI": lambda v: inr(v),
+             "Total": lambda v: inr(v), "Card %": "{:.1f}%"}),
+            use_container_width=True)
+
+        _probs = TLR.check(_tf)
+        if _probs:
+            st.warning("**The read found:**\n\n" + "\n".join("· " + p for p in _probs))
+        else:
+            st.success("Every bill satisfies Total = Billed − Due + Due Paid, and "
+                       "Cash + Card/Upi = Total. No repeated bill numbers.")
+        if _tnotes:
+            with st.expander(f"Files and folders ({len(_tnotes)} notes)"):
+                for _n in _tnotes:
+                    st.write("· " + _n)
+
+        st.divider()
+        if st.button("🧾 Build the PDF", key="tlr_pdf", type="primary"):
+            with st.spinner("Building…"):
+                try:
+                    import tailoring_pdf as TLRPDF
+                    st.session_state["tlr_out"] = TLRPDF.build(
+                        _tf, _tfolders, _tnotes, asof=_asof)[:2]
+                except Exception as e:                 # surface, don't crash
+                    st.session_state["tlr_out"] = None
+                    st.error(f"Could not build: {e}")
+        _out = st.session_state.get("tlr_out")
+        if _out:
+            st.download_button("⬇ Download", _out[1], file_name=_out[0],
+                               mime="application/pdf", use_container_width=True)
 
 
 # =========================================================================== #
