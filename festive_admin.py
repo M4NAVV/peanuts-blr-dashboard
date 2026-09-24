@@ -219,13 +219,19 @@ def daily_chart(width, height, w, ty_days, ly_days):
 # reading each one; a bar of the same value is compared without reading at all.
 # The exact number stays beside it, so nothing is lost to anyone who needs it.
 def table_image(df, spec, width, font_px=26, bar_col=None, bar_label="",
-                total_row=None, shade=(), neg_row=None):
+                total_row=None, shade=(), neg_row=None, fill=True):
     """`spec` is [(column, kind, header)] with kind in
     text | money | pct | int | bar.
 
     `shade` is a set of COLUMN POSITIONS to tint down the whole table — the one
     an admin should land on first. Positions, not column keys, because a key
     can legitimately appear twice (a value and its bar).
+
+    `fill=False` leaves the table at its natural width instead of growing it
+    to `width` — for a table of eight narrow money columns, spreading two
+    thousand spare pixels across the one or two text columns puts a date at
+    the far left of a column whose figures sit at the far right, reading as a
+    gap rather than as a row. A narrower table, centred, reads as one thing.
 
     `neg_row(row) -> bool` marks a row as being in degrowth, and the WHOLE row
     is then set in red.
@@ -248,6 +254,13 @@ def table_image(df, spec, width, font_px=26, bar_col=None, bar_label="",
             return ""
         if kind == "money":
             return money(v)
+        if kind == "rupee":
+            # ★ WHOLE RUPEES, NOT LAKHS. `money` is for reading a season at a
+            # glance; a collection book is reconciled against cash in a drawer,
+            # where 4.38 L and 4,38,300 are not the same statement. A nil cell
+            # is a dash, as it is in the stores' own books — a column of
+            # zeroes hides the months that had something.
+            return PP._fmt_in(v, 0) if abs(float(v)) >= 0.5 else "-"
         if kind in ("pct", "gd"):
             # ★ A G/D CELL MAY HOLD A WORD. A store with no last year has no
             # growth to state, and printing an empty cell beside a -100% reads
@@ -276,7 +289,7 @@ def table_image(df, spec, width, font_px=26, bar_col=None, bar_label="",
         j = max(range(len(spec)),
                 key=lambda i: widths[i] if spec[i][1] == "text" else 0)
         widths[j] = max(widths[j] - over, PP._px(120))
-    elif over < 0:
+    elif over < 0 and fill:
         # ★ SPREAD THE SLACK, DO NOT DUMP IT. Giving every spare pixel to the
         # single widest text column made the ladder's date cell enormous, with
         # the date pinned left and the weekday pinned right — two fields that

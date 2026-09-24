@@ -368,5 +368,12 @@ def store_names(folders) -> dict:
         parts = str(f["folder"]).split("_")
         label = " ".join(parts[2:]) if len(parts) > 2 else f["folder"]
         label = re.sub(r"\s*(Blr|KOL|SLG|GHY)\s*$", "", label, flags=re.I).strip()
-        out[f["store_code"]] = label.replace("_", " ") or str(f["store_code"])
+        label = label.replace("_", " ") or str(f["store_code"])
+        # ★ ONE CASE ACROSS THE ESTATE. South folders are typed `Grand_Kamraj`
+        # and the East ones `AGARTALA`, so a table listing both read as two
+        # feeds joined badly. Short words are left alone — `CC2` is not `Cc2`.
+        if label.isupper():
+            label = " ".join(w if len(w) <= 3 else w.title()
+                             for w in label.split())
+        out[f["store_code"]] = label
     return out

@@ -2803,12 +2803,45 @@ if nav == "✂️ Alterations":
                     st.write("· " + _n)
 
         st.divider()
-        if st.button("🧾 Build the PDF", key="tlr_pdf", type="primary"):
+        _b1, _b2, _b3 = st.columns([2, 2, 1.4])
+        if _b1.button("🧾 Build the one-page PDF", key="tlr_pdf",
+                      type="primary", use_container_width=True):
             with st.spinner("Building…"):
                 try:
                     import tailoring_pdf as TLRPDF
                     st.session_state["tlr_out"] = TLRPDF.build(
                         _tf, _tfolders, _tnotes, asof=_asof)[:2]
+                except Exception as e:                 # surface, don't crash
+                    st.session_state["tlr_out"] = None
+                    st.error(f"Could not build: {e}")
+        # ★ THE BOOKS PACK HAS ITS OWN DATE (Manav, 24 Sep): *"if i want this
+        # for a particular date, something historical, then i should be able to
+        # select that day on the date picker and it should only show records of
+        # that day."* It defaults to the sidebar's end date, so the ordinary
+        # click needs no thought, and moving it rebuilds the pack as it read on
+        # that day — which stores were written in, and what they took.
+        # A window that cannot be empty: if the sidebar's end date sits before
+        # the first bill ever typed, min > max and the widget raises.
+        _bk_lo = min(_tf["date"].min().date(), _asof.date())
+        _bk_day = _b3.date_input(
+            "Books for", value=_asof.date(),
+            min_value=_bk_lo, max_value=max(_asof.date(), _bk_lo),
+            key="tlr_book_day",
+            help="The pack covers the last day any book was written in on or "
+                 "before this date, and only the books that recorded then.")
+        if _b2.button("📒 Build the collection books", key="tlr_book",
+                      use_container_width=True,
+                      help="A page for every book written in on that day, laid "
+                           "out like the store's own sheet: Today, Yesterday, "
+                           "the twelve months of the year, the total, and that "
+                           "day's bills. Page one lists every book, month to "
+                           "date and year to date. For the accounts desk."):
+            with st.spinner("Building…"):
+                try:
+                    import tailoring_ledger as TLRBK
+                    st.session_state["tlr_out"] = TLRBK.build(
+                        _tf, _tfolders, _tsources,
+                        asof=pd.Timestamp(_bk_day))[:2]
                 except Exception as e:                 # surface, don't crash
                     st.session_state["tlr_out"] = None
                     st.error(f"Could not build: {e}")
@@ -3324,6 +3357,16 @@ if nav == "📄 REPORTS PDF":
                  "book for over a week: a zero there is a book nobody opened, "
                  "not a day nobody took money.")
 
+        picked["books"] = st.checkbox(
+            "Collection books  ·  a page per store, ~13 pages",
+            key="vrp_books",
+            help="The long one, for accounts: every tailoring and parking book "
+                 "in the Drive gets its own page, laid out like the store's own "
+                 "sheet — Today, Yesterday, all twelve months of the financial "
+                 "year, the total, and the bills of the last day that book "
+                 "recorded. Page one lists every book so the pack totals "
+                 "reconcile against the pages behind it.")
+
     with c2:
         st.markdown("**Festive run-ups**")
         _fw = _festive_windows()
@@ -3419,6 +3462,17 @@ if nav == "📄 REPORTS PDF":
                     else:
                         built.append(TLRPDF.build(_tf, _tfold, _tn,
                                                   asof=p_asof)[:2])
+                if "books" in chosen:
+                    _prog.step("Collection books")
+                    import tailoring as TLR
+                    import tailoring_ledger as TLRBK
+                    _tf, _tn, _tfold, _tsrc = _tailoring()
+                    if not _tsrc:
+                        st.warning("Collection books: "
+                                   + (TLR.last_problem() or "no books were found"))
+                    else:
+                        built.append(TLRBK.build(_tf, _tfold, _tsrc,
+                                                 asof=p_asof)[:2])
                 _prog.done("Packaging…")
                 name, payload, mime = RTD.bundle(
                     built, zip_name=f"VFL REPORTS {p_asof:%d-%m-%Y}.zip")
