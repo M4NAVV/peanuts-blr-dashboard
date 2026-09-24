@@ -27,6 +27,7 @@ date,store,place_id,total_reviews,rating
 2026-09-21,Agartala,ChIJN6neDa31UzcRJKI5mWv3_64,5604,4.9
 2026-09-22,Agartala,ChIJN6neDa31UzcRJKI5mWv3_64,5604,4.9
 2026-09-23,Agartala,ChIJN6neDa31UzcRJKI5mWv3_64,5604,4.9
+2026-09-24,Agartala,ChIJN6neDa31UzcRJKI5mWv3_64,5604,4.9
 2026-08-22,CC2 Rajarhat,ChIJDZEqjjaf-DkRFg_DfLbkRR0,11362,4.9
 2026-08-23,CC2 Rajarhat,ChIJDZEqjjaf-DkRFg_DfLbkRR0,11362,4.9
 2026-08-26,CC2 Rajarhat,ChIJDZEqjjaf-DkRFg_DfLbkRR0,11367,4.9
@@ -55,6 +56,7 @@ date,store,place_id,total_reviews,rating
 2026-09-21,CC2 Rajarhat,ChIJDZEqjjaf-DkRFg_DfLbkRR0,11410,4.9
 2026-09-22,CC2 Rajarhat,ChIJDZEqjjaf-DkRFg_DfLbkRR0,11410,4.9
 2026-09-23,CC2 Rajarhat,ChIJDZEqjjaf-DkRFg_DfLbkRR0,11411,4.9
+2026-09-24,CC2 Rajarhat,ChIJDZEqjjaf-DkRFg_DfLbkRR0,11414,4.9
 2026-08-22,CMH Road,ChIJH9qgzqcWrjsRRUpZf_VljWU,4399,4.7
 2026-08-23,CMH Road,ChIJH9qgzqcWrjsRRUpZf_VljWU,4399,4.7
 2026-08-26,CMH Road,ChIJH9qgzqcWrjsRRUpZf_VljWU,4399,4.7
@@ -83,6 +85,7 @@ date,store,place_id,total_reviews,rating
 2026-09-21,CMH Road,ChIJH9qgzqcWrjsRRUpZf_VljWU,4400,4.7
 2026-09-22,CMH Road,ChIJH9qgzqcWrjsRRUpZf_VljWU,4400,4.7
 2026-09-23,CMH Road,ChIJH9qgzqcWrjsRRUpZf_VljWU,4400,4.7
+2026-09-24,CMH Road,ChIJH9qgzqcWrjsRRUpZf_VljWU,4400,4.7
 2026-08-22,City Centre GHY,ChIJ4xqQP05ZWjcROv4SIOcMGyA,5393,4.9
 2026-08-23,City Centre GHY,ChIJ4xqQP05ZWjcROv4SIOcMGyA,5393,4.9
 2026-08-26,City Centre GHY,ChIJ4xqQP05ZWjcROv4SIOcMGyA,5393,4.9
@@ -111,6 +114,7 @@ date,store,place_id,total_reviews,rating
 2026-09-21,City Centre GHY,ChIJ4xqQP05ZWjcROv4SIOcMGyA,5408,4.9
 2026-09-22,City Centre GHY,ChIJ4xqQP05ZWjcROv4SIOcMGyA,5408,4.9
 2026-09-23,City Centre GHY,ChIJ4xqQP05ZWjcROv4SIOcMGyA,5409,4.9
+2026-09-24,City Centre GHY,ChIJ4xqQP05ZWjcROv4SIOcMGyA,5411,4.9
 2026-08-22,City Centre SIL,ChIJYwtOBJlB5DkRnJTLfuDDoHs,2520,4.9
 2026-08-23,City Centre SIL,ChIJYwtOBJlB5DkRnJTLfuDDoHs,2520,4.9
 2026-08-26,City Centre SIL,ChIJYwtOBJlB5DkRnJTLfuDDoHs,2520,4.9
@@ -139,6 +143,7 @@ date,store,place_id,total_reviews,rating
 2026-09-21,City Centre SIL,ChIJYwtOBJlB5DkRnJTLfuDDoHs,2528,4.9
 2026-09-22,City Centre SIL,ChIJYwtOBJlB5DkRnJTLfuDDoHs,2528,4.9
 2026-09-23,City Centre SIL,ChIJYwtOBJlB5DkRnJTLfuDDoHs,2528,4.9
+2026-09-24,City Centre SIL,ChIJYwtOBJlB5DkRnJTLfuDDoHs,2528,4.9
 2026-08-22,Commercial Street,ChIJUWFxb2IWrjsRLzLqaiG5bAI,10237,4.8
 2026-08-23,Commercial Street,ChIJUWFxb2IWrjsRLzLqaiG5bAI,10237,4.8
 2026-08-26,Commercial Street,ChIJUWFxb2IWrjsRLzLqaiG5bAI,10238,4.8
@@ -167,6 +172,7 @@ date,store,place_id,total_reviews,rating
 2026-09-21,Commercial Street,ChIJUWFxb2IWrjsRLzLqaiG5bAI,10248,4.8
 2026-09-22,Commercial Street,ChIJUWFxb2IWrjsRLzLqaiG5bAI,10248,4.8
 2026-09-23,Commercial Street,ChIJUWFxb2IWrjsRLzLqaiG5bAI,10248,4.8
+2026-09-24,Commercial Street,ChIJUWFxb2IWrjsRLzLqaiG5bAI,10248,4.8
 2026-08-22,DVG Road,ChIJEwAAAO0VrjsRXuwGfEfTB9c,4751,4.7
 2026-08-23,DVG Road,ChIJEwAAAO0VrjsRXuwGfEfTB9c,4751,4.7
 2026-08-26,DVG Road,ChIJEwAAAO0VrjsRXuwGfEfTB9c,4753,4.7
@@ -195,6 +201,7 @@ date,store,place_id,total_reviews,rating
 2026-09-21,DVG Road,ChIJEwAAAO0VrjsRXuwGfEfTB9c,4767,4.7
 2026-09-22,DVG Road,ChIJEwAAAO0VrjsRXuwGfEfTB9c,4767,4.7
 2026-09-23,DVG Road,ChIJEwAAAO0VrjsRXuwGfEfTB9c,4767,4.7
+2026-09-24,DVG Road,ChIJEwAAAO0VrjsRXuwGfEfTB9c,4768,4.7
 2026-09-05,Dibrugarh,ChIJnQBph8qZQDcRtLWUzPTR3-U,324,4.9
 2026-09-06,Dibrugarh,ChIJnQBph8qZQDcRtLWUzPTR3-U,324,4.9
 2026-09-09,Dibrugarh,ChIJnQBph8qZQDcRtLWUzPTR3-U,329,4.9
@@ -212,6 +219,7 @@ date,store,place_id,total_reviews,rating
 2026-09-21,Dibrugarh,ChIJnQBph8qZQDcRtLWUzPTR3-U,346,4.9
 2026-09-22,Dibrugarh,ChIJnQBph8qZQDcRtLWUzPTR3-U,348,4.9
 2026-09-23,Dibrugarh,ChIJnQBph8qZQDcRtLWUzPTR3-U,349,4.9
+2026-09-24,Dibrugarh,ChIJnQBph8qZQDcRtLWUzPTR3-U,350,4.9
 2026-08-22,Fairfield,ChIJjbCgZEl1AjoRtnrP2jFfRAY,3201,4.9
 2026-08-23,Fairfield,ChIJjbCgZEl1AjoRtnrP2jFfRAY,3201,4.9
 2026-08-26,Fairfield,ChIJjbCgZEl1AjoRtnrP2jFfRAY,3203,4.9
@@ -240,6 +248,7 @@ date,store,place_id,total_reviews,rating
 2026-09-21,Fairfield,ChIJjbCgZEl1AjoRtnrP2jFfRAY,3248,4.9
 2026-09-22,Fairfield,ChIJjbCgZEl1AjoRtnrP2jFfRAY,3249,4.9
 2026-09-23,Fairfield,ChIJjbCgZEl1AjoRtnrP2jFfRAY,3252,4.9
+2026-09-24,Fairfield,ChIJjbCgZEl1AjoRtnrP2jFfRAY,3253,4.9
 2026-09-05,Grand Kamraj Road,ChIJvT_Kso4XrjsRoafJCvzNIfo,10636,4.9
 2026-09-06,Grand Kamraj Road,ChIJvT_Kso4XrjsRoafJCvzNIfo,10635,4.9
 2026-09-09,Grand Kamraj Road,ChIJvT_Kso4XrjsRoafJCvzNIfo,10643,4.9
@@ -257,6 +266,7 @@ date,store,place_id,total_reviews,rating
 2026-09-21,Grand Kamraj Road,ChIJvT_Kso4XrjsRoafJCvzNIfo,10655,4.9
 2026-09-22,Grand Kamraj Road,ChIJvT_Kso4XrjsRoafJCvzNIfo,10655,4.9
 2026-09-23,Grand Kamraj Road,ChIJvT_Kso4XrjsRoafJCvzNIfo,10655,4.9
+2026-09-24,Grand Kamraj Road,ChIJvT_Kso4XrjsRoafJCvzNIfo,10657,4.9
 2026-08-22,Jayanagar,ChIJOVVVVbwVrjsRV1YGw2bOwS4,17347,4.8
 2026-08-23,Jayanagar,ChIJOVVVVbwVrjsRV1YGw2bOwS4,17347,4.8
 2026-08-26,Jayanagar,ChIJOVVVVbwVrjsRV1YGw2bOwS4,17346,4.8
@@ -284,6 +294,7 @@ date,store,place_id,total_reviews,rating
 2026-09-21,Jayanagar,ChIJOVVVVbwVrjsRV1YGw2bOwS4,8481,4.9
 2026-09-22,Jayanagar,ChIJOVVVVbwVrjsRV1YGw2bOwS4,8483,4.9
 2026-09-23,Jayanagar,ChIJOVVVVbwVrjsRV1YGw2bOwS4,8484,4.9
+2026-09-24,Jayanagar,ChIJOVVVVbwVrjsRV1YGw2bOwS4,8487,4.9
 2026-08-22,Jorhat,ChIJ231Hgc7DRjcRxeKW18uK4ts,2713,4.9
 2026-08-23,Jorhat,ChIJ231Hgc7DRjcRxeKW18uK4ts,2713,4.9
 2026-08-26,Jorhat,ChIJ231Hgc7DRjcRxeKW18uK4ts,2713,4.9
@@ -312,6 +323,7 @@ date,store,place_id,total_reviews,rating
 2026-09-21,Jorhat,ChIJ231Hgc7DRjcRxeKW18uK4ts,2719,4.9
 2026-09-22,Jorhat,ChIJ231Hgc7DRjcRxeKW18uK4ts,2720,4.9
 2026-09-23,Jorhat,ChIJ231Hgc7DRjcRxeKW18uK4ts,2721,4.9
+2026-09-24,Jorhat,ChIJ231Hgc7DRjcRxeKW18uK4ts,2723,4.9
 2026-09-05,Kamraj Road,ChIJy4P-4ZIXrjsRcgRGu4U9ngQ,5123,4.8
 2026-09-06,Kamraj Road,ChIJy4P-4ZIXrjsRcgRGu4U9ngQ,5123,4.8
 2026-09-09,Kamraj Road,ChIJy4P-4ZIXrjsRcgRGu4U9ngQ,5125,4.8
@@ -329,6 +341,7 @@ date,store,place_id,total_reviews,rating
 2026-09-21,Kamraj Road,ChIJy4P-4ZIXrjsRcgRGu4U9ngQ,5132,4.8
 2026-09-22,Kamraj Road,ChIJy4P-4ZIXrjsRcgRGu4U9ngQ,5132,4.8
 2026-09-23,Kamraj Road,ChIJy4P-4ZIXrjsRcgRGu4U9ngQ,5132,4.8
+2026-09-24,Kamraj Road,ChIJy4P-4ZIXrjsRcgRGu4U9ngQ,5132,4.8
 2026-08-22,M.G. Road,ChIJ06qqqnEWrjsRXpy9ySDX0s4,8392,4.8
 2026-08-23,M.G. Road,ChIJ06qqqnEWrjsRXpy9ySDX0s4,8392,4.8
 2026-08-26,M.G. Road,ChIJ06qqqnEWrjsRXpy9ySDX0s4,8391,4.8
@@ -357,6 +370,7 @@ date,store,place_id,total_reviews,rating
 2026-09-21,M.G. Road,ChIJ06qqqnEWrjsRXpy9ySDX0s4,8410,4.8
 2026-09-22,M.G. Road,ChIJ06qqqnEWrjsRXpy9ySDX0s4,8410,4.8
 2026-09-23,M.G. Road,ChIJ06qqqnEWrjsRXpy9ySDX0s4,8410,4.8
+2026-09-24,M.G. Road,ChIJ06qqqnEWrjsRXpy9ySDX0s4,8410,4.8
 2026-08-22,Malda,ChIJNV-8p2_9-jkRbZ8HqFn2f8g,3681,4.9
 2026-08-23,Malda,ChIJNV-8p2_9-jkRbZ8HqFn2f8g,3681,4.9
 2026-08-26,Malda,ChIJNV-8p2_9-jkRbZ8HqFn2f8g,3683,4.9
@@ -385,6 +399,7 @@ date,store,place_id,total_reviews,rating
 2026-09-21,Malda,ChIJNV-8p2_9-jkRbZ8HqFn2f8g,3690,4.9
 2026-09-22,Malda,ChIJNV-8p2_9-jkRbZ8HqFn2f8g,3690,4.9
 2026-09-23,Malda,ChIJNV-8p2_9-jkRbZ8HqFn2f8g,3690,4.9
+2026-09-24,Malda,ChIJNV-8p2_9-jkRbZ8HqFn2f8g,3691,4.9
 2026-08-22,Mani Square,ChIJ083QRwF3AjoRxYqB8zvN-c0,4603,4.9
 2026-08-23,Mani Square,ChIJ083QRwF3AjoRxYqB8zvN-c0,4603,4.9
 2026-08-26,Mani Square,ChIJ083QRwF3AjoRxYqB8zvN-c0,4609,4.9
@@ -413,6 +428,7 @@ date,store,place_id,total_reviews,rating
 2026-09-21,Mani Square,ChIJ083QRwF3AjoRxYqB8zvN-c0,4692,4.9
 2026-09-22,Mani Square,ChIJ083QRwF3AjoRxYqB8zvN-c0,4692,4.9
 2026-09-23,Mani Square,ChIJ083QRwF3AjoRxYqB8zvN-c0,4692,4.9
+2026-09-24,Mani Square,ChIJ083QRwF3AjoRxYqB8zvN-c0,4693,4.9
 2026-08-22,Orion Mall,ChIJ748wWX89rjsRpv-DRa-4wtE,6072,4.8
 2026-08-23,Orion Mall,ChIJ748wWX89rjsRpv-DRa-4wtE,6072,4.8
 2026-08-26,Orion Mall,ChIJ748wWX89rjsRpv-DRa-4wtE,6080,4.8
@@ -441,6 +457,7 @@ date,store,place_id,total_reviews,rating
 2026-09-21,Orion Mall,ChIJ748wWX89rjsRpv-DRa-4wtE,6105,4.8
 2026-09-22,Orion Mall,ChIJ748wWX89rjsRpv-DRa-4wtE,6105,4.8
 2026-09-23,Orion Mall,ChIJ748wWX89rjsRpv-DRa-4wtE,6105,4.8
+2026-09-24,Orion Mall,ChIJ748wWX89rjsRpv-DRa-4wtE,6106,4.8
 2026-08-22,Silchar,ChIJPz9qyhVLTjcR8k1Iu0t1Q-s,1376,5.0
 2026-08-23,Silchar,ChIJPz9qyhVLTjcR8k1Iu0t1Q-s,1376,5.0
 2026-08-26,Silchar,ChIJPz9qyhVLTjcR8k1Iu0t1Q-s,1380,5.0
@@ -469,6 +486,7 @@ date,store,place_id,total_reviews,rating
 2026-09-21,Silchar,ChIJPz9qyhVLTjcR8k1Iu0t1Q-s,1466,5.0
 2026-09-22,Silchar,ChIJPz9qyhVLTjcR8k1Iu0t1Q-s,1470,5.0
 2026-09-23,Silchar,ChIJPz9qyhVLTjcR8k1Iu0t1Q-s,1477,5.0
+2026-09-24,Silchar,ChIJPz9qyhVLTjcR8k1Iu0t1Q-s,1484,5.0
 2026-08-22,Siliguri,ChIJwZDRHQJB5DkRWJb2YzvkY0U,7883,4.9
 2026-08-23,Siliguri,ChIJwZDRHQJB5DkRWJb2YzvkY0U,7882,4.9
 2026-08-26,Siliguri,ChIJwZDRHQJB5DkRWJb2YzvkY0U,7898,4.9
@@ -497,6 +515,7 @@ date,store,place_id,total_reviews,rating
 2026-09-21,Siliguri,ChIJwZDRHQJB5DkRWJb2YzvkY0U,7943,4.9
 2026-09-22,Siliguri,ChIJwZDRHQJB5DkRWJb2YzvkY0U,7943,4.9
 2026-09-23,Siliguri,ChIJwZDRHQJB5DkRWJb2YzvkY0U,7943,4.9
+2026-09-24,Siliguri,ChIJwZDRHQJB5DkRWJb2YzvkY0U,7943,4.9
 2026-08-22,Siliguri 2,ChIJjx0f6thB5DkRbFNhAGDiaKo,4956,4.8
 2026-08-23,Siliguri 2,ChIJjx0f6thB5DkRbFNhAGDiaKo,4955,4.8
 2026-08-26,Siliguri 2,ChIJjx0f6thB5DkRbFNhAGDiaKo,4958,4.8
@@ -525,3 +544,4 @@ date,store,place_id,total_reviews,rating
 2026-09-21,Siliguri 2,ChIJjx0f6thB5DkRbFNhAGDiaKo,4974,4.8
 2026-09-22,Siliguri 2,ChIJjx0f6thB5DkRbFNhAGDiaKo,4974,4.8
 2026-09-23,Siliguri 2,ChIJjx0f6thB5DkRbFNhAGDiaKo,4974,4.8
+2026-09-24,Siliguri 2,ChIJjx0f6thB5DkRbFNhAGDiaKo,4976,4.8
