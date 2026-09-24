@@ -1958,6 +1958,74 @@ def _l2l_spans_vfl(df: pd.DataFrame, asof):
                                     shut_by_label, asof, opened=open_by_label)
 
 
+# --------------------------------------------------------------------------- #
+# VFL BRAND CONTRIBUTION — three brands, two regions, three windows
+# --------------------------------------------------------------------------- #
+# Manav, 24 Sep 2026, after seeing a store-by-store draft: *"this report doesnt
+# need to be store wise, it should be really simple, just need the contribution
+# of the three brands, for east, south and one total column. day mtd and ytd."*
+#
+# ★ THE SAME FOUR LINES, FOLDED THE SAME WAY. `brand_line_vfl` is used, not
+# `brand`, so Mebaz sits inside Mohey and Manthan inside Manyavar exactly as on
+# the workbook sheet; Twamev Men and Twamev Women are added together because he
+# named three brands, not four. Using `COL_BRAND` here instead would give Mebaz
+# a line of its own and the two sheets would stop tying — which is the failure
+# this note exists to prevent. See [[feedback-same-estate]].
+VFL_BRANDS = ["MANYAVAR", "MOHEY", "TWAMEV"]
+_VFL_BRAND_FOLD = {"MANYAVAR": "MANYAVAR", "MOHEY": "MOHEY",
+                   "TWAMEV MEN": "TWAMEV", "TWAMEV-WOMEN": "TWAMEV"}
+
+
+VFL_BRAND_LABEL = {"MANYAVAR": "Manyavar", "MOHEY": "Mohey",
+                   "TWAMEV": "Twamev"}
+
+
+def vfl_brand_report(df: pd.DataFrame, asof=None, gen_date=None):
+    """[(region, rows, total)] — one small panel per region, plus the estate.
+
+    Each row is one brand: what it took on the day, the month and the year,
+    what share of that region it is, and how the month and the year moved
+    against last year.
+
+    ★ A TOTAL'S GROWTH IS RECOMPUTED FROM THE SUMMED PAIR, never averaged down
+    a column. See [[feedback-aggregate-ratios-in-pairs]].
+
+    ★ AND A SHARE IS TAKEN AGAINST ITS OWN PANEL, so East's three brands add to
+    100% of East. A share against the estate would read as a different number
+    meaning a different thing in a column headed the same way.
+
+    ★ NO GROWTH ON THE DAY. The feed carries last year's MONTH and last year's
+    YEAR, never last year's same day — a day-on-day growth would be invented.
+    """
+    asof = as_of(df) if asof is None else pd.Timestamp(asof)
+    d = df.copy()
+    d["_b"] = brand_line_vfl(d).map(_VFL_BRAND_FOLD).fillna("MANYAVAR")
+    sb = _gd_by(d, [COL_REGION, "_b"], asof=asof)
+
+    def gd(ty, ly):
+        # ★ A NEGATIVE BASE IS NOT A BASE: a line whose last year was nothing
+        # but returns gives −200% for a line that GREW.
+        return _vfl_gd_frac(ty, ly) if ly > 0 else float("nan")
+
+    def line(label, part, whole):
+        ytd, mtd = float(part["YTD TY"].sum()), float(part["MTD TY"].sum())
+        base = float(whole["YTD TY"].sum())
+        return {"brand": label, "day": float(part["Day Sales"].sum()),
+                "mtd": mtd, "ytd": ytd,
+                "mix": ytd / base * 100 if base else float("nan"),
+                "gd_mtd": gd(mtd, float(part["MTD LY"].sum())),
+                "gd_ytd": gd(ytd, float(part["YTD LY"].sum()))}
+
+    out = []
+    regions = [r for r in _REGION_ORDER if r in set(sb[COL_REGION].dropna())]
+    for region in regions + ["Total"]:
+        whole = sb if region == "Total" else sb[sb[COL_REGION] == region]
+        rows = [line(VFL_BRAND_LABEL[b], whole[whole["_b"] == b], whole)
+                for b in VFL_BRANDS]
+        out.append((region, rows, line("Total", whole, whole)))
+    return out
+
+
 def vfl_gd_report(df: pd.DataFrame, asof=None, gen_date=None):
     """The VFL sheet, matching the workbook 1:1. Region → Master Location → Store
     → Gender (MEN/WOMEN) → brand-line detail, with MEN/WOMEN, store, location,

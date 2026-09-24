@@ -18,6 +18,65 @@ import portfolio_pdf as PP
 _FOOTER = "Peanuts Retail · VFL"
 
 
+def _pc(v) -> str:
+    return "—" if v != v else f"{v:+.1f}%"
+
+
+def _brand_reading(panels) -> str:
+    """The page in two sentences, built from the same rows it sits under."""
+    by = {r: (rows, total) for r, rows, total in panels}
+    rows, total = by.get("Total", panels[-1][1:])
+    share = ", ".join(f"{r['brand']} {r['mix']:.1f}%" for r in rows)
+    out = (f"Of the year so far, {share}. The estate is {_pc(total['gd_ytd'])} "
+           f"on last year and {_pc(total['gd_mtd'])} on the month.")
+    regions = [(r, t) for r, _rw, t in panels if r != "Total"]
+    if len(regions) == 2:
+        (r1, t1), (r2, t2) = sorted(regions, key=lambda x: -(x[1]["gd_mtd"]
+                                                             if x[1]["gd_mtd"] == x[1]["gd_mtd"]
+                                                             else -999))
+        out += (f" The month is being carried by {r1} at "
+                f"{_pc(t1['gd_mtd'])}, against {r2} at {_pc(t2['gd_mtd'])}.")
+    return out
+
+
+def _beside(images, gap=None):
+    """Panels across the page, top-aligned — the landscape sheet's own shape.
+
+    Three region panels stacked would leave two thirds of a landscape page
+    white and force the eye to travel down to compare regions that belong side
+    by side. Across, the same brand sits on the same line in all three.
+    """
+    from PIL import Image
+    gap = PP._px(80) if gap is None else gap
+    w = sum(i.width for i in images) + gap * (len(images) - 1)
+    h = max(i.height for i in images)
+    out = Image.new("RGB", (w, h), (255, 255, 255))
+    x = 0
+    for i in images:
+        out.paste(i, (x, 0))
+        x += i.width + gap
+    return out
+
+
+def _stack(images, gap=None):
+    """Several tables as one content image, centred on each other.
+
+    A short table on this engine gets a page of its own; three of them would be
+    three near-empty pages. Stacked, they are one page that can be read without
+    turning it, which is the whole point of a summary sheet.
+    """
+    from PIL import Image
+    gap = PP._px(46) if gap is None else gap
+    w = max(i.width for i in images)
+    h = sum(i.height for i in images) + gap * (len(images) - 1)
+    out = Image.new("RGB", (w, h), (255, 255, 255))
+    y = 0
+    for i in images:
+        out.paste(i, ((w - i.width) // 2, y))
+        y += i.height + gap
+    return out
+
+
 def build(df, asof, gen_date=None, basis_label=""):
     """Compile the VFL G/D + VFL Gender sheets into one PDF (bytes). `df` is the
     (already filtered) VFL frame; `asof` sets the sum windows (month-end matches
@@ -70,6 +129,67 @@ def build(df, asof, gen_date=None, basis_label=""):
         PP._add_sheet(contents, "VFL — Region × Gender Summary", gsum, gs_rt,
                       money=L.VFL_GENDER_MONEY, pct=L.VFL_GENDER_PCT, sign=[],
                       money_dp=0, row_bg=PP.VFL_ROW_BG)
+
+        # 4) VFL — Brand Contribution, the LAST page (Manav, 24 Sep: *"the
+        # page should be the last page of this report"*). One panel per
+        # region, one line per brand. Manav, 24 Sep, on the first draft of this page: *"this report
+        # is a difficult read, visually cluttered."*
+        #
+        # ★ IT IS NOT DRAWN IN THE WORKBOOK STYLE, DELIBERATELY. The sheets
+        # around it are the client's own spreadsheet reproduced — a full grid on
+        # every cell, ten columns of eight-digit rupees, a header read three
+        # times over. That is right for a sheet somebody reconciles line by
+        # line and wrong for a summary of nine numbers, where the grid is most
+        # of the ink on the page. This page uses the pack style instead:
+        # banded rows, no grid, money in crores, and the region as a heading
+        # rather than as a prefix repeated on every column.
+        import festive_admin as FADM
+        import snapshots_a4 as A4
+
+        _BSPEC = [("brand", "text", "BRAND"), ("day", "money", "DAY"),
+                  ("mtd", "money", "MTD"), ("ytd", "money", "YTD"),
+                  ("mix", "pct", "SHARE"), ("gd_mtd", "gd", "G/D\nMTD"),
+                  ("gd_ytd", "gd", "G/D\nYTD")]
+        _bpanels = L.vfl_brand_report(df, asof=asof, gen_date=gen_date)
+
+        def _draw_panels(font_px):
+            # ★ NATURAL WIDTH, NOT A WIDTH I GUESSED. Handing the table a box
+            # narrower than its own text made it claw the difference back out
+            # of the one text column, and `Manyavar` printed over the figure
+            # beside it. `fill=False` lets the data size the table.
+            out = []
+            for _region, _rows, _total in _bpanels:
+                t = FADM.table_image(_rows, _BSPEC, PP._px(4000),
+                                     font_px=font_px, total_row=_total,
+                                     fill=False)
+                out.append(_stack([A4._caption(t.width, _region, ""), t],
+                                  gap=PP._px(16)))
+            return _beside(out, gap=PP._px(90))
+
+        # ★★ THE TYPE IS SIZED TO FIT, NOT SET AND HOPED FOR (Manav, 24 Sep:
+        # *"its stretched side to side, might overflow by end of year"*). These
+        # figures only grow — a 39 Cr year becomes a 60 Cr one, `100.0%` in the
+        # share column, and every panel widens with them. The page width of
+        # this whole document is the width of its widest sheet, so a panel grid
+        # that outgrew the G/D sheet would not clip: it would quietly widen
+        # EVERY page and leave the sheets that matter floating in white. So the
+        # grid is drawn at the largest size that still sits inside a margin,
+        # and it will simply step down a point as the year fills up.
+        # ~5% of clear page either side: enough to read as a margin, not so
+        # much that the type has to shrink to buy it.
+        _budget = int(max(c.width for _, c in contents) * 0.90)
+        for _fpx in (46, 42, 38, 34, 30, 26):
+            _grid = _draw_panels(_fpx)
+            if _grid.width <= _budget:
+                break
+        # ★ ONE LINE OF READING, not a second table. The panels say what the
+        # numbers are; this says what they mean, which is the thing a summary
+        # page is for — and it is computed from the same frames, so it cannot
+        # describe a figure that is not above it.
+        _say = A4._text_block(_grid.width, [(_brand_reading(_bpanels),
+                                            A4._ft(30)[0], A4.SUB)])
+        contents.append(("VFL — Brand Contribution",
+                         _stack([_grid, _say], gap=PP._px(44))))
 
         # Executive Snapshot — replaces the cover. Sized to the box the sheets
         # establish, then placed first.
