@@ -51,20 +51,24 @@ LEDGER_SPEC = [("day", "text", "DATE"), ("bill_no", "text", "BILL NO"),
                ("cash", "rupee", "CASH"),
                ("card_upi", "rupee", "CARD/UPI")]
 
-# ★ EVERY WINDOW IS NAMED IN ITS OWN HEADER. A table of money columns where
-# one of them silently covers a different span is the single most frequent real
-# bug on this dashboard — see [[feedback-same-estate]].
+# ★ ONE TABLE, ONE WINDOW (Manav, 24 Sep: *"instead of one table for both mtd
+# and ytd, we need 2 tables"*). The same columns are drawn twice, once for the
+# month and once for the year, each under a caption that names its span and
+# with the span repeated on its own TOTAL line. Money columns from two
+# different windows sharing one grid is how two correct figures come to read as
+# one — see [[feedback-same-estate]].
 INDEX_SPEC = [("code", "text", "STORE\nCODE"), ("store", "text", "STORE NAME"),
               ("book", "text", "BOOK"),
-              ("mtd", "rupee", "MTD\nTOTAL"),
-              ("billed", "rupee", "YTD\nBILLED"),
-              ("due", "rupee", "YTD\nDUE"),
-              ("due_paid", "rupee", "YTD\nDUE PAID"),
-              ("total", "rupee", "YTD\nTOTAL"),
-              ("cash", "rupee", "YTD\nCASH"),
-              ("card_upi", "rupee", "YTD\nCARD/UPI"),
-              ("bills", "int", "YTD\nBILLS"),
+              ("billed", "rupee", "BILLED\nAMOUNT"),
+              ("due", "rupee", "DUE\nAMOUNT"),
+              ("due_paid", "rupee", "DUE\nPAID"),
+              ("total", "rupee", "TOTAL"),
+              ("cash", "rupee", "CASH"),
+              ("card_upi", "rupee", "CARD/UPI"),
+              ("bills", "int", "BILLS"),
               ("last", "text", "LAST\nRECORDED")]
+
+SPANS = {"mtd": "Month to date", "ytd": "Year to date"}
 
 KIND_LABEL = {"alter": "Tailor", "parking": "Parking"}
 
@@ -167,39 +171,38 @@ def books(sources, frame) -> list:
     return out
 
 
-def index_rows(frame, sources, folders, asof) -> tuple:
-    """Page one: every book — the month, the year, and when it last recorded.
+def index_rows(frame, sources, folders, asof, span="ytd") -> tuple:
+    """Page one: every book over one window — `mtd` or `ytd`.
 
-    ★ EVERY BOOK IS HERE, including the ones that get no page behind it. This
+    ★ EVERY BOOK IS HERE, including the ones that get no page behind them. This
     is the page that says WHY a store has no page: its last recorded date. A
     pack that listed only the books it printed would make a store that stopped
     typing disappear from the pack entirely.
+
+    ★ AND IT IS ORDERED BY STORE CODE (Manav, 24 Sep), not by size. This is a
+    filing document: the same store is on the same line of the month table and
+    the year table, and it is where it was last month.
     """
     names = T.store_names(folders)
     asof = pd.Timestamp(asof).normalize()
-    months = fy_months(asof)
-    start, end = months[0], asof            # ★ never past the report date
+    # ★ BOTH WINDOWS END AT THE REPORT DATE, so a pack run for a day in the
+    # past reads as it read on that day.
+    start = asof.replace(day=1) if span == "mtd" else fy_months(asof)[0]
     rows = []
-    for b in books(sources, frame):
+    for b in sorted(books(sources, frame),
+                    key=lambda b: (b["store_code"], b["kind"])):
         part = _part(frame, b)
-        w = window(part, start, end)
         seen = part[part["date"] <= asof]["date"] if len(part) else part
         last = seen.max() if len(seen) else None
         rows.append({"code": str(int(b["store_code"])),
                      "store": names.get(b["store_code"], str(b["store_code"])),
                      "book": KIND_LABEL.get(b["kind"], b["kind"]),
-                     # ★ MONTH TO DATE ENDS AT THE REPORT DATE, not at the end
-                     # of the month, so a pack run for a day in the past reads
-                     # as it read on that day.
-                     "mtd": window(part, asof.replace(day=1), asof)["total"],
                      "last": f"{last:%d-%m-%Y}" if last is not None else "never",
                      "last_dt": last,          # sortable; not on the spec
                      "key": (int(b["store_code"]), b["kind"]),
-                     **w})
-    rows.sort(key=lambda r: -r["total"])
-    total = {"code": "", "store": "TOTAL", "book": "", "last": "",
+                     **window(part, start, asof)})
+    total = {"code": "", "store": "TOTAL", "book": span.upper(), "last": "",
              "bills": sum(r["bills"] for r in rows),
-             "mtd": sum(r["mtd"] for r in rows),
              **{c: sum(r[c] for r in rows) for c in MONEY}}
     return rows, total
 
@@ -270,23 +273,29 @@ def build(frame, folders, sources, asof=None) -> tuple:
         keys = {(int(b["store_code"]), b["kind"]) for b in printed}
 
         # ---------- page one: every book, and which ones got a page --------
-        rows, total = index_rows(frame, sources, folders, asof)
+        rows, _ = index_rows(frame, sources, folders, asof, "ytd")
         one = A4._Sheet("Collection books", asof, "", bounded=False, footer=True)
         one.put(A4._heading(
             W, f"Collection books — {fy_label(asof)}",
             f"every tailoring and parking book in the store-ops Drive  ·  "
             f"{len(rows)} book{'' if len(rows) == 1 else 's'}  ·  "
-            f"MTD and YTD to {asof:%d %b %Y}"), gap=18)
+            f"to {asof:%d %b %Y}"), gap=18)
         one.put(A4._text_block(W, [(
             "Every figure in this pack is summed from the dated bill rows of "
             "the store's own book, not from the summary cells at the top of "
             "it — those are live formulas that change with the clock of "
             "whoever opens the file. Nothing after the date this pack is "
-            f"dated is in it: MTD runs from the 1st of the month to "
-            f"{asof:%d %b}, and YTD from 1 April to {asof:%d %b}.",
+            "dated is in it, in either table below.",
             A4._ft(22)[0], A4.SUB)]), gap=14)
-        one.put(FADM.table_image(rows, INDEX_SPEC, W, font_px=23,
-                                 total_row=total), gap=18)
+        for span, label, since in (
+                ("mtd", SPANS["mtd"], f"1 {asof:%b}"),
+                ("ytd", SPANS["ytd"], "1 Apr")):
+            srows, stotal = index_rows(frame, sources, folders, asof, span)
+            one.put(A4._caption(
+                W, label, f"{since} to {asof:%d %b %Y}  ·  by store code"),
+                gap=8)
+            one.put(FADM.table_image(srows, INDEX_SPEC, W, font_px=23,
+                                     total_row=stotal), gap=18)
 
         # ★ THE PAGES BEHIND THIS ONE ARE A SUBSET, AND IT SAYS SO. A reader
         # who counted pages and found nine stores missing would be right to

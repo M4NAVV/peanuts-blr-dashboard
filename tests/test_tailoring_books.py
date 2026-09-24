@@ -237,39 +237,67 @@ def test_every_index_line_is_the_same_figure_as_that_books_own_page():
     assert len(rows) == 3 and total["total"] == pytest.approx(4500 + 215 + 5000)
 
 
-def test_page_one_carries_the_month_beside_the_year():
-    """Manav, 24 Sep: *"the first page, show an MTD also with the YTD."*"""
+def test_page_one_is_two_tables_one_for_the_month_and_one_for_the_year():
+    """Manav, 24 Sep: *"instead of one table for both mtd and ytd, we need 2
+    tables."* Same columns, same order, one window each."""
     f = _frame([_bill(107, "alter", "2026-08-20", 1, 9000, cash=9000),
                 _bill(107, "alter", "2026-09-10", 2, 4000, card=4000),
                 _bill(107, "alter", "2026-09-23", 3, 2200, card=2200)])
-    rows, total = TL.index_rows(f, [_source()], [_folder()], "2026-09-24")
-    assert rows[0]["mtd"] == 6200              # September only
-    assert rows[0]["total"] == 15200           # the whole year
-    assert total["mtd"] == 6200
+    mrows, mtotal = TL.index_rows(f, [_source()], [_folder()], "2026-09-24",
+                                  "mtd")
+    yrows, ytotal = TL.index_rows(f, [_source()], [_folder()], "2026-09-24",
+                                  "ytd")
+    assert mrows[0]["total"] == 6200 and mrows[0]["bills"] == 2
+    assert yrows[0]["total"] == 15200 and yrows[0]["bills"] == 3
+    # ★ each table's own TOTAL line names its window, so a table read on its
+    # own still says what it covers
+    assert mtotal["book"] == "MTD" and ytotal["book"] == "YTD"
+    assert mtotal["total"] == 6200 and ytotal["total"] == 15200
 
 
-def test_the_month_to_date_stops_at_the_report_date():
-    """★ A pack run for a day in the past must read as it read on that day —
-    an MTD that ran to the end of the month would carry bills that had not
-    been taken yet. See [[feedback-provisional-day]]."""
-    f = _frame([_bill(107, "alter", "2026-09-10", 1, 4000, card=4000),
-                _bill(107, "alter", "2026-09-23", 2, 2200, card=2200)])
-    rows, _t = TL.index_rows(f, [_source()], [_folder()], "2026-09-15")
-    assert rows[0]["mtd"] == 4000
+def test_the_month_table_starts_at_the_first_and_stops_at_the_report_date():
+    f = _frame([_bill(107, "alter", "2026-08-31", 1, 7000, cash=7000),
+                _bill(107, "alter", "2026-09-10", 2, 4000, card=4000),
+                _bill(107, "alter", "2026-09-23", 3, 2200, card=2200)])
+    rows, _t = TL.index_rows(f, [_source()], [_folder()], "2026-09-15", "mtd")
+    assert rows[0]["total"] == 4000
 
 
-def test_every_index_column_including_mtd_is_declared():
-    assert any(c == "mtd" for c, _k, _h in TL.INDEX_SPEC)
-    for c, kind, head in TL.INDEX_SPEC:
-        if c in ("mtd", *MONEY):
+def test_page_one_is_ordered_by_store_code_not_by_size():
+    """Manav, 24 Sep: *"can you sort it store code wise, right now its money
+    wise."* It is a filing document — the same store must be on the same line
+    of both tables, and on the same line as it was last month."""
+    f = _frame([_bill(107, "alter", "2026-09-23", 1, 99000, card=99000),
+                _bill(92, "alter", "2026-09-23", 2, 1000, cash=1000),
+                _bill(110, "alter", "2026-09-23", 3, 5000, card=5000)])
+    sources = [_source(107, "alter"), _source(92, "alter", "s2", "East & NE"),
+               _source(110, "alter", "s3", pr="PRMG")]
+    folders = [_folder(), _folder(92, "92_MAN_MALDA", "East & NE"),
+               _folder(110, "110_PRMG_MG_Road")]
+    for span in ("mtd", "ytd"):
+        rows, _t = TL.index_rows(f, sources, folders, "2026-09-24", span)
+        assert [r["code"] for r in rows] == ["92", "107", "110"], span
+
+
+def test_both_tables_carry_the_same_books_on_the_same_lines():
+    """The point of ordering by code: the two tables are read across."""
+    f = _frame([_bill(107, "alter", "2026-05-16", 1, 4500, card=4500),
+                _bill(107, "parking", "2026-09-23", 2, 215, cash=215)])
+    sources = [_source(107, "alter"), _source(107, "parking", "p1")]
+    m, _ = TL.index_rows(f, sources, [_folder()], "2026-09-24", "mtd")
+    y, _ = TL.index_rows(f, sources, [_folder()], "2026-09-24", "ytd")
+    assert [r["key"] for r in m] == [r["key"] for r in y]
+    # May's alteration is in the year and not in the month; parking is in both
+    assert m[0]["total"] == 0 and y[0]["total"] == 4500
+    assert m[1]["total"] == 215 and y[1]["total"] == 215
+
+
+def test_every_index_column_is_declared_in_a_kind():
+    for c, kind, _h in TL.INDEX_SPEC:
+        if c in MONEY:
             assert kind == "rupee", c
-    # ★ and the window each money column covers is named in its own header,
-    # because two correct figures under one label describing different spans is
-    # the most frequent real bug here. See [[feedback-same-estate]].
-    heads = {c: h for c, _k, h in TL.INDEX_SPEC}
-    assert heads["mtd"].startswith("MTD")
-    for c in MONEY + ["bills"]:
-        assert heads[c].startswith("YTD"), c
+    assert dict((c, k) for c, k, _h in TL.INDEX_SPEC)["bills"] == "int"
+    assert set(TL.SPANS) == {"mtd", "ytd"}
 
 
 def test_a_pack_dated_in_the_past_never_shows_what_came_after_it():
@@ -278,10 +306,12 @@ def test_a_pack_dated_in_the_past_never_shows_what_came_after_it():
     a date later than the pack's own. Every window ends at the report date."""
     f = _frame([_bill(107, "alter", "2026-09-10", 1, 4000, card=4000),
                 _bill(107, "alter", "2026-09-23", 2, 9000, card=9000)])
-    rows, total = TL.index_rows(f, [_source()], [_folder()], "2026-09-20")
-    assert rows[0]["total"] == 4000 and rows[0]["mtd"] == 4000
-    assert rows[0]["last"] == "10-09-2026"
-    assert total["total"] == 4000
+    for span in ("mtd", "ytd"):
+        rows, total = TL.index_rows(f, [_source()], [_folder()], "2026-09-20",
+                                    span)
+        assert rows[0]["total"] == 4000, span
+        assert rows[0]["last"] == "10-09-2026", span
+        assert total["total"] == 4000, span
     srows, stotal = TL.summary(f, "2026-09-20")
     sep = next(r for r in srows if r["period"] == "Sep-26")
     assert sep["total"] == 4000 and sep["bills"] == 1
