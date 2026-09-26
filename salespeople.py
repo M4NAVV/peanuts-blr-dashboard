@@ -70,6 +70,115 @@ def _clean_name(s: str) -> str:
     return " ".join(str(s).replace(".", " ").replace("-", " ").split()).title() or "—"
 
 
+# ★★ THE SHEET SPLITS INTO WHO IS SELLING AND WHO HAS STOPPED (Manav, 26 Sep:
+# *"if the staff MTD sales or YTD sales is 0, then u can move them to another
+# table … meaning that they are probably not working for us anymore"*).
+#
+# ★ HIS RULE, TAKEN AS HE GAVE IT — a month OR a year at zero moves the line.
+# Both readings were on the table and this is the one he stated: somebody who
+# has sold nothing this month is not being judged on the same sheet as somebody
+# who is on the floor, whatever they did in April.
+#
+# ★ AND ZERO MEANS "NO SALE TO SHOW", SO NEGATIVE GOES WITH IT. A year that has
+# gone backwards on returns has not sold anything either — the same reading the
+# red rows already use on this sheet (Manav, 9 Sep). Shoaib Akther at −9,998
+# would otherwise sit in the working table on a technicality.
+#
+# ★★ IT IS A SIGNAL, NEVER A VERDICT. Nothing in this feed knows who is
+# employed: it knows who BILLED. Somebody on leave, on a long sick note, or
+# moved to a job that does not write bills lands here too, which is why the
+# table is headed "probably" and the page says so in words.
+def has_left(r) -> bool:
+    return (float(r.get("m_sales") or 0) <= 0
+            or float(r.get("y_sales") or 0) <= 0)
+
+
+# ★★ BIGGEST MONTH FIRST IS THE STANDARD (Manav, 26 Sep: *"MTD sorting becomes
+# the standard"* — he asked for A–Z when the split was built, saw both, and
+# chose this). A–Z is for LOOKING SOMEBODY UP; MTD is for READING THE TEAM —
+# who is carrying the month, and where the floor thins out. On a sheet whose
+# first column is already the month RANK, alphabetical order was the one thing
+# fighting it. `order="az"` is kept because the two jobs are both real.
+ORDERS = {
+    "az": lambda r: str(r["who"]).upper(),
+    "mtd": lambda r: -float(r.get("m_sales") or 0),
+}
+
+
+def split_team(people, order="mtd") -> tuple:
+    """(still selling, probably gone), each in `order`."""
+    by = ORDERS.get(order, ORDERS["az"])
+    # ★ A–Z BREAKS EVERY TIE, including under MTD. Without it two people on
+    # zero swap places between one run and the next, and a sheet that is
+    # printed daily must not shuffle for no reason.
+    key = (by if order == "az"
+           else (lambda r: (by(r), ORDERS["az"](r))))
+    return (sorted([r for r in people if not has_left(r)], key=key),
+            sorted([r for r in people if has_left(r)], key=key))
+
+
+def group_total(L, df, asof, store, ids, label, settled=None):
+    """A subtotal for a subset of the team, from the SAME KPI function.
+
+    ★ NOT A SUM OF THE ROWS ABOVE IT. Sales and pieces would add up, but ABV,
+    ABS and single-piece are ratios over BILLS, and a bill with two names on it
+    is one bill however many people share it. Re-running the KPIs over just
+    these people is the only way the group's ratios mean the same thing as the
+    store's.
+    """
+    d = df[df[L.COL_STORE_LABEL] == store]
+    sid = "SALESPERSON_NO"
+    sub = d[d[sid].astype(str).isin({str(i) for i in ids})]
+    if sub.empty:
+        return None
+    # ★★ THE STORE'S SETTLED DAY, NOT THIS GROUP'S. Derived from these rows
+    # alone, a group that stopped selling in May has a "last settled day" in
+    # May, and its week is a week of May — so the two subtotals would not add
+    # up to the total beneath them. Caught by a test, not by reading.
+    k = L.salesperson_kpis(sub, asof=pd.Timestamp(asof), settled=settled)
+    if k.empty:
+        return None
+    return total_row(k, label)
+
+
+def total_row(k, label="TOTAL"):
+    """The bottom line for whatever set of people `k` describes.
+
+    ★ ONE IMPLEMENTATION, USED FOR THE STORE AND FOR EACH GROUP (26 Sep). The
+    sheet now carries two tables and three totals, and a subtotal computed a
+    second way is how two lines that should add up stop adding up. A group's
+    figures come from running the SAME KPI function over that group's people,
+    so its bills are the group's DISTINCT bills rather than a sum of each
+    person's — the count that is 19 against the store's 18 when one bill has
+    two names on it.
+    """
+    tot = {"rank": None, "who": label, "id": "", "last": None,
+           "share": 100.0, "days": float("nan"), "perday": float("nan"),
+           "move": float("nan"), "first": None, "tenure": float("nan"),
+           "censored": False, "quiet": float("nan"), "flag": ""}
+    # ★ THE STORE'S DISTINCT BILLS, NOT THE SUM OF EACH PERSON'S — a bill with
+    # two salespeople on it is one bill for the store. See `salesperson_kpis`.
+    _sb = k.attrs.get("store_bills") or {}
+    for t in ("d", "w", "m", "q", "y"):
+        b = float(_sb.get(t) or k[f"{t}_bills"].sum())
+        tot[f"{t}_sales"] = float(k[f"{t}_sales"].sum())
+        # ★ UNITS ARE A PLAIN SUM, AND WERE SIMPLY MISSING (23 Sep). The key
+        # was never set, so `_detail_frame`'s `.get(..., 0.0)` printed a zero:
+        # every team sheet has gone out reporting 0 pieces for the day, the
+        # month and the year while the columns above it were full.
+        #
+        # ★ A sum is right here where it is wrong for BILLS. A bill with two
+        # salespeople on it is ONE bill for the store, which is why `b` comes
+        # from `store_bills` — but its PIECES are attributed line by line, so
+        # they add up. Checked against the feed before trusting it: Jayanagar
+        # 24 / 1,278 / 10,797, matching to the piece.
+        tot[f"{t}_units"] = float(k[f"{t}_units"].sum())
+        tot[f"{t}_abv"] = tot[f"{t}_sales"] / b if b else 0.0
+        tot[f"{t}_abs"] = float((k[f"{t}_abs"] * k[f"{t}_bills"]).sum()) / b if b else 0.0
+        tot[f"{t}_single"] = float((k[f"{t}_single"] * k[f"{t}_bills"]).sum()) / b if b else 0.0
+    return tot
+
+
 def store_table(L, df, asof, store):
     """(rows, row_types, meta) for one store — Day, MTD and YTD, four each.
 
@@ -105,36 +214,13 @@ def store_table(L, df, asof, store):
             "censored": bool(r.get("tenure_censored", False)),
             "last": None if pd.isna(ld) else ld,
         }
-        for t in ("d", "m", "q", "y"):
+        for t in ("d", "w", "m", "q", "y"):
             for msr in ("sales", "units", "abv", "abs", "single", "bills"):
                 row[f"{t}_{msr}"] = r.get(f"{t}_{msr}", 0.0)
         rows.append(row)
         types.append("person")
 
-    tot = {"rank": None, "who": "TOTAL", "id": "", "last": None,
-           "share": 100.0, "days": float("nan"), "perday": float("nan"),
-           "move": float("nan"), "first": None, "tenure": float("nan"),
-           "censored": False, "quiet": float("nan"), "flag": ""}
-    # ★ THE STORE'S DISTINCT BILLS, NOT THE SUM OF EACH PERSON'S — a bill with
-    # two salespeople on it is one bill for the store. See `salesperson_kpis`.
-    _sb = k.attrs.get("store_bills") or {}
-    for t in ("d", "m", "q", "y"):
-        b = float(_sb.get(t) or k[f"{t}_bills"].sum())
-        tot[f"{t}_sales"] = float(k[f"{t}_sales"].sum())
-        # ★ UNITS ARE A PLAIN SUM, AND WERE SIMPLY MISSING (23 Sep). The key
-        # was never set, so `_detail_frame`'s `.get(..., 0.0)` printed a zero:
-        # every team sheet has gone out reporting 0 pieces for the day, the
-        # month and the year while the columns above it were full.
-        #
-        # ★ A sum is right here where it is wrong for BILLS. A bill with two
-        # salespeople on it is ONE bill for the store, which is why `b` comes
-        # from `store_bills` — but its PIECES are attributed line by line, so
-        # they add up. Checked against the feed before trusting it: Jayanagar
-        # 24 / 1,278 / 10,797, matching to the piece.
-        tot[f"{t}_units"] = float(k[f"{t}_units"].sum())
-        tot[f"{t}_abv"] = tot[f"{t}_sales"] / b if b else 0.0
-        tot[f"{t}_abs"] = float((k[f"{t}_abs"] * k[f"{t}_bills"]).sum()) / b if b else 0.0
-        tot[f"{t}_single"] = float((k[f"{t}_single"] * k[f"{t}_bills"]).sum()) / b if b else 0.0
+    tot = total_row(k)
     rows.append(tot)
     types.append("subtotal")
 
@@ -223,6 +309,7 @@ def store_table(L, df, asof, store):
         "fresh": fresh,
     }
     return rows, types, {"team": len(people), "day": k.attrs.get("day"),
+                         "week": k.attrs.get("week"),
                          "store_single": st_single, "store_abs": st_abs,
                          "move_min": MOVE_MIN,
                          "min_bills": MIN_BILLS,
@@ -281,7 +368,17 @@ _ORDER = ["#", "SALESPERSON", "FLAG", "SELLING FOR", "DAY SALES",
 # table which covers performance for all employees over day, mtd and ytd."*
 # Every person, every period, one sheet — the reference half of the pair, where
 # the pointer sheet is the five-minute half.
-_PERIODS = (("d", "DAY"), ("m", "MTD"), ("y", "YTD"))
+# ★★ THE FIRST BLOCK IS THE WEEK, NOT THE DAY (Manav, 26 Sep: *"instead of the
+# day data, make it week, gives more insight"*). A single day of one
+# salesperson is mostly noise — on 22 Sep fourteen of Jayanagar's twenty-seven
+# had a clean zero in every day column, which says nothing about them and
+# leaves two thirds of the block empty. Seven days is the smallest window that
+# holds a full trading week, weekend included, and a weekend is most of a
+# shop's month. It is a ROLLING seven days ending on the last settled day, not
+# Monday-to-date: week-to-date on a Monday is one day, which is the column it
+# replaced. The day itself is still on the POINTER sheet, where "who sold
+# yesterday" is the question being asked.
+_PERIODS = (("w", "WEEK"), ("m", "MTD"), ("y", "YTD"))
 _MEASURES = (("sales", "SALES"), ("units", "UNITS"), ("abv", "ABV"),
              ("abs", "ABS"), ("single", "SINGLE"))
 _D_MONEY = [f"{t} {m}" for _, t in _PERIODS for k, m in _MEASURES
@@ -305,7 +402,7 @@ _D_ORDER = (["TOP", "#", "SALESPERSON", "SELLING FOR"]
 STAR_MIN_BILLS = 10
 
 #            column        label                              higher  bills-in
-_STAR_ON = (("d_sales", "top day sales", True, None),
+_STAR_ON = (("w_sales", "top week sales", True, None),
             ("m_sales", "top month sales", True, None),
             ("y_sales", "top year sales", True, None),
             ("m_units", "most pieces this month", True, None),
@@ -516,7 +613,7 @@ def _top_cards(rows, meta, width):
 
 
 def _fit_table(disp, money, pct, num, content_w, usable, fixed, whole=(),
-               sign=()):
+               sign=(), extra_headers=0):
     """Largest type that fits, then the most air that still fits.
 
     ★ THIS TABLE IS WIDTH-BOUND, NOT HEIGHT-BOUND, and that is the whole reason
@@ -537,7 +634,12 @@ def _fit_table(disp, money, pct, num, content_w, usable, fixed, whole=(),
         while lo <= hi:
             mid = (lo + hi) // 2
             m = A4._measure(disp, money, pct, sign, mid, num=num, whole=whole)
-            h = m["head_h"] + m["row_h"] * len(disp)
+            # ★ EVERY HEADER THE PAGE WILL DRAW, not just the first. The sheet
+            # renders the split as two chunks and `_render_chunk` repeats the
+            # column header on each, so a fit computed against one header sized
+            # the type to a page taller than the one it would be drawn on — and
+            # a one-page report quietly became two.
+            h = m["head_h"] * (1 + extra_headers) + m["row_h"] * len(disp)
             if m["W"] <= content_w and fixed + h <= usable:
                 here, lo = (mid, m), mid + 1
             else:
@@ -557,7 +659,11 @@ def _fit_table(disp, money, pct, num, content_w, usable, fixed, whole=(),
     for cand in range(pad + 1, 41):
         PP.PAD_Y = PP._px(cand)
         mm = A4._measure(disp, money, pct, sign, font_px, num=num, whole=whole)
-        if fixed + mm["head_h"] + mm["row_h"] * len(disp) > usable:
+        # ★ THE SAME HEADER COUNT AS THE LOOP ABOVE. Opening the rows against
+        # one header while the page draws two put the second table's last rows
+        # over the edge — the type was right and the AIR was wrong.
+        if (fixed + mm["head_h"] * (1 + extra_headers)
+                + mm["row_h"] * len(disp) > usable):
             break
         pad, m = cand, mm
     PP.PAD_Y = PP._px(pad)
@@ -954,7 +1060,7 @@ def _extremes(rows, col, best_high):
     return (hi, lo) if best_high else (lo, hi)
 
 
-def detailed_sheet(L, df, asof, store, code=None):
+def detailed_sheet(L, df, asof, store, code=None, order="mtd"):
     """MANAGER DETAILED TEAM REPORT — ONE page, every employee, every period.
 
     ★ ONE PAGE, EXTENSIVE (Manav, 7 Sep): *"one page with an extensive table
@@ -986,9 +1092,14 @@ def detailed_sheet(L, df, asof, store, code=None):
     # in a fifty-name list ordered by sales means reading every row.
     for n, r in enumerate(people, start=1):
         r["rank"] = n
-    won = _stars(people)
-    people = sorted(people, key=lambda r: str(r["who"]).upper())
+    people = sorted(people, key=ORDERS["az"])
+    selling, left_over = split_team(people, order)
+    # ★ A STAR IS WON AMONG THE PEOPLE STILL SELLING. Handing "top year sales"
+    # to somebody the same sheet has just moved into "probably no longer with
+    # us" is two statements about one person that cannot both be acted on.
+    won = _stars(selling)
     _day, _pm = meta.get("day"), meta.get("prev_month")
+    _wk = meta.get("week")
 
     # ★ A LITTLE MORE WEIGHT, JUST HERE (Manav, 23 Sep: *"the font weight is
     # too light, can u bolden it a little, not too much"*). Noto Sans is a
@@ -1004,13 +1115,20 @@ def detailed_sheet(L, df, asof, store, code=None):
     A4.CONTENT_W = A4.PAGE_W - 2 * A4.MARGIN
     try:
         W = A4.CONTENT_W
+        # ★ THE WEEK NAMES ITS OWN DATES. "WEEK" over a column could mean the
+        # calendar week, the last seven days or the week somebody has in their
+        # head; printed as 19–25 Sep it can only mean one thing, and a reader
+        # can check it against the feed.
+        _wtxt = (f"week = {_wk[0]:%d %b}–{_wk[1]:%d %b} (the 7 days to the "
+                 f"last day with bills)" if _wk else "")
         title = A4._heading(
             W, f"{store} — team detail",
-            f"all {len(people)} on the books, A–Z  ·  {len(live)} sold in the "
-            f"last "
-            f"{ABSENT_DAYS} days  ·  day = {_day:%d %b} (the last day with "
-            f"bills)  ·  month and year to {asof:%d %b %Y}  ·  # is the month "
-            f"rank" if _day else f"as of {asof:%d %b %Y}")
+            f"all {len(people)} on the books, "
+            f"{'A–Z' if order == 'az' else 'biggest month first'}  ·  "
+            f"{len(live)} sold in the "
+            f"last {ABSENT_DAYS} days  ·  {_wtxt}  ·  month and year to "
+            f"{asof:%d %b %Y}  ·  # is the month rank"
+            if _wk else f"as of {asof:%d %b %Y}")
 
         # ---- the pills ----------------------------------------------------
         def _who(key, best_high=True):
@@ -1024,7 +1142,7 @@ def detailed_sheet(L, df, asof, store, code=None):
         sh = meta.get("shape") or {}
         pills = [
             ("Top of the month", _who("m_sales")),
-            ("Top yesterday", _who("d_sales")),
+            ("Top this week", _who("w_sales")),
             ("Most pieces this month", _who("m_units")),
             ("Biggest bill this month", _who("m_abv")),
         ]
@@ -1039,8 +1157,8 @@ def detailed_sheet(L, df, asof, store, code=None):
         pill_img2 = _pills(W, pills[4:]) if len(pills) > 4 else None
 
         cap = A4._caption(
-            W, "Everybody, on the day, the month and the year",
-            "The star marks whoever TOPS a measure — day, month or year sales, most "
+            W, "Everybody, on the week, the month and the year",
+            "The star marks whoever TOPS a measure — week, month or year sales, most "
             "pieces, biggest bill, biggest basket, or the lowest single-piece "
             "share. A star is won on ONE measure, not on an overall score, "
             "because the best seller by money is rarely the one moving the "
@@ -1049,7 +1167,11 @@ def detailed_sheet(L, df, asof, store, code=None):
             "sales per bill · ABS is LINES per bill, not garments · SINGLE is "
             "the share of bills that left with one piece, so lower is better")
 
-        notes = []
+        notes = ["The second table is a SIGNAL, not a record: this feed "
+                 "knows who BILLED, not who is employed, so somebody on "
+                 "leave, on a long sick note or moved off the floor lands "
+                 "there too. Each table carries its own subtotal; the grand "
+                 "total is the store."]
         if meta.get("excluded"):
             notes.append(f"Rs {meta['excluded']:,.0f} of night-fill sale is not "
                          f"in this table — it belongs to nobody yet.")
@@ -1064,11 +1186,43 @@ def detailed_sheet(L, df, asof, store, code=None):
         note = (A4._text_block(W, [(" ".join(notes), A4._ft(21)[0], A4.SUB)])
                 if notes else None)
 
-        disp = _detail_frame(people + [total], won)
-        ptypes = types
+        # ★★ TWO TABLES, TWO SUBTOTALS, ONE GRAND TOTAL (Manav, 26 Sep). They
+        # are ONE MEASURED TABLE rendered as two chunks, not two tables: two
+        # would size their columns independently and the same measure would sit
+        # at a different place on each, which is the reading this split exists
+        # to make easy.
+        sub_sell = group_total(L, df, asof, store, [r["id"] for r in selling],
+                               "SUBTOTAL  ·  still selling", settled=_day)
+        sub_left = group_total(L, df, asof, store, [r["id"] for r in left_over],
+                               "SUBTOTAL  ·  probably gone", settled=_day)
+        block, ptypes = [], []
+        block += selling
+        ptypes += ["person"] * len(selling)
+        if sub_sell:
+            block.append(sub_sell)
+            ptypes.append("subtotal")
+        n_first = len(block)
+        block += left_over
+        ptypes += ["person"] * len(left_over)
+        if sub_left:
+            block.append(sub_left)
+            ptypes.append("subtotal")
+        block.append(total)
+        ptypes.append("grand" if "grand" in PP._ROW_BG else "subtotal")
+        disp = _detail_frame(block, won)
+
+        cap1 = A4._caption(
+            W, f"Still selling  ·  {len(selling)}",
+            "sold something this month AND this year  ·  "
+            + ("A–Z" if order == "az" else "biggest month first"))
+        cap2 = A4._caption(
+            W, f"Probably no longer with us  ·  {len(left_over)}",
+            "nothing on the month, or nothing on the year  ·  "
+            + ("A–Z" if order == "az" else "biggest month first"))
         fixed = (title.height + 20 + pill_img.height + 12
                  + (pill_img2.height + 12 if pill_img2 else 0)
-                 + cap.height + 8 + (note.height + 14 if note else 0) + 20)
+                 + cap.height + 8 + (note.height + 14 if note else 0) + 20
+                 + cap1.height + 8 + cap2.height + 8 + 20)
         # ★ THE FOOTER BAND IS PART OF THE PAGE. Fitting against
         # `PAGE_H - 2*MARGIN` ignored the ~9mm `_Sheet` reserves for the
         # footer, so the table was sized to a page slightly taller than the one
@@ -1079,7 +1233,8 @@ def detailed_sheet(L, df, asof, store, code=None):
         usable = A4.PAGE_H - 2 * A4.MARGIN - _foot
         font_px, _p, m = _fit_table(disp, _D_MONEY, _D_PCT, _D_NUM, W,
                                     usable, fixed,
-                                    whole=_D_WHOLE, sign=_D_SIGN)
+                                    whole=_D_WHOLE, sign=_D_SIGN,
+                                    extra_headers=1 if left_over else 0)
 
         sheet = A4._Sheet(store, asof, "", bounded=True, footer=True)
         sheet.put(title, gap=20)
@@ -1091,7 +1246,7 @@ def detailed_sheet(L, df, asof, store, code=None):
             sheet.put(note, gap=14)
         # ★ THE PERIOD BLOCKS, keyed on where each column actually lands so the
         # bands follow the spec rather than a hard-coded count.
-        _band = {"DAY": _BAND_DAY, "MTD": _BAND_MTD, "YTD": _BAND_YTD}
+        _band = {"WEEK": _BAND_DAY, "MTD": _BAND_MTD, "YTD": _BAND_YTD}
         _colbg = {j: _band[c.split()[0]] for j, c in enumerate(_D_ORDER)
                   if c.split()[0] in _band}
 
@@ -1118,7 +1273,9 @@ def detailed_sheet(L, df, asof, store, code=None):
         # to show for it", and he wants them read the same way: the FULL line
         # in red, name included. Nayaz P at -5,499 joins the two who are flat.
         _ink = {}
-        for i, r in enumerate(people):
+        for i, r in enumerate(block):
+            if ptypes[i] != "person":
+                continue
             if float(r.get("y_sales") or 0) <= 0:
                 _ink[i] = _INK_DEAD
             elif id(r) in won:
@@ -1138,14 +1295,25 @@ def detailed_sheet(L, df, asof, store, code=None):
         # Colour only — see the note in `_render_chunk`. Bolding every zero in
         # three columns made the page read as heavy; the red already carries it.
         _cell_rules = tuple((c, _dead, _INK_DEAD, ("person",), False)
-                            for c in ("DAY SALES", "MTD SALES", "YTD SALES"))
+                            for c in ("WEEK SALES", "MTD SALES", "YTD SALES"))
 
         _wm = A4._widen(m, W)
-        _body = PP._render_chunk(_wm, ptypes, list(range(len(disp))),
-                                 col_bg=_colbg, row_ink=_ink,
-                                 cell_rules=_cell_rules)
-        _draw_stars(_body, _wm, [id(r) in won for r in people] + [False])
-        sheet.put(_body, gap=20)
+
+        def _chunk(lo, hi):
+            img = PP._render_chunk(_wm, ptypes, list(range(lo, hi)),
+                                   col_bg=_colbg, row_ink=_ink,
+                                   cell_rules=_cell_rules)
+            # ★ THE STAR LIST IS POSITIONAL WITHIN THE CHUNK, not within the
+            # sheet — passing the whole sheet's flags to the second table drew
+            # its stars against the wrong rows.
+            _draw_stars(img, _wm, [id(block[i]) in won
+                                   for i in range(lo, hi)])
+            return img
+
+        sheet.put(cap1, gap=8)
+        sheet.put(_chunk(0, n_first), gap=20)
+        sheet.put(cap2, gap=8)
+        sheet.put(_chunk(n_first, len(block)), gap=20)
         out = sheet.pdf()
         npages = len(sheet.pages)
     finally:

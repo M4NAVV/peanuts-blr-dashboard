@@ -550,7 +550,7 @@ def sold_units(df: pd.DataFrame) -> float:
     return float(unit_delta(df).sum())
 
 
-def salesperson_kpis(df: pd.DataFrame, asof=None) -> pd.DataFrame:
+def salesperson_kpis(df: pd.DataFrame, asof=None, settled=None) -> pd.DataFrame:
     """Per salesperson: sales, ABS, ABV and single-bill share, on the day, the
     month and the year.
 
@@ -594,15 +594,29 @@ def salesperson_kpis(df: pd.DataFrame, asof=None) -> pd.DataFrame:
     # ★ AND THE DAY IS THE LAST SETTLED ONE, not the feed's last date. The
     # morning after a night fill, the newest day has takings and no bills, so a
     # "day" column keyed to it reads zero for every person on the team.
-    settled = df["date"].max()
+    # ★★ THE SETTLED DAY CAN BE HANDED IN, AND MUST BE WHEN THIS IS ASKED OF
+    # PART OF A STORE (26 Sep). The team sheet now sums a subgroup — the people
+    # who have stopped selling — and derived from their own rows alone, their
+    # "last settled day" is the last day THEY billed, which can be months back.
+    # The group's week then covered a different seven days from the store's,
+    # and the two subtotals stopped adding up to the total under them. Two
+    # correct figures describing different spans: see [[feedback-same-estate]].
+    settled = df["date"].max() if settled is None else pd.Timestamp(settled)
     fy = asof.year if asof.month >= 4 else asof.year - 1
     # ★ THE QUARTER IS THE FISCAL ONE — Apr-Jun, Jul-Sep, Oct-Dec, Jan-Mar
     # (Manav, 4 Sep). A calendar quarter would cut the year in the wrong places
     # and put April in the same block as the previous March, which is a
     # different trading year on every other sheet in this dashboard.
     _q0 = pd.Timestamp(fy, 4, 1) + pd.DateOffset(months=3 * ((asof.month - 4) % 12 // 3))
+    # ★ THE WEEK IS A ROLLING SEVEN DAYS ENDING ON THE SETTLED DAY, not
+    # Monday-to-date (Manav, 26 Sep — he chose it over week-to-date). It is a
+    # diagnostic window, not a target one: a week-to-date column would be ONE
+    # day on a Monday and two on a Tuesday, which is the day it was brought in
+    # to replace. Seven days always carries a full trading week, including the
+    # weekend that is most of a shop's month.
     windows = {
         "d": (settled, settled),
+        "w": (settled - pd.Timedelta(days=6), settled),
         "m": (asof.replace(day=1), asof),
         "q": (_q0, asof),
         "y": (pd.Timestamp(fy, 4, 1), asof),
@@ -749,6 +763,7 @@ def salesperson_kpis(df: pd.DataFrame, asof=None) -> pd.DataFrame:
     out.attrs["day"] = settled
     out.attrs["asof"] = asof
     out.attrs["quarter"] = windows["q"]
+    out.attrs["week"] = windows["w"]
     out.attrs["horizon"] = horizon
     out.attrs["prev_month"] = (plo, phi)
     out.attrs["excluded_provisional"] = excluded
