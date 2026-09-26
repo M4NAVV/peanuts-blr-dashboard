@@ -1298,10 +1298,23 @@ def render_portfolio():
             _TG.load()
             if _TG.last_problem():
                 st.warning(f"⚠️ Targets: {_TG.last_problem()}.")
+        _sms_day = None
         if "night_sms" in chosen:
             st.caption("ℹ️ Night SMS: target columns are **blank until targets "
-                       "exist**, and manual sale is blank until the night fill "
-                       "has that column. Everything else is live.")
+                       "exist**. Everything else is live.")
+            # ★ ANY NIGHT, NOT JUST THE LAST (Manav, 26 Sep). Leave it on the
+            # latest and nothing changes; pick a date and the night is rebuilt
+            # from the portfolio sheet, with the brand split off the bill feed
+            # — the tab that used to hold it is overwritten every evening.
+            _sms_latest = pf_all["date"].max().date()
+            _sms_pick = st.date_input(
+                "Night SMS — which night", value=_sms_latest,
+                min_value=pf_all["date"].min().date(), max_value=_sms_latest,
+                key="rp_sms_day",
+                help="Defaults to the latest night in the sheet. Any earlier "
+                     "night is rebuilt from the sheet's own history.")
+            if _sms_pick != _sms_latest:
+                _sms_day = _sms_pick
         if "east_ltol" in chosen:
             st.caption("ℹ️ East L-to-L: new/old is fixed for the year against "
                        "1 April of the previous year, so **June and July read a "
@@ -1354,7 +1367,15 @@ def render_portfolio():
                             RTD.build_month_wise(pf_all, vdf, v_asof, tdb))
                     if "night_sms" in chosen:
                         _prog.step("Night SMS")
-                        built.append(RTD.build_night_sms(pf_all, basis_label=tdb))
+                        # ★ ANY NIGHT, NOT JUST THE LAST ONE (26 Sep). The tab it
+                    # used to read is overwritten every evening, so a night
+                    # could never be reproduced; the sheet keeps the figures
+                    # and the bill feed keeps the brand split.
+                    built.append(RTD.build_night_sms(
+                        pf_all, basis_label=tdb,
+                        day=(None if _sms_day is None
+                             else pd.Timestamp(_sms_day)),
+                        vfl_df=get_data()))
                     if "reviews" in chosen:
                         _prog.step("Google reviews")
                         import reviews as RV

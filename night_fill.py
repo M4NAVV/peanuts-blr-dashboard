@@ -451,3 +451,96 @@ def vfl_rows_if_newer(raw: pd.DataFrame, url=None) -> pd.DataFrame | None:
         return out
     except Exception:
         return None
+
+
+# --------------------------------------------------------------------------- #
+#  Reading the night out of the portfolio sheet instead
+# --------------------------------------------------------------------------- #
+# Manav, 26 Sep 2026: *"the plan is to stop tinku night fill, and get the data
+# typed in peanutstotal directly, so that saves a step there."*
+#
+# The portfolio sheet already carries every column the night SMS reads —
+# `Total`, `BILL`, `QTY`, `FOOTFALL`, `Day Target`, `MANUAL SALE`, `CITY` —
+# so once the figures are typed there, this tab has nothing left to add. The
+# SMS asked `night_fill.load()` for them and RAISED without it, which would
+# have made "stop typing in the tab" break a live report on the first night.
+#
+# ★ IT IS ONE ROW PER STORE, NOT ONE PER BRAND LINE. That is the single real
+# difference, and it is why the SMS's Manyavar / Mohey / Twamev columns come
+# back BLANK from this source unless the sheet is given those three columns.
+# Blank is the honest reading — `g()` already returns None for a store with no
+# brand lines, which prints an empty cell rather than a zero that would say the
+# store sold no Mohey. The three columns are exactly what the intake form
+# collects, so they arrive with it. See [[feedback-silent-failure-must-speak]].
+_PF_EXTRAS = (("bills", ("BILL", "BILLS")), ("qty", ("QTY",)),
+              ("footfall", ("FOOTFALL",)),
+              ("manual", ("MANUAL SALE", "MANUAL")),
+              ("day_target", ("DAY TARGET", "TODAY TARGET", "Day Target")))
+_PF_BRANDS = (("manyavar", ("MANYAVAR", "MANYAVAR SALES")),
+              ("mohey", ("MOHEY", "MOHEY SALES")),
+              ("twamev", ("TWAMEV", "TWAMEV SALES")))
+
+
+def from_portfolio(pf, day=None):
+    """The portfolio sheet's newest day, in the shape `load()` returns.
+
+    `day` pins it; otherwise the sheet's own last date is used. Returns None
+    when there is nothing to read, so a caller can fall back.
+    """
+    if pf is None or not len(pf):
+        return None
+    d = pf.copy()
+    if "date" not in d.columns:
+        return None
+    d = d[d["date"].notna()]
+    if not len(d):
+        return None
+    day = pd.Timestamp(day).normalize() if day is not None else d["date"].max()
+    d = d[d["date"] == day]
+    if not len(d):
+        return None
+
+    def num(s):
+        return pd.to_numeric(
+            s.astype(str).str.replace(",", "", regex=False).str.strip()
+            .replace({"": None, "nan": None, "-": None}), errors="coerce")
+
+    out = pd.DataFrame({
+        "code": pd.to_numeric(d.get("code", d.get("STORE CODE")),
+                              errors="coerce").astype("Int64"),
+        "date": day,
+        "value": num(d["Total"]) if "Total" in d.columns else num(d["sales"]),
+        # ★ NO BRAND LINE IN THIS SHEET. `line` is what `_line_bucket` reads to
+        # split a store's night three ways; a single row per store has no line,
+        # and saying so plainly is better than inventing one.
+        "gender": "", "line": "",
+    })
+    out["city"] = (d["CITY"].astype(str).str.strip()
+                   if "CITY" in d.columns
+                   else d.get("city", pd.Series("", index=d.index))
+                   .astype(str).str.strip())
+    for key, names in _PF_EXTRAS + _PF_BRANDS:
+        col = _find(list(d.columns), names)
+        if col is not None:
+            out[key] = num(d[col]).values
+    out = out[out["code"].notna()].reset_index(drop=True)
+    return out if len(out) else None
+
+
+def for_night(pf, url=None):
+    """(frame, source) — whichever source holds the newest night.
+
+    ★ THE SHEET WINS A TIE. It is the authoritative feed and the tab is only
+    ever a head start, so the moment the figures are typed into the sheet the
+    tab stops being consulted — with no switch to throw and nothing to
+    remember to turn off. Exactly the rule the overlay itself follows.
+    """
+    tab = load(url)
+    sheet = from_portfolio(pf)
+    if tab is None:
+        return (sheet, "the portfolio sheet") if sheet is not None else (None, "")
+    if sheet is None:
+        return tab, "the night fill tab"
+    if pd.Timestamp(sheet["date"].iloc[0]) >= pd.Timestamp(tab["date"].iloc[0]):
+        return sheet, "the portfolio sheet"
+    return tab, "the night fill tab"

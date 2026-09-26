@@ -1227,7 +1227,97 @@ def _line_bucket(name: str) -> str:
     return "other"
 
 
-def south_night_sms(pf_df, region=None, targets=None) -> dict:
+def _feed_split(day, codes, vfl_df=None) -> dict:
+    """{code: {manyavar, mohey, twamev}} for one day, from the BILL feed.
+
+    ★★ THE ONLY SOURCE THAT SURVIVES A BACKDATE (Manav, 26 Sep: *"tinku night
+    fill gets overwritten everyday, so if i backdate a report … the data was
+    overwritten, is there some fallback there?"*). The tab holds one night and
+    is written over; the bill feed carries brand at line level for every VFL
+    store, for all history.
+
+    ★ AND IT IS MORE ACCURATE THAN THE TAB WAS, not a degraded substitute.
+    Checked against the tab for 25 Sep across the twenty stores that have a
+    split: Manyavar exact on 16, Mohey on 18, Twamev on 17 — and every
+    disagreement is the tab failing to separate Twamev. Mani Square's whole
+    Rs 43,437 sat under Manyavar there; the feed splits it 31,439 / 11,998.
+    """
+    try:
+        import loader as L
+        df = L.load_data() if vfl_df is None else vfl_df
+    except Exception:
+        return {}
+    # ★ A FEED THAT CANNOT ANSWER RETURNS NOTHING, IT DOES NOT RAISE. This is
+    # the last fallback in a chain; blowing up here would take down a whole
+    # night's report over a brand column.
+    if df is None or not len(df) or "date" not in getattr(df, "columns", []):
+        return {}
+    day = pd.Timestamp(day).normalize()
+    d = df[df["date"] == day]
+    if not len(d):
+        return {}
+    d = d.copy()
+    d["_b"] = L.brand_line_vfl(d).map(
+        {"MANYAVAR": "manyavar", "MOHEY": "mohey",
+         "TWAMEV MEN": "twamev", "TWAMEV-WOMEN": "twamev"})
+    master = L.load_store_master()[["tableau_name", "code"]].dropna()
+    master["code"] = master["code"].astype(int)
+    d = d.merge(master, left_on=L.COL_STORE_LABEL, right_on="tableau_name",
+                how="left")
+    d = d[d["code"].notna()]
+    if not len(d):
+        return {}
+    d["code"] = d["code"].astype(int)
+    g = d.groupby(["code", "_b"])[L.COL_AMOUNT].sum()
+    out = {}
+    for (c, b), v in g.items():
+        if c in set(codes) and b in ("manyavar", "mohey", "twamev"):
+            out.setdefault(int(c), {})[b] = float(v)
+    # A store the feed knows must report all three, so a brand it does not
+    # carry reads 0 rather than blank — the feed HAS looked and found none.
+    for c in out:
+        for b in ("manyavar", "mohey", "twamev"):
+            out[c].setdefault(b, 0.0)
+    return out
+
+
+def brand_split(t, codes, day, vfl_df=None) -> dict:
+    """The night's brand split, from the best source that can answer.
+
+    In order: columns the sheet was given (what the intake form fills), then
+    the tab's per-line rows, then the bill feed. A store no source can answer
+    for is ABSENT — and an absent store prints an empty cell, never a zero
+    that would say it sold no Mohey.
+    """
+    out = {}
+    have_cols = [b for b in ("manyavar", "mohey", "twamev") if b in t.columns]
+    if have_cols:
+        for c in codes:
+            mine = t[t["code"] == c]
+            got = {b: mine[b].sum(min_count=1) for b in have_cols}
+            got = {b: float(v) for b, v in got.items() if not pd.isna(v)}
+            if got:
+                out[int(c)] = {b: got.get(b, 0.0)
+                               for b in ("manyavar", "mohey", "twamev")}
+    if "line" in t.columns:
+        bucket = t["line"].map(_line_bucket)
+        for c in codes:
+            if int(c) in out:
+                continue
+            mine = t[(t["code"] == c)]
+            b_ = bucket[mine.index]
+            if not b_.isin(("manyavar", "mohey", "twamev")).any():
+                continue
+            out[int(c)] = {b: float(mine[b_ == b]["value"].sum())
+                           for b in ("manyavar", "mohey", "twamev")}
+    missing = [c for c in codes if int(c) not in out]
+    if missing:
+        out.update(_feed_split(day, missing, vfl_df))
+    return out
+
+
+def south_night_sms(pf_df, region=None, targets=None, day=None,
+                    vfl_df=None) -> dict:
     """The night SMS, as of the night fill's own day.
 
     `region=None` (the default since 14 Aug) reports the WHOLE estate in one
@@ -1240,12 +1330,32 @@ def south_night_sms(pf_df, region=None, targets=None) -> dict:
     import portfolio_loader as PL
     import loader as L
     import targets as TG
-    t = night_fill.load()
-    if t is None:
-        raise RuntimeError(
-            f"the night fill is not available ({night_fill.last_problem() or 'not configured'}) "
-            "— it is the only source for the day's figures at this hour.")
-    day = pd.Timestamp(t["date"].iloc[0])
+    # ★ EITHER SOURCE, WHICHEVER HOLDS THE NEWER NIGHT (26 Sep). This used to
+    # demand the night fill tab and raise without it — so the day the figures
+    # start being typed into the portfolio sheet instead, a live report would
+    # have died. The sheet wins a tie because it is the authoritative feed;
+    # the tab is only ever a head start. See `night_fill.for_night`.
+    # ★ A DAY CAN BE ASKED FOR (26 Sep). Without it the report was always
+    # "whatever night the source happens to hold", so a night could never be
+    # reproduced once the tab had been written over. Asked for a past day the
+    # figures come from the portfolio sheet, which keeps history — and the
+    # brand split from the bill feed, which keeps it at line level.
+    if day is not None:
+        day = pd.Timestamp(day).normalize()
+        t = night_fill.from_portfolio(pf_df, day)
+        _source = "the portfolio sheet"
+        if t is None:
+            raise RuntimeError(
+                f"the portfolio sheet has no rows for {day:%d %b %Y}.")
+    else:
+        t, _source = night_fill.for_night(pf_df)
+        if t is None:
+            raise RuntimeError(
+                "no source for tonight's figures — neither the portfolio sheet "
+                f"nor the night fill tab "
+                f"({night_fill.last_problem() or 'not configured'}) "
+                "has a day to report.")
+        day = pd.Timestamp(t["date"].iloc[0])
     if targets is None:
         targets = TG.for_month(day)          # year + month; day comes below
 
@@ -1289,16 +1399,18 @@ def south_night_sms(pf_df, region=None, targets=None) -> dict:
 
     t = t[t["code"].isin(codes)].copy()
     t["bucket"] = t["line"].map(_line_bucket)
+    _split = brand_split(t, codes, day, vfl_df)
+
     def g(c, b):
-        """A brand line's share of the store's night, or None for a store that
-        has no brand lines. The tab splits VFL stores by line and gives every
-        other store a single row, so a Turtle or Colorplus store has no Mohey to
-        report — and a zero there would say it sold none, not that the question
-        does not apply."""
-        mine = t[t["code"] == c]
-        if not mine["bucket"].isin(("manyavar", "mohey", "twamev")).any():
-            return None
-        return float(mine[mine["bucket"] == b]["value"].sum())
+        """A brand line's share of the store's night, or None for a store no
+        source can answer for.
+
+        A Turtle or Colorplus store has no Mohey to report, and a zero there
+        would say it sold none rather than that the question does not apply.
+        The sources are resolved once, in `brand_split`.
+        """
+        got = _split.get(int(c))
+        return None if got is None else got.get(b)
 
     def col(c, k):
         """A per-store extra, or None when nothing was typed for it.
@@ -1755,7 +1867,7 @@ def _stack(images, gap):
 
 
 def build_night_sms(pf_df, region=None, targets=None,
-                    basis_label="") -> tuple[str, bytes]:
+                    basis_label="", day=None, vfl_df=None) -> tuple[str, bytes]:
     """One comprehensive PDF: every store, in every city, in one sheet.
 
     South and East were two files until 14 Aug. They asked the same questions of
@@ -1766,7 +1878,8 @@ def build_night_sms(pf_df, region=None, targets=None,
     in step.
     """
     with _LOCK:
-        sheet = south_night_sms(pf_df, region=region, targets=targets)
+        sheet = south_night_sms(pf_df, region=region, targets=targets,
+                                day=day, vfl_df=vfl_df)
         day = sheet["day"]
         contents = [(f"{sheet['region']} · Night sale SMS · {day:%d %b %Y}",
                      render_night_sms(sheet))]
