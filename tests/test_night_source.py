@@ -161,7 +161,8 @@ def test_the_night_sms_resolves_the_split_from_the_best_source():
 
     import report_td as RTD
     src = inspect.getsource(RTD.south_night_sms)
-    assert "brand_split(t, codes, day, vfl_df)" in src
+    assert "brand_split(t, codes, day, vfl_df," in src
+    assert "tab=" in src                      # the tab is offered too
 
 
 # --------------------------------------------------------------------------- #
@@ -225,3 +226,32 @@ def test_the_report_takes_a_day_and_the_app_offers_one():
     assert "day" in inspect.signature(RTD.build_night_sms).parameters
     src = Path("app.py").read_text()
     assert 'key="rp_sms_day"' in src and "day=(None if _sms_day is None" in src
+
+
+def test_the_tab_can_answer_the_split_even_when_the_sheet_won_the_night():
+    """★★ FOUND BY RUNNING THE DEPLOYED CODE AGAINST THE LIVE FEEDS. The sheet
+    is now a day AHEAD of the tab, and on a night where BOTH hold the day
+    "the sheet wins" would have thrown away the only split available — the
+    sheet has no brand line and the bill feed has not landed yet.
+
+    Winning the tie decides where the FIGURES come from. It must never decide
+    to answer a question with nothing when another source can answer it."""
+    import report_td as RTD
+    sheet = pd.DataFrame([{"code": 107, "value": 600000.0, "line": ""}])
+    tab = pd.DataFrame([
+        {"code": 107, "date": DAY, "value": 400000.0, "line": "MANYAVAR"},
+        {"code": 107, "date": DAY, "value": 200000.0, "line": "MOHEY-SAREE"},
+    ])
+    got = RTD.brand_split(sheet, [107], DAY, vfl_df=pd.DataFrame(), tab=tab)
+    assert got[107]["manyavar"] == 400000.0 and got[107]["mohey"] == 200000.0
+
+
+def test_a_tab_from_another_night_is_not_used_for_this_one():
+    """★ The tab holds ONE night and is written over. Reading it for a day it
+    does not cover would file one night's split against another."""
+    import report_td as RTD
+    sheet = pd.DataFrame([{"code": 107, "value": 600000.0, "line": ""}])
+    tab = pd.DataFrame([{"code": 107, "date": DAY - pd.Timedelta(days=1),
+                         "value": 400000.0, "line": "MANYAVAR"}])
+    got = RTD.brand_split(sheet, [107], DAY, vfl_df=pd.DataFrame(), tab=tab)
+    assert 107 not in got

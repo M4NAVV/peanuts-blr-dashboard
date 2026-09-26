@@ -1281,7 +1281,25 @@ def _feed_split(day, codes, vfl_df=None) -> dict:
     return out
 
 
-def brand_split(t, codes, day, vfl_df=None) -> dict:
+def _line_split(frame, codes, want) -> dict:
+    """{code: {brand: value}} from any frame that has per-line rows."""
+    out = {}
+    if frame is None or not len(frame) or "line" not in frame.columns:
+        return out
+    bucket = frame["line"].map(_line_bucket)
+    for c in want:
+        mine = frame[frame["code"] == c]
+        if not len(mine):
+            continue
+        b_ = bucket[mine.index]
+        if not b_.isin(("manyavar", "mohey", "twamev")).any():
+            continue
+        out[int(c)] = {b: float(mine[b_ == b]["value"].sum())
+                       for b in ("manyavar", "mohey", "twamev")}
+    return out
+
+
+def brand_split(t, codes, day, vfl_df=None, tab=None) -> dict:
     """The night's brand split, from the best source that can answer.
 
     In order: columns the sheet was given (what the intake form fills), then
@@ -1299,17 +1317,20 @@ def brand_split(t, codes, day, vfl_df=None) -> dict:
             if got:
                 out[int(c)] = {b: got.get(b, 0.0)
                                for b in ("manyavar", "mohey", "twamev")}
-    if "line" in t.columns:
-        bucket = t["line"].map(_line_bucket)
-        for c in codes:
-            if int(c) in out:
-                continue
-            mine = t[(t["code"] == c)]
-            b_ = bucket[mine.index]
-            if not b_.isin(("manyavar", "mohey", "twamev")).any():
-                continue
-            out[int(c)] = {b: float(mine[b_ == b]["value"].sum())
-                           for b in ("manyavar", "mohey", "twamev")}
+    out.update(_line_split(t, codes, [c for c in codes if int(c) not in out]))
+
+    # ★★ AND THE TAB, IF IT COVERS THE SAME NIGHT. Found by running the
+    # deployed code against the live feeds: the sheet is now a day AHEAD of the
+    # tab, and on a night where BOTH hold the day, "the sheet wins" would have
+    # thrown away the only split available — the sheet has no brand line and
+    # the bill feed has not landed yet. Winning the tie decides where the
+    # FIGURES come from; it should never decide to answer a question with
+    # nothing when another source can answer it.
+    missing = [c for c in codes if int(c) not in out]
+    if missing and tab is not None and len(tab) \
+            and pd.Timestamp(tab["date"].iloc[0]).normalize() == pd.Timestamp(day).normalize():
+        out.update(_line_split(tab, codes, missing))
+
     missing = [c for c in codes if int(c) not in out]
     if missing:
         out.update(_feed_split(day, missing, vfl_df))
@@ -1399,7 +1420,11 @@ def south_night_sms(pf_df, region=None, targets=None, day=None,
 
     t = t[t["code"].isin(codes)].copy()
     t["bucket"] = t["line"].map(_line_bucket)
-    _split = brand_split(t, codes, day, vfl_df)
+    # The tab is offered as a source for the split even when the sheet won the
+    # night — see `brand_split`.
+    _split = brand_split(t, codes, day, vfl_df,
+                         tab=(None if _source == "the night fill tab"
+                              else night_fill.load()))
 
     def g(c, b):
         """A brand line's share of the store's night, or None for a store no
