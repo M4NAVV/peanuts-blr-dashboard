@@ -268,6 +268,15 @@ def table_image(df, spec, width, font_px=26, bar_col=None, bar_label="",
             return f"{v:,.1f}%" if isinstance(v, (int, float)) else str(v)
         if kind == "int":
             return f"{int(v):,}"
+        if kind == "num1":
+            return f"{float(v):,.1f}"
+        if kind == "num":
+            # ★ A RATIO IS NOT A COUNT AND NOT MONEY. Without this branch it
+            # fell through to `str(v)` and printed `1.8888888888888` in a
+            # column of two-figure numbers — the fifth instance of an
+            # undeclared column on this dashboard.
+            # See [[feedback-declare-numeric-columns]].
+            return f"{float(v):,.2f}"
         return str(v)
 
     txt = [[fmt(k, r.get(c)) for c, k, _ in spec] for r in df]
