@@ -612,16 +612,27 @@ def portfolio_metrics(pf, asof, basis_label="", region=None) -> dict:
             #   lands on a different weekday and its year-on-year is mostly
             #   trading pattern, which is why the same-WEEKDAY figure sits
             #   under the rule where the tile's conclusion goes.
+            # ★★ A DAY NOBODY HAS FILED IS NOT A DAY OF NO SALES (27 Sep).
+            # Manav built the South pack before the eight Bengaluru figures had
+            # been typed, and the tile read "Rs 0.00 Cr · nothing trading ·
+            # −100%" — a completed day that went to zero. It also printed
+            # "Comparable 8 of 0", which cannot be true of anything: eight
+            # comparable stores out of none open. Zero stores with a row is a
+            # sheet that has not been written in yet, and saying so is the only
+            # honest reading. See [[feedback-silent-failure-must-speak]].
             {"label": f"Day  {asof:%a %d %b}",
-             "value": f"Rs {_cr(day_all)} Cr",
+             "value": (f"Rs {_cr(day_all)} Cr" if _d_open else "not filed"),
              "sub": (f"all {_d_open} stores trading" if _d_open
-                     else "nothing trading"),
-             "rows": [(f"Comparable {len(_day_set)} of {_d_open}",
-                       f"Rs {_cr(d_ty)} Cr" if _day_set else "no last year"),
-                      (f"vs {asof - pd.DateOffset(years=1):%a %d %b}",
-                       _pct(_growth(d_ty, d_date)))],
-             "key": (f"vs {asof - pd.Timedelta(days=364):%a %d %b}",
-                     _pct(_growth(d_ty, d_wday)))},
+                     else "no store has a figure for this day yet"),
+             "rows": ([(f"Comparable {len(_day_set)} of {_d_open}",
+                        f"Rs {_cr(d_ty)} Cr" if _day_set else "no last year"),
+                       (f"vs {asof - pd.DateOffset(years=1):%a %d %b}",
+                        _pct(_growth(d_ty, d_date)))] if _d_open else
+                      [("Nothing to compare", "—"),
+                       (f"vs {asof - pd.DateOffset(years=1):%a %d %b}", "—")]),
+             "key": ((f"vs {asof - pd.Timedelta(days=364):%a %d %b}",
+                      _pct(_growth(d_ty, d_wday))) if _d_open else
+                     (f"vs {asof - pd.Timedelta(days=364):%a %d %b}", "—"))},
             {"label": "Year end" if _YE.enabled() else "Projected year",
              "value": f"Rs {_cr(proj)} Cr",
              "sub": f"last full year Rs {_cr(ly_full)} Cr",
@@ -974,16 +985,27 @@ def vfl_metrics(df, asof, gen_date=None, basis_label="", region=None) -> dict:
             #   lands on a different weekday and its year-on-year is mostly
             #   trading pattern, which is why the same-WEEKDAY figure sits
             #   under the rule where the tile's conclusion goes.
+            # ★★ A DAY NOBODY HAS FILED IS NOT A DAY OF NO SALES (27 Sep).
+            # Manav built the South pack before the eight Bengaluru figures had
+            # been typed, and the tile read "Rs 0.00 Cr · nothing trading ·
+            # −100%" — a completed day that went to zero. It also printed
+            # "Comparable 8 of 0", which cannot be true of anything: eight
+            # comparable stores out of none open. Zero stores with a row is a
+            # sheet that has not been written in yet, and saying so is the only
+            # honest reading. See [[feedback-silent-failure-must-speak]].
             {"label": f"Day  {asof:%a %d %b}",
-             "value": f"Rs {_cr(day_all)} Cr",
+             "value": (f"Rs {_cr(day_all)} Cr" if _d_open else "not filed"),
              "sub": (f"all {_d_open} stores trading" if _d_open
-                     else "nothing trading"),
-             "rows": [(f"Comparable {len(_day_set)} of {_d_open}",
-                       f"Rs {_cr(d_ty)} Cr" if _day_set else "no last year"),
-                      (f"vs {asof - pd.DateOffset(years=1):%a %d %b}",
-                       _pct(_growth(d_ty, d_date)))],
-             "key": (f"vs {asof - pd.Timedelta(days=364):%a %d %b}",
-                     _pct(_growth(d_ty, d_wday)))},
+                     else "no store has a figure for this day yet"),
+             "rows": ([(f"Comparable {len(_day_set)} of {_d_open}",
+                        f"Rs {_cr(d_ty)} Cr" if _day_set else "no last year"),
+                       (f"vs {asof - pd.DateOffset(years=1):%a %d %b}",
+                        _pct(_growth(d_ty, d_date)))] if _d_open else
+                      [("Nothing to compare", "—"),
+                       (f"vs {asof - pd.DateOffset(years=1):%a %d %b}", "—")]),
+             "key": ((f"vs {asof - pd.Timedelta(days=364):%a %d %b}",
+                      _pct(_growth(d_ty, d_wday))) if _d_open else
+                     (f"vs {asof - pd.Timedelta(days=364):%a %d %b}", "—"))},
             {"label": "Year end" if _YE_ON else "Projected year",
              "value": f"Rs {_cr(proj)} Cr",
              "sub": f"last full year Rs {_cr(ly_full)} Cr",
