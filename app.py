@@ -1259,11 +1259,33 @@ def render_portfolio():
         picked = {}
         c1, c2 = st.columns(2)
         with c1:
-            st.markdown("**The pack**")
+            # ★ ONE HEADER, as on the VFL side (Manav, 27 Sep). "The pack" and
+            # "Report TD" were two headings over one list of tickboxes, a shape
+            # left over from when they were two tabs.
+            st.markdown("**THE PORTFOLIO PACK**")
+            # ★★ AND A MASTER TICK. It SETS the boxes below rather than
+            # standing beside them, so what is ticked is always what will be
+            # built — a master that silently overrode them would make the page
+            # lie about its own state.
+            _RP_KEYS = ("rp_pack", "rp_sl", "rp_el", "rp_mw", "rp_ns",
+                        "rp_tva", "rp_rv")
+            _rp_all = st.checkbox(
+                "**Everything in the pack**", key="rp_all",
+                help="Ticks every report below. The festive run-ups are "
+                     "separate — a different question, and usually wanted one "
+                     "at a time.")
+            # Seeded rather than passed as `value=`: Streamlit objects when a
+            # widget is given a default AND has its state written before it is
+            # drawn, which is exactly what a master tick must do.
+            st.session_state.setdefault("rp_pack", True)
+            if _rp_all and not st.session_state.get("_rp_all_was"):
+                for _k in _RP_KEYS:
+                    st.session_state[_k] = True
+            st.session_state["_rp_all_was"] = _rp_all
+
             picked["pack"] = st.checkbox(
                 "Portfolio report  ·  MW Data, GD Sheet, Brand-wise, Loc-wise, "
-                "Average, and the executive snapshot", value=True, key="rp_pack")
-            st.markdown("**Report TD**")
+                "Average, and the executive snapshot", key="rp_pack")
             picked["south_ltol"] = st.checkbox(
                 "South L-to-L  ·  day by day, month by month", key="rp_sl")
             picked["east_ltol"] = st.checkbox(
@@ -1367,15 +1389,20 @@ def render_portfolio():
                             RTD.build_month_wise(pf_all, vdf, v_asof, tdb))
                     if "night_sms" in chosen:
                         _prog.step("Night SMS")
-                        # ★ ANY NIGHT, NOT JUST THE LAST ONE (26 Sep). The tab it
-                    # used to read is overwritten every evening, so a night
-                    # could never be reproduced; the sheet keeps the figures
-                    # and the bill feed keeps the brand split.
-                    built.append(RTD.build_night_sms(
-                        pf_all, basis_label=tdb,
-                        day=(None if _sms_day is None
-                             else pd.Timestamp(_sms_day)),
-                        vfl_df=get_data()))
+                        # ★ ANY NIGHT, NOT JUST THE LAST ONE (26 Sep). The tab
+                        # it used to read is overwritten every evening, so a
+                        # night could never be reproduced; the sheet keeps the
+                        # figures and the bill feed keeps the brand split.
+                        #
+                        # ★★ AND IT IS INSIDE THE `if` — my own 26 Sep edit
+                        # dedented this call by one level, so the night SMS was
+                        # built on EVERY generate whatever was ticked. Tick
+                        # Google reviews, get the night SMS.
+                        built.append(RTD.build_night_sms(
+                            pf_all, basis_label=tdb,
+                            day=(None if _sms_day is None
+                                 else pd.Timestamp(_sms_day)),
+                            vfl_df=get_data()))
                     if "reviews" in chosen:
                         _prog.step("Google reviews")
                         import reviews as RV
@@ -1390,10 +1417,17 @@ def render_portfolio():
                             # the last day with BOTH a reading and bills —
                             # see `reviews.settled_day`
                             _asof = RV.settled_day(rv, _bills, pdf_asof)
+                        # ★★ THE TEST WAS INVERTED. The report was appended
+                        # only when `_asof is None` — the one case where it
+                        # must be SKIPPED — so a good day produced no review
+                        # PDF at all, and a bad day warned and then formatted
+                        # None into a filename. Ticking Google reviews gave
+                        # you whatever else was in the zip.
                         if rv is not None and not rv.empty and _asof is None:
                             st.warning("Google review report skipped: no day "
                                        "has both a review reading and bills "
                                        "yet.")
+                        elif rv is not None and not rv.empty:
                             built.append((
                                 f"google_reviews_{_asof:%Y%m%d}.pdf",
                                 RV.build_pdf(
@@ -3004,7 +3038,7 @@ if nav == "🖼️ REPORTS IMAGES" and _img_what == "Morning set (ZIP)":
                if not (st_ in _master.index
                        and int(_master.loc[st_, "code"]) in _closed)]
 
-    c1, c2, c3 = st.columns(3)
+    c1, c2 = st.columns(2)
     want_store_wise = c1.checkbox("Store-wise MTD / YTD", value=True,
                                   help="One image, both periods, year on year.")
     want_degrowth = c2.checkbox("Degrowth by region", value=True,
@@ -3013,16 +3047,19 @@ if nav == "🖼️ REPORTS IMAGES" and _img_what == "Morning set (ZIP)":
     # file per period. `is_consolidated` is what says so — see snapshots.PANEL.
     _one_doc = SN.is_consolidated()
     _per_store = 1          # the A4 sheet is one image per store, always
-    want_drivers = c3.checkbox(
-        "Per-store drivers", value=True,
-        help=f"{len(_stores)} stores, one A4 sheet each — the month and the year "
-             f"side by side with the six measures, same layout as the printable "
-             f"driver sheet, delivered as PNG.")
+    # ★ PER-STORE DRIVERS WITHDRAWN FROM THE TAB (Manav, 27 Sep), not deleted.
+    # It is the twenty-two-image half of this ZIP and the slow one to build;
+    # the code below still handles it, so restoring it is a checkbox.
+    want_drivers = False
 
     _n = (1 if want_store_wise else 0) + (4 if want_degrowth else 0) \
         + (len(_stores) * _per_store if want_drivers else 0)
-    st.caption(f"**{_n} image(s)** — `shared/` for the group, `by-store/` for "
-               "individual managers.")
+    # ★ THE CAPTION FOLLOWS WHAT IS ACTUALLY IN THE ZIP. With the per-store
+    # sheets withdrawn there is no `by-store/` folder, and promising one would
+    # send somebody looking for it.
+    st.caption(f"**{_n} image(s)** — `shared/` for the group."
+               + ("  `by-store/` for individual managers." if want_drivers
+                  else ""))
 
     if st.button("📦 Build the ZIP", type="primary", disabled=_n == 0,
                  use_container_width=True):
@@ -3329,15 +3366,44 @@ if nav == "📄 REPORTS PDF":
     picked = {}
     c1, c2 = st.columns(2)
     with c1:
-        st.markdown("**The pack**")
+        # ★ ONE HEADER, NOT THREE (Manav, 27 Sep). "The pack", "DB Reports" and
+        # "Manager morning snapshot" were three headings over one list of
+        # tickboxes — a shape left over from when they were three tabs. What a
+        # reader wants here is the pack, and the pack is all of it.
+        st.markdown("**THE VFL PACK**")
+        # ★★ AND A MASTER TICK. His ask: *"make a checkbox button that is
+        # universal for the whole pack, so when that checkbox is ticked, all
+        # the reports in the pack get downloaded."* It sets the others rather
+        # than standing beside them, so what is ticked is always what will be
+        # built — a master that silently overrode the boxes below it would make
+        # the page lie about its own state.
+        _pack_all = st.checkbox(
+            "**Everything in the pack**", key="vrp_all",
+            help="Ticks every report below. The festive run-ups are separate — "
+                 "they are a different question and are usually wanted one at "
+                 "a time.")
+        # ★ SEEDED, NOT PASSED AS `value=`. Streamlit objects when a widget is
+        # given a default AND has its state written before it is drawn — which
+        # is exactly what a master tick must do. The default is set once, on
+        # the first render, and the widget then owns it.
+        _VRP_KEYS = ("vrp_pack", "vrp_db", "vrp_morning", "vrp_sp_detail",
+                     "vrp_alter", "vrp_books")
+        st.session_state.setdefault("vrp_pack", True)
+        if _pack_all and not st.session_state.get("_vrp_all_was"):
+            for _k in _VRP_KEYS:
+                st.session_state[_k] = True
+        st.session_state["_vrp_all_was"] = _pack_all
+
         picked["pack"] = st.checkbox(
             "VFL report  ·  G/D and Gender sheets, with the executive snapshot",
-            value=True, key="vrp_pack")
-        st.markdown("**DB Reports**")
+            key="vrp_pack")
         picked["db"] = st.checkbox(
-            "Women's discount  ·  year to date, the month, and every Mohey store "
-            "day by day", key="vrp_db")
-        st.markdown("**Manager morning snapshot**")
+            "Women's discount  ·  year to date, the month, and every Mohey "
+            "store day by day", key="vrp_db")
+        # ★ HIDDEN, NOT DELETED (Manav, 27 Sep) — the manager team pointer
+        # keeps its code and its tests and is simply not offered here.
+        # `pointer_sheet` is one line from coming back.
+        picked["sp_pointer"] = False
         picked["morning"] = st.checkbox(
             "One printable A4 sheet per store  ·  every open store, as a zip",
             key="vrp_morning",
@@ -3346,18 +3412,6 @@ if nav == "📄 REPORTS PDF":
                  "carries, on one sheet a manager can print and brief from. "
                  "Always the full estate, never the sidebar filters. "
                  "Takes a couple of minutes to build.")
-        # ★ THE TWO SALESPERSON REPORTS (6 Sep 2026). Two sheets, one source:
-        # the pointer is what a manager reads in five minutes before the floor
-        # opens, the detailed one is what gets read at a desk. Both come from
-        # the same `store_table` call so they cannot disagree.
-        picked["sp_pointer"] = st.checkbox(
-            "Manager team pointer  ·  one page per store, as a zip",
-            key="vrp_sp_pointer",
-            help="Who is carrying the month, who needs a word today, the one "
-                 "habit to say on the floor, and who is no longer on it. ONE "
-                 "page whatever the size of the team — a sixty-person floor "
-                 "and a five-person one both fit. Full estate, never the "
-                 "sidebar filters.")
         picked["sp_detail"] = st.checkbox(
             "Manager detailed team report  ·  one page per store, as a zip",
             key="vrp_sp_detail",
