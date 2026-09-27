@@ -1299,13 +1299,25 @@ def _line_split(frame, codes, want) -> dict:
     return out
 
 
-def brand_split(t, codes, day, vfl_df=None, tab=None) -> dict:
+def brand_split(t, codes, day, vfl_df=None, tab=None, intake=None) -> dict:
     """The night's brand split, from the best source that can answer.
 
-    In order: columns the sheet was given (what the intake form fills), then
-    the tab's per-line rows, then the bill feed. A store no source can answer
-    for is ABSENT — and an absent store prints an empty cell, never a zero
-    that would say it sold no Mohey.
+    ★★ THE ORDER IS A STATEMENT ABOUT ACCURACY, not convenience:
+
+      1. columns the portfolio sheet was given, if it ever is
+      2. per-line rows in whatever source holds the night
+      3. the night-fill tab, when it covers the same night
+      4. **the BILL FEED** — the POS is the system of record for brand, and it
+         is demonstrably better than a hand-typed split: against the old tab
+         for 25 Sep it was exact on 16-18 of 20 stores and every disagreement
+         was the TAB failing to separate Twamev
+      5. **the INTAKE FORM** — what the store typed tonight. Last, deliberately.
+         It is the only source that exists before the feed lands, and the only
+         reason to prefer a person's typing over the till is that the till has
+         not spoken yet.
+
+    A store no source can answer for is ABSENT — and an absent store prints an
+    empty cell, never a zero that would say it sold no Mohey.
     """
     out = {}
     have_cols = [b for b in ("manyavar", "mohey", "twamev") if b in t.columns]
@@ -1334,6 +1346,19 @@ def brand_split(t, codes, day, vfl_df=None, tab=None) -> dict:
     missing = [c for c in codes if int(c) not in out]
     if missing:
         out.update(_feed_split(day, missing, vfl_df))
+
+    # ★ WHAT THE STORES TYPED, for the night the till has not reported yet.
+    missing = [c for c in codes if int(c) not in out]
+    if missing:
+        try:
+            import intake_brands as IB
+            got = IB.for_day(day, missing) if intake is None else intake
+            for c, v in (got or {}).items():
+                if int(c) in {int(x) for x in missing}:
+                    out[int(c)] = {b: float(v.get(b, 0.0))
+                                   for b in ("manyavar", "mohey", "twamev")}
+        except Exception:
+            pass                      # a brand column must never sink a night
     return out
 
 
