@@ -255,3 +255,41 @@ def test_a_tab_from_another_night_is_not_used_for_this_one():
                          "value": 400000.0, "line": "MANYAVAR"}])
     got = RTD.brand_split(sheet, [107], DAY, vfl_df=pd.DataFrame(), tab=tab)
     assert 107 not in got
+
+
+# --------------------------------------------------------------------------- #
+# Switching the overlay off — the tab was deleted on 27 Sep
+# --------------------------------------------------------------------------- #
+def test_no_secret_means_no_overlay_and_nothing_is_probed(monkeypatch):
+    """★★ THE COST OF NOT DOING THIS. Both fallback URLs are built from the
+    PORTFOLIO workbook, which is always configured — so with the tab deleted
+    they kept being tried, and the gid one serves the workbook's FIRST tab: the
+    whole VFL transaction sheet, ~15 SECONDS on every call, to discover it has
+    no CODE column. Unsetting the secret did not stop it, because nothing
+    depended on that secret existing."""
+    monkeypatch.setattr(NF, "_secret",
+                        lambda name: None if name == NF.URL_ENV else "x")
+    assert NF._urls() == []
+    assert NF.load() is None
+
+
+def test_a_switched_off_overlay_is_not_reported_as_a_fault(monkeypatch):
+    """★ The sidebar prints `last_problem()`. An overlay nobody configured is a
+    decision, not a misconfiguration, and nagging about it every session
+    teaches people to ignore the line that matters."""
+    monkeypatch.setattr(NF, "_secret",
+                        lambda name: None if name == NF.URL_ENV else "x")
+    NF.load()
+    assert NF.last_problem() is None
+
+
+def test_a_configured_secret_still_gets_its_rescues(monkeypatch):
+    """★ The by-name and gid URLs exist because this tab lost its gid once and
+    silently served the wrong sheet. That rescue still applies — to a secret
+    somebody set."""
+    monkeypatch.setattr(NF, "_secret", lambda name: (
+        "https://docs.google.com/spreadsheets/d/ABC/export?format=csv&gid=1"
+        if name == NF.URL_ENV else
+        "https://docs.google.com/spreadsheets/d/ABC/export?format=csv&gid=9"))
+    urls = NF._urls()
+    assert len(urls) >= 2 and urls[0].endswith("gid=1")

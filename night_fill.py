@@ -124,8 +124,22 @@ def _urls():
     Name before gid: this tab is the one that lost its gid and silently served
     the workbook's first tab, which is the failure the ordering exists for.
     """
+    # ★★ THE DERIVED URLS ARE RESCUES FOR A CONFIGURED SECRET, NOT SOURCES IN
+    # THEIR OWN RIGHT (27 Sep). Both are built from the PORTFOLIO workbook,
+    # which is always configured — so once the tab was deleted they kept being
+    # tried, and the gid one serves the workbook's FIRST tab: the whole VFL
+    # transaction sheet, ~15 SECONDS of download on every call, to discover it
+    # has no CODE column. Unsetting `NIGHT_FILL_URL` did not stop it, because
+    # nothing in here ever depended on that secret existing.
+    #
+    # So: no secret, no overlay. That is also the honest reading — the tab is
+    # something somebody chose to configure, and its absence is a decision,
+    # not a misconfiguration to be worked around.
+    configured = _secret(URL_ENV)
+    if not configured:
+        return []
     out = []
-    for u in (_secret(URL_ENV), _by_name(), _derived()):
+    for u in (configured, _by_name(), _derived()):
         if u and u not in out:
             out.append(u)
     return out
@@ -211,7 +225,10 @@ def load(url=None) -> pd.DataFrame | None:
             if got is not None:
                 return got
         if not _urls():
-            _LAST_PROBLEM = f"${URL_ENV} is not set and no workbook to derive it from"
+            # Not a fault: the overlay is switched off. Reported as None so
+            # the sidebar stays quiet rather than nagging about a tab nobody
+            # has asked for.
+            _LAST_PROBLEM = None
         return None
     return _load_one(url)
 
