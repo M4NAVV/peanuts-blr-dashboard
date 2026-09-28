@@ -471,6 +471,144 @@ def vfl_rows_if_newer(raw: pd.DataFrame, url=None) -> pd.DataFrame | None:
 
 
 # --------------------------------------------------------------------------- #
+#  The VFL provisional day, from PEANUTS TOTAL (28 Sep 2026)
+# --------------------------------------------------------------------------- #
+# Manav, 28 Sep: *"yes, make a provisional thing"* — asked whether typing
+# peanuts total at night moves any VFL report. It did not: the only VFL night
+# path was the Tinku tab, retired 27 Sep. This is its replacement, and it
+# lands in exactly the same place (`loader.load_data`), so everything already
+# built for a provisional day — `_provisional`, "(PROVISIONAL)" salesperson,
+# bills stopping at the day before, the sidebar warning — applies unchanged.
+#
+# ★ SAME FORWARD-ONLY RULE. Only days NEWER than the VFL sheet's newest, and
+# only stores the VFL feed knows. The moment Tableau lands a day, this stands
+# aside for it; nothing is ever overwritten.
+#
+# ★★ PEANUTS TOTAL IS ONE ROW PER STORE, SO THE BRAND SPLIT HAS TO COME FROM
+# SOMEWHERE ELSE, and it is said which:
+#   1. the intake form's Manyavar / Mohey / Twamev for that store-day, SCALED
+#      so the three add up to the Total — peanuts total stays the money;
+#   2. else the store's own brand mix over its last 28 settled days in the VFL
+#      feed — an ESTIMATE, and the stores it was used for are named in
+#      `df.attrs["provisional_estimated"]` so the page can say so.
+# Twamev is one figure on the form; its Men / Women split always comes from
+# the store's own history (all Men if it has none).
+_PROV_DIVISION = {"MANYAVAR": "(PROVISIONAL)",
+                  "MOHEY": "MOHEY (PROVISIONAL)",
+                  "TWAMEV MEN": "TWAMEV-MEN (PROVISIONAL)",
+                  "TWAMEV-WOMEN": "TWAMEV-WOMEN (PROVISIONAL)"}
+_PROV_GENDER = {"MANYAVAR": "MEN", "MOHEY": "WOMEN",
+                "TWAMEV MEN": "MEN", "TWAMEV-WOMEN": "WOMEN"}
+_LINES = tuple(_PROV_DIVISION)
+MIX_DAYS = 28
+
+
+def _recent_mix(raw, latest, days=MIX_DAYS):
+    """{tableau store name: {line: share}} over the store's last `days` days."""
+    import loader as L
+    d = raw[[L.COL_STORE, L.COL_DATE, L.COL_AMOUNT, L.COL_DIVISION]].copy()
+    d["_d"] = L._parse_dates(d[L.COL_DATE])
+    d = d[(d["_d"] > latest - pd.Timedelta(days=days)) & (d["_d"] <= latest)]
+    d["_a"] = pd.to_numeric(d[L.COL_AMOUNT].astype(str)
+                            .str.replace(",", "", regex=False), errors="coerce")
+    d["_line"] = L.brand_line_vfl(d)
+    # ★ KEYED ON THE LABEL, NOT THE RAW NAME: the feed writes "Peanuts -
+    # Jayanagar", the master "Jayanagar". Keyed raw, no store ever matched and
+    # every night went down as 100% Manyavar — caught replaying 27 Sep live.
+    d["_store"] = L.store_label(d[L.COL_STORE])
+    g = d.groupby(["_store", "_line"])["_a"].sum().clip(lower=0)
+    out = {}
+    for store, s in g.groupby(level=0):
+        s = s.droplevel(0)
+        if s.sum() > 0:
+            out[store] = (s / s.sum()).to_dict()
+    return out
+
+
+def vfl_rows_from_portfolio(raw, pf, splits=None):
+    """(rows to append to the RAW VFL frame, [store codes estimated]).
+
+    Returns (None, []) whenever there is nothing newer to add. `splits` is
+    `intake_brands.split_map()`'s {(code, day): {manyavar, mohey, twamev}};
+    None reads the form, {} means "do not use it".
+    """
+    import loader as L
+    if pf is None or not len(pf) or raw is None or not len(raw):
+        return None, []
+    latest = L._parse_dates(raw[L.COL_DATE]).max()
+    if pd.isna(latest):
+        return None, []
+
+    m = L.load_store_master()
+    label = {int(c): n for c, n in zip(
+        pd.to_numeric(m["code"], errors="coerce"), m["tableau_name"])
+        if pd.notna(c) and pd.notna(n) and str(n).strip()}
+    days = sorted(d for d in pf["date"].dropna().unique()
+                  if pd.Timestamp(d) > latest)
+    if not days:
+        return None, []
+
+    if splits is None:
+        try:
+            import intake_brands
+            splits = intake_brands.split_map()
+        except Exception:
+            splits = {}
+    mix = _recent_mix(raw, latest)
+
+    rows, estimated = [], []
+    for day in days:
+        day = pd.Timestamp(day)
+        t = from_portfolio(pf, day)
+        if t is None:
+            continue
+        t = t[t["code"].astype(int).isin(label)]
+        for _, r in t.iterrows():
+            code, total = int(r["code"]), r["value"]
+            if pd.isna(total) or float(total) == 0:
+                continue                  # an untyped store is not a zero day
+            store = label[code]
+            hist = mix.get(store, {"MANYAVAR": 1.0})
+            tw = hist.get("TWAMEV MEN", 0) + hist.get("TWAMEV-WOMEN", 0)
+            tw_men = hist.get("TWAMEV MEN", 0) / tw if tw > 0 else 1.0
+            filed = (splits or {}).get((code, day.normalize()))
+            if filed and sum(filed.values()) > 0:
+                f = filed
+                share = {"MANYAVAR": f["manyavar"], "MOHEY": f["mohey"],
+                         "TWAMEV MEN": f["twamev"] * tw_men,
+                         "TWAMEV-WOMEN": f["twamev"] * (1 - tw_men)}
+                tot = sum(share.values())
+                share = {k: v / tot for k, v in share.items()}
+            else:
+                share = hist
+                estimated.append(code)
+            qty = r.get("qty")
+            for line in _LINES:
+                w = share.get(line, 0.0)
+                if w <= 0:
+                    continue
+                rows.append({
+                    L.COL_STORE: store,
+                    # ⚠️ MONTH-FIRST, like the VFL sheet — see vfl_rows_if_newer.
+                    L.COL_DATE: day.strftime("%m/%d/%Y"),
+                    L.COL_AMOUNT: round(float(total) * w, 2),
+                    L.COL_QTY: (float(qty) * w if pd.notna(qty) else pd.NA),
+                    L.COL_DIVISION: _PROV_DIVISION[line],
+                    L.COL_MWC: _PROV_GENDER[line],
+                    L.COL_BILL: pd.NA,     # a bill count cannot be invented
+                })
+    if not rows:
+        return None, []
+    out = pd.DataFrame(rows)
+    for c in (L.COL_SECTION, L.COL_DEPARTMENT, L.COL_STYLE, L.COL_COLOR,
+              L.COL_SALESPERSON):
+        out[c] = "(PROVISIONAL)"
+    out[L.COL_PROMO] = 0
+    out[_PROVISIONAL_COL] = True
+    return out, sorted(set(estimated))
+
+
+# --------------------------------------------------------------------------- #
 #  Reading the night out of the portfolio sheet instead
 # --------------------------------------------------------------------------- #
 # Manav, 26 Sep 2026: *"the plan is to stop tinku night fill, and get the data

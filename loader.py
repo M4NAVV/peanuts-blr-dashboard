@@ -141,6 +141,18 @@ def _to_number(series: pd.Series) -> pd.Series:
     return pd.to_numeric(cleaned, errors="coerce")
 
 
+def store_label(series: pd.Series) -> pd.Series:
+    """Display-friendly store name: drop the "Peanuts [Retail] -" prefix.
+
+    The feed writes "Peanuts - Jayanagar"; the store master writes
+    "Jayanagar". Anything matching raw names to the master goes through here.
+    """
+    return (series.astype(str)
+            .str.replace(r"(?i)^\s*peanuts\s*(?:retail)?\s*[-–]?\s*", "",
+                         regex=True)
+            .str.strip())
+
+
 def _parse_dates(series: pd.Series) -> pd.Series:
     """Parse Bill Date on the convention the column PROVES, not the one assumed.
 
@@ -247,12 +259,7 @@ def clean(df: pd.DataFrame) -> pd.DataFrame:
         df[COL_MOBILE].astype(str).str.strip().replace({"": pd.NA, "nan": pd.NA})
     )
 
-    # Display-friendly store name: drop the "Peanuts [Retail] -" prefix.
-    df[COL_STORE_LABEL] = (
-        df[COL_STORE].astype(str)
-        .str.replace(r"(?i)^\s*peanuts\s*(?:retail)?\s*[-–]?\s*", "", regex=True)
-        .str.strip()
-    )
+    df[COL_STORE_LABEL] = store_label(df[COL_STORE])
 
     # ★★ WHAT MAKES A BILL ONE BILL: STORE, DAY AND NUMBER TOGETHER (17 Aug).
     #
@@ -290,7 +297,7 @@ def clean(df: pd.DataFrame) -> pd.DataFrame:
     return df.reset_index(drop=True)
 
 
-def load_data() -> pd.DataFrame:
+def load_data(pf="auto") -> pd.DataFrame:
     """Public entry point. Streamlit caching is applied in app.py.
 
     If a night fill is configured and holds a day NEWER than anything in the VFL
@@ -302,17 +309,31 @@ def load_data() -> pd.DataFrame:
     Those rows are COARSE by nature: see night_fill.vfl_rows_if_newer. Sales,
     brand line, gender and units are faithful; bills cannot be represented and
     the finer dimensions read "(PROVISIONAL)".
+
+    ★ 28 SEP: WITH THE TAB RETIRED, THE NIGHT COMES FROM PEANUTS TOTAL — see
+    `night_fill.vfl_rows_from_portfolio`. `pf` is the portfolio frame if the
+    caller already has one (the app passes its cached copy, so nothing is
+    downloaded twice); "auto" loads it; None switches the source off.
+    `df.attrs["provisional_estimated"]` lists the store codes whose brand
+    split had to be estimated because the intake form was not filed.
     """
     raw = _read_raw()
-    provisional = None
+    provisional, estimated = None, []
+    prov_from = None
     try:
         import night_fill
         extra = night_fill.vfl_rows_if_newer(raw)
+        if (extra is None or not len(extra)) and pf is not None:
+            if isinstance(pf, str):
+                import portfolio_loader
+                pf = portfolio_loader.load_portfolio()
+            extra, estimated = night_fill.vfl_rows_from_portfolio(raw, pf)
         if extra is not None and len(extra):
-            provisional = _parse_dates(extra[COL_DATE]).max()
+            _pd = _parse_dates(extra[COL_DATE])
+            provisional, prov_from = _pd.max(), _pd.min()
             raw = pd.concat([raw, extra], ignore_index=True)
     except Exception:
-        provisional = None          # never let the overlay break the load
+        provisional, estimated = None, []   # never let the overlay break the load
     df = clean(raw)
     df = _apply_takeover_filter(df)
     df = _enrich(df)
@@ -320,6 +341,8 @@ def load_data() -> pd.DataFrame:
         df[night_fill._PROVISIONAL_COL] = False
     df[night_fill._PROVISIONAL_COL] = df[night_fill._PROVISIONAL_COL].fillna(False)
     df.attrs["provisional_date"] = provisional
+    df.attrs["provisional_estimated"] = estimated
+    df.attrs["provisional_from"] = prov_from if provisional is not None else None
     return df
 
 

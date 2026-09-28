@@ -112,10 +112,19 @@ st.markdown(
 def _load_cached():
     from datetime import datetime
     from zoneinfo import ZoneInfo
-    df = L.load_data()
+    # ★ The night's VFL figures come from PEANUTS TOTAL (28 Sep), so the
+    # portfolio frame is handed over from its own cache rather than downloaded
+    # a second time. If it cannot load, the VFL page still loads without it.
+    try:
+        _pf = _load_portfolio_cached()[0]
+    except Exception:
+        _pf = None
+    df = L.load_data(pf=_pf)
     # Carried out of the cache explicitly; attrs are not guaranteed to survive it.
     return (df, datetime.now(ZoneInfo("Asia/Kolkata")),
-            df.attrs.get("provisional_date"))
+            df.attrs.get("provisional_date"),
+            df.attrs.get("provisional_from"),
+            df.attrs.get("provisional_estimated") or [])
 
 
 
@@ -2223,11 +2232,19 @@ if _vfl_prov is not None:
     # The latest day came from the night fill, before it reached this sheet.
     # It carries sales, brand line, gender and units but no bill-level detail,
     # so say so rather than let a coarse day pass for a settled one.
+    _pfrom, _pest = _load_cached()[3], _load_cached()[4]
+    _span = (f"{_pfrom:%d %b} – {_vfl_prov:%d %b}** are"
+             if _pfrom is not None and _pfrom < _vfl_prov
+             else f"{_vfl_prov:%d %b}** is")
+    _est = (f" Brand split **estimated** from the last 4 weeks for store "
+            f"{', '.join(str(c) for c in _pest)} (intake form not filed)."
+            if _pest else "")
     st.sidebar.warning(
-        f"**{_vfl_prov:%d %b}** is provisional — from the night fill. Its "
+        f"**{_span} provisional — typed into Peanuts Total, not yet in the "
+        f"VFL sheet. Its "
         f"**sales and units are counted**; it carries no bill numbers, so "
         f"**bills and average ticket stop at the day before** and the division, "
-        f"category and salesperson breakdowns do not have it yet.")
+        f"category and salesperson breakdowns do not have it yet.{_est}")
 if st.sidebar.button("🔄 Refresh data now"):
     _load_cached.clear()
     _load_portfolio_cached.clear()
