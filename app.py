@@ -1313,7 +1313,8 @@ def render_portfolio():
                 "quarter / year", key="rp_rv")
         with c2:
             st.markdown("**Festive run-ups**")
-            _fw = _festive_windows()
+            # ★ Re-dated to the picked day, so a back-dated pack stops there.
+            _fw = [FEST.at(_w, pdf_asof) for _w in _festive_windows()]
             if FEST.last_problem():
                 st.caption(f"⚠️ Festive dates: {FEST.last_problem()}")
             for _i, _w in enumerate(_fw):
@@ -3461,7 +3462,8 @@ if nav == "📄 REPORTS PDF":
 
     with c2:
         st.markdown("**Festive run-ups**")
-        _fw = _festive_windows()
+        # ★ Re-dated to the picked day, so a back-dated pack stops there.
+        _fw = [FEST.at(_w, p_asof) for _w in _festive_windows()]
         if FEST.last_problem():
             st.caption(f"⚠️ Festive dates: {FEST.last_problem()}")
         for _i, _w in enumerate(_fw):

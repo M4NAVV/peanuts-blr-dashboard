@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import os
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import pandas as pd
 
@@ -148,6 +148,23 @@ class Window:
         return (f"day {self.elapsed} of {self.tenure} · "
                 f"{self.ty_start:%d %b} → {self.ty_cut:%d %b %Y} against "
                 f"{self.ly_start:%d %b} → {self.ly_cut:%d %b %Y}")
+
+
+def at(w: Window, asof) -> Window:
+    """The same window, read as of another day.
+
+    ★ THE DATE PICKER (Manav, 29 Sep: *"if i choose a previous day, it doesnt
+    show data only until then"*). Every figure a festive report draws — this
+    year's run, last year's like-for-like cut, the day column, the projection,
+    the TTM — is cut at `w.asof` / `w.elapsed`. The windows were built once,
+    for TODAY, and cached, so a back-dated pack still ran to today. Re-dating
+    the window is the whole fix: nothing downstream reads any other date.
+    """
+    asof = pd.Timestamp(asof).normalize()
+    elapsed = 0
+    if asof >= w.ty_start:
+        elapsed = int((min(asof, w.ty_end) - w.ty_start).days) + 1
+    return replace(w, asof=asof, elapsed=elapsed)
 
 
 def festive_windows(asof=None, url=None) -> list[Window]:
