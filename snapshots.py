@@ -715,9 +715,15 @@ def _slice(L, df, asof, kind, store):
     """(this year, last year) for one store over DAY, MTD or YTD.
 
     MTD and YTD come off `report_frames`, so they are the same takeover-anchored,
-    closure-capped windows the table above uses. DAY is the as-of against the
-    same WEEKDAY a year back — a single date a year ago falls on a different day
-    of the week and its year-on-year is mostly noise.
+    closure-capped windows the table above uses. DAY is the day against the
+    SAME CALENDAR DATE a year back.
+
+    ★ DATE, NOT WEEKDAY (Manav, 2 Oct 2026: *"dont do this day comparision basis
+    weekday, it should be basis weekdate, dates will tally easier"*). It used to
+    be the same weekday (day − 364), which on the 1st of a month put DAY and
+    MTD against two different last-year days — Jayanagar read "was Rs 4.82 L"
+    (Thu 2 Oct 2025) beside "was Rs 5.18 L" (1 Oct 2025) for the same day.
+    On a date basis they tie, and they tie to his workbook.
     """
     if kind == "DAY":
         # ★ THE LAST SETTLED DAY, NOT THE AS-OF. The newest day in the frame is
@@ -729,7 +735,7 @@ def _slice(L, df, asof, kind, store):
         settled = d[d[L.COL_BILL_UID].notna()]["date"]
         day = settled.max() if len(settled) else asof
         return (d[d["date"] == day],
-                d[d["date"] == day - pd.Timedelta(days=364)])
+                d[d["date"] == day - pd.DateOffset(years=1)])
     cur, pri = L.report_frames(df, kind, asof=asof)
     return (cur[cur[L.COL_STORE_LABEL] == store],
             pri[pri[L.COL_STORE_LABEL] == store])
