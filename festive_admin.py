@@ -261,6 +261,11 @@ def table_image(df, spec, width, font_px=26, bar_col=None, bar_label="",
             # is a dash, as it is in the stores' own books — a column of
             # zeroes hides the months that had something.
             return PP._fmt_in(v, 0) if abs(float(v)) >= 0.5 else "-"
+        if kind == "rupee0":
+            # Whole rupees like `rupee`, but a nil stays 0: on the alterations
+            # one-pager a zero is a statement (a book nobody wrote in), and its
+            # footnote says so (Manav, 4 Oct: full figures, not 31.5 L).
+            return PP._fmt_in(v, 0)
         if kind in ("pct", "gd"):
             # ★ A G/D CELL MAY HOLD A WORD. A store with no last year has no
             # growth to state, and printing an empty cell beside a -100% reads

@@ -50,11 +50,11 @@ def table(frame, folders, kind, asof):
 
 
 REGION_SPEC = [("region", "text", "REGION"), ("book", "text", "BOOK"),
-               ("day", "money", "DAY"), ("mtd", "money", "MTD"),
-               ("ytd", "money", "YTD")]
+               ("day", "rupee0", "DAY"), ("mtd", "rupee0", "MTD"),
+               ("ytd", "rupee0", "YTD")]
 
 SPEC = [("code", "text", "STORE CODE"), ("store", "text", "STORE NAME"),
-        ("day", "money", "DAY"), ("mtd", "money", "MTD"), ("ytd", "money", "YTD")]
+        ("day", "rupee0", "DAY"), ("mtd", "rupee0", "MTD"), ("ytd", "rupee0", "YTD")]
 
 
 def region_table(frame, folders, asof):
