@@ -6,10 +6,9 @@ TARGET per day, the region's movable festivals in a lane above, and three number
 that answer "is the gap the festival moving?". Built from `festival_timing_pack.py`
 (2 Oct 2026); in the VFL reports tab since 4 Oct.
 
-★ FESTIVAL DATES: the live ImpFestiveDates tab wins wherever it carries BOTH years'
-dates for a festival; `festive_dates.csv` (the draft his team is confirming) fills
-the rest and supplies each festival's region. So pasting confirmed dates into the
-sheet takes effect with no code change.
+★ FESTIVAL DATES come from the sheet's `impfestiveclaude` tab (his, 4 Oct), read
+on every build, so an edit there shows in the next pack. `festive_dates.csv` is a
+saved copy used only when the sheet cannot be read, and page one says so.
 """
 from __future__ import annotations
 import io, os, textwrap
@@ -69,24 +68,44 @@ def _parse_rows(tab):
     return out
 
 
-def festivals():
-    """[festival dicts] — the live tab where it has both years, the draft for the rest."""
-    draft = _parse_rows(pd.read_csv(DRAFT, dtype=str)) if os.path.exists(DRAFT) else {}
-    live = {}
+TAB = "impfestiveclaude"                  # his sheet's tab, added 4 Oct
+SOURCE = ""                               # what page one says the dates came from
+
+
+def _tab():
+    """The impfestiveclaude tab, or None.
+
+    ★ GOOGLE ANSWERS A WRONG TAB NAME WITH THE FIRST TAB, NOT AN ERROR — a
+    misspelt name came back as 305,745 rows of sales. So the frame must LOOK
+    like the festival table (an `FY …` column and a Region column) to be used.
+    """
     try:
-        u = F._url()
-        if u:
-            live = _parse_rows(pd.read_csv(u, dtype=str))
+        base = F._url()
+        if not base:
+            return None
+        u = base.split("&sheet=")[0] + "&sheet=" + TAB if "&sheet=" in base else None
+        if not u:
+            return None
+        t = pd.read_csv(u, dtype=str)
     except Exception:
-        live = {}
-    merged = dict(draft)
-    for k, v in live.items():
-        if v["ty"] is not None and v["ly"] is not None:
-            base = merged.get(k, dict(region="All", seen=False))
-            merged[k] = {**base, **{kk: v[kk] for kk in ("name", "ty", "ly")},
-                         "tenure": v["tenure"] or base.get("tenure", False)}
+        return None
+    ok = "Region" in t.columns and any(str(c).startswith("FY ") for c in t.columns)
+    return t if ok and len(t) < 500 else None
+
+
+def festivals():
+    """[festival dicts] — from the sheet's impfestiveclaude tab; the copy saved in
+    the repo (`festive_dates.csv`) only when the sheet cannot be read, and page
+    one says which."""
+    global SOURCE
+    t = _tab()
+    if t is not None:
+        SOURCE, rows = f"Festival dates: the {TAB} sheet", _parse_rows(t)
+    else:
+        SOURCE = "Festival dates: saved copy (the sheet could not be read)"
+        rows = _parse_rows(pd.read_csv(DRAFT, dtype=str)) if os.path.exists(DRAFT) else {}
     out = []
-    for v in merged.values():
+    for v in rows.values():
         if v.get("ty") is None or v.get("ly") is None:
             continue
         out.append(dict(name=v["name"], ly=v["ly"], ty=v["ty"], region=v.get("region", "All"),
@@ -437,7 +456,7 @@ def summary_page(pdf, rows, closed, totals):
              "festival weeks with this year's ordinary ones.", fontsize=9.5, color=QUIET)
     fig.text(.055, .868, "Lined up = the same days before each year's Puja. Target achieved is coloured against "
              "the target due by today on the monthly plan.", fontsize=9.5, color=QUIET)
-    fig.text(.945, .925, "Festival dates: draft list, to be confirmed", fontsize=8.5, color=QUIET, ha="right")
+    fig.text(.945, .925, SOURCE, fontsize=8.5, color=QUIET, ha="right")
     cols = [("Store", .055, "left"), ("City", .185, "left"), ("Year to date", .37, "right"),
             ("Before the season", .475, "right"), ("Sept, on calendar", .58, "right"),
             ("Lined up to Puja", .685, "right"), ("Target achieved", .79, "right"), ("What explains Sept", .815, "left")]

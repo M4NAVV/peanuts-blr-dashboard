@@ -25,31 +25,47 @@ DRAFT = _tab([
 ])
 
 
-def _festivals(monkeypatch, live):
+def _festivals(monkeypatch, sheet):
+    """`sheet` is what Google returns for the tab (a frame, or an exception)."""
+    def read(src, dtype=None):
+        if src == GA.DRAFT:
+            return DRAFT
+        if isinstance(sheet, Exception):
+            raise sheet
+        return sheet
     monkeypatch.setattr(GA.os.path, "exists", lambda p: True)
-    monkeypatch.setattr(GA.F, "_url", lambda: "live")
-    monkeypatch.setattr(GA.pd, "read_csv", lambda src, dtype=None: live if src == "live" else DRAFT)
+    monkeypatch.setattr(GA.F, "_url", lambda: "https://x/gviz/tq?tqx=out:csv&sheet=ImpFestiveDates")
+    monkeypatch.setattr(GA.pd, "read_csv", read)
     return {f["name"].split()[0]: f for f in GA.festivals()}
 
 
-def test_the_live_sheet_wins_where_it_has_both_years(monkeypatch):
-    """Pasting confirmed dates into the sheet must take effect with no code change."""
-    live = _tab([["Akshaya Tritiya: Sunday, April 19, 2026", None,
-                  "Akshaya Tritiya: Wednesday, April 30, 2025", None, None, None, None, None]])
-    f = _festivals(monkeypatch, live)
-    assert f["Akshaya"]["ty"] == pd.Timestamp("2026-04-19")        # the sheet's date, not the draft's 20th
-    assert f["Akshaya"]["region"] == "All"                          # region still from the draft
-    assert f["Ganesh"]["ty"] == pd.Timestamp("2026-09-14")          # untouched rows keep the draft
+def test_the_sheet_tab_is_the_source(monkeypatch):
+    """An edit in impfestiveclaude must show in the next pack with no code change."""
+    sheet = _tab([["Akshaya Tritiya: Sunday, April 19, 2026", None,
+                   "Akshaya Tritiya: Wednesday, April 30, 2025", None, None, None, "South", "South 2.2x"]])
+    f = _festivals(monkeypatch, sheet)
+    assert f["Akshaya"]["ty"] == pd.Timestamp("2026-04-19")
+    assert f["Akshaya"]["region"] == "South"
+    assert "Durga" not in f                                         # the saved copy is NOT mixed in
+    assert "impfestiveclaude" in GA.SOURCE
 
 
-def test_a_live_row_with_one_year_does_not_override(monkeypatch):
-    live = _tab([["Ganesh Chaturthi: Tuesday, September 15, 2026", None, None, None, None, None, None, None]])
-    f = _festivals(monkeypatch, live)
+def test_a_wrong_tab_coming_back_is_refused(monkeypatch):
+    """Google answers a wrong tab name with the FIRST tab (the sales feed)."""
+    sales = pd.DataFrame({"Date": ["2026-10-03"], "Store": ["Jayanagar"], "Amount": ["1000"]})
+    f = _festivals(monkeypatch, sales)
+    assert f["Durga"]["ty"] == pd.Timestamp("2026-10-20")           # the saved copy
+    assert "saved copy" in GA.SOURCE
+
+
+def test_an_unreachable_sheet_falls_back_and_says_so(monkeypatch):
+    f = _festivals(monkeypatch, OSError("offline"))
     assert f["Ganesh"]["ty"] == pd.Timestamp("2026-09-14")
+    assert "could not be read" in GA.SOURCE
 
 
 def test_the_shift_is_measured_on_this_years_calendar(monkeypatch):
-    f = _festivals(monkeypatch, _tab([]))
+    f = _festivals(monkeypatch, DRAFT)
     assert f["Durga"]["shift"] == 18                                # 2 Oct 2025 -> 20 Oct 2026
     assert f["Akshaya"]["shift"] == -10
 
