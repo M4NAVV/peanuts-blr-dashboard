@@ -3405,7 +3405,7 @@ if nav == "📄 REPORTS PDF":
         # is exactly what a master tick must do. The default is set once, on
         # the first render, and the widget then owns it.
         _VRP_KEYS = ("vrp_pack", "vrp_db", "vrp_morning", "vrp_sp_detail",
-                     "vrp_alter", "vrp_books")
+                     "vrp_alter", "vrp_books", "vrp_graph")
         st.session_state.setdefault("vrp_pack", True)
         if _pack_all and not st.session_state.get("_vrp_all_was"):
             for _k in _VRP_KEYS:
@@ -3450,6 +3450,15 @@ if nav == "📄 REPORTS PDF":
                  "book for over a week: a zero there is a book nobody opened, "
                  "not a day nobody took money.")
 
+        picked["graph"] = st.checkbox(
+            "Graph analysis VFL  ·  this year against last, day by day, ~24 pages",
+            key="vrp_graph",
+            help="The VFL portfolio, both regions and every store on one chart "
+                 "each: last year, this year and the month's target per day, "
+                 "with the festivals that move from year to year marked above, "
+                 "and three numbers that say whether a gap is the festival "
+                 "moving or the store. Page one summarises every store. Full "
+                 "estate, never the sidebar filters.")
         picked["books"] = st.checkbox(
             "Collection books  ·  a page per store, ~13 pages",
             key="vrp_books",
@@ -3567,6 +3576,13 @@ if nav == "📄 REPORTS PDF":
                     else:
                         built.append(TLRBK.build(_tf, _tfold, _tsrc,
                                                  asof=p_asof)[:2])
+                if "graph" in chosen:
+                    # ★ THE FULL ESTATE (get_data, not the filtered frame): its
+                    # portfolio and region pages are totals, and a sidebar filter
+                    # would quietly shrink them. Built up to the picked day.
+                    _prog.step("Graph analysis VFL")
+                    import graph_analysis as GA
+                    built.append(GA.build(get_data(), asof=p_asof))
                 _prog.done("Packaging…")
                 name, payload, mime = RTD.bundle(
                     built, zip_name=f"VFL REPORTS {p_asof:%d-%m-%Y}.zip")
