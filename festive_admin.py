@@ -219,7 +219,7 @@ def daily_chart(width, height, w, ty_days, ly_days):
 # reading each one; a bar of the same value is compared without reading at all.
 # The exact number stays beside it, so nothing is lost to anyone who needs it.
 def table_image(df, spec, width, font_px=26, bar_col=None, bar_label="",
-                total_row=None, shade=(), neg_row=None, fill=True):
+                total_row=None, shade=(), neg_row=None, fill=True, sub_row=None):
     """`spec` is [(column, kind, header)] with kind in
     text | money | pct | int | bar.
 
@@ -235,6 +235,10 @@ def table_image(df, spec, width, font_px=26, bar_col=None, bar_label="",
 
     `neg_row(row) -> bool` marks a row as being in degrowth, and the WHOLE row
     is then set in red.
+
+    `sub_row(row) -> bool` marks a SUBTOTAL inside the body: bold, on the header
+    blue, so it reads as a summary of the rows above it and not as the grand
+    total, which keeps the yellow.
 
     ★ THE ROW, NOT JUST THE G/D CELL (Manav, 8 Sep). The percentage already
     coloured itself, but a reader scanning fifty-two stores for the ones going
@@ -363,23 +367,26 @@ def table_image(df, spec, width, font_px=26, bar_col=None, bar_label="",
     y = head_h
     for i in range(rows_n):
         is_total = total_row is not None and i == rows_n - 1
+        is_sub = bool(sub_row and not is_total and sub_row(df[i]))
         if is_total:
             d.rectangle([0, y, W, y + row_h], fill=PP.TOTAL_BG)
+        elif is_sub:
+            d.rectangle([0, y, W, y + row_h], fill=PP.HDR_BG)
         elif i % 2 == 1:
             # ★ A BAND EVERY OTHER ROW. Seventy rows of white with a grid is
             # where an eye loses its place and reads two stores as one.
             d.rectangle([0, y, W, y + row_h], fill=(248, 250, 251))
         for j in shade:
-            if not is_total:
+            if not (is_total or is_sub):
                 d.rectangle([xs[j], y, xs[j] + widths[j], y + row_h],
                             fill=SHADE)
         x = 0
         src = total_row if is_total else df[i]
         # ★ A TOTAL ROW IS NEVER REDDENED — it is yellow and bold already, and
         # a red-on-yellow total reads as an error rather than as a summary.
-        row_neg = bool(neg_row and not is_total and neg_row(src))
+        row_neg = bool(neg_row and not (is_total or is_sub) and neg_row(src))
         for j, (c, k, _h) in enumerate(spec):
-            f = bold if is_total else reg
+            f = bold if (is_total or is_sub) else reg
             if k == "bar" and not is_total:
                 _raw = src.get(bar_col)
                 v = (0.0 if _raw is None or pd.isna(_raw) else float(_raw))

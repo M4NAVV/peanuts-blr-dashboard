@@ -392,3 +392,21 @@ def test_a_drive_failure_does_not_take_the_whole_pack_down():
     i = src.index('"books" in chosen')
     block = src[i:i + 900]
     assert "st.warning(" in block and "last_problem()" in block
+
+
+def test_region_subtotals_add_up_to_the_grand_total():
+    """4 Oct: the index tables split by region; the subtotals must sum to the total."""
+    rows = [dict(code="97", store="Jorhat", book="Tailor", last="", region="East & NE",
+                 bills=2, **{c: 1000.0 for c in TL.MONEY}),
+            dict(code="107", store="Grand Kamraj", book="Tailor", last="", region="South",
+                 bills=5, **{c: 7000.0 for c in TL.MONEY}),
+            dict(code="112", store="Jayanagar", book="Tailor", last="", region="South",
+                 bills=1, **{c: 500.0 for c in TL.MONEY})]
+    out = TL.by_region(rows, "ytd")
+    subs = [r for r in out if r.get("_sub")]
+    assert [r["region"] for r in subs] == ["East & NE", "South"]       # East first, as elsewhere
+    assert [r["code"] for r in out if not r.get("_sub")] == ["97", "107", "112"]
+    assert out[1]["_sub"] and out[-1]["_sub"]                          # each region closed by its subtotal
+    for c in TL.MONEY:
+        assert sum(r[c] for r in subs) == sum(r[c] for r in rows)
+    assert sum(r["bills"] for r in subs) == 8

@@ -200,11 +200,37 @@ def index_rows(frame, sources, folders, asof, span="ytd") -> tuple:
                      "last": f"{last:%d-%m-%Y}" if last is not None else "never",
                      "last_dt": last,          # sortable; not on the spec
                      "key": (int(b["store_code"]), b["kind"]),
+                     "region": b["region"],
                      **window(part, start, asof)})
     total = {"code": "", "store": "TOTAL", "book": span.upper(), "last": "",
              "bills": sum(r["bills"] for r in rows),
              **{c: sum(r[c] for r in rows) for c in MONEY}}
     return rows, total
+
+
+REGION_ORDER = ("East & NE", "South")
+
+
+def by_region(rows, span="ytd") -> list:
+    """The index rows grouped by region, each region closed by its SUBTOTAL row.
+
+    ★ Manav, 4 Oct: *"make this table do region subdivisions, sub totals and
+    grand totals"*. Store-code order holds INSIDE a region, so a store is still
+    on the same line from one pack to the next. The grand total is unchanged —
+    it is still `index_rows`' own total, summed over every book — so the two
+    subtotals must add up to it, and a test holds them to that.
+    """
+    regions = [r for r in REGION_ORDER if any(x["region"] == r for x in rows)]
+    regions += sorted({x["region"] for x in rows} - set(regions))
+    out = []
+    for reg in regions:
+        part = [x for x in rows if x["region"] == reg]
+        out += part
+        out.append({"code": "", "store": reg.upper(), "book": f"SUBTOTAL {span.upper()}",
+                    "last": "", "_sub": True, "region": reg,
+                    "bills": sum(x["bills"] for x in part),
+                    **{c: sum(x[c] for x in part) for c in MONEY}})
+    return out
 
 
 def latest_day(frame, asof):
@@ -292,10 +318,12 @@ def build(frame, folders, sources, asof=None) -> tuple:
                 ("ytd", SPANS["ytd"], "1 Apr")):
             srows, stotal = index_rows(frame, sources, folders, asof, span)
             one.put(A4._caption(
-                W, label, f"{since} to {asof:%d %b %Y}  ·  by store code"),
+                W, label, f"{since} to {asof:%d %b %Y}  ·  by region, then store code"),
                 gap=8)
-            one.put(FADM.table_image(srows, INDEX_SPEC, W, font_px=23,
-                                     total_row=stotal), gap=18)
+            stotal = {**stotal, "store": "GRAND TOTAL"}
+            one.put(FADM.table_image(by_region(srows, span), INDEX_SPEC, W,
+                                     font_px=23, total_row=stotal,
+                                     sub_row=lambda r: r.get("_sub")), gap=18)
 
         # ★ THE PAGES BEHIND THIS ONE ARE A SUBSET, AND IT SAYS SO. A reader
         # who counted pages and found nine stores missing would be right to
