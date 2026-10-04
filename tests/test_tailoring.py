@@ -212,3 +212,59 @@ def test_the_pdf_builds_from_an_empty_estate_without_raising():
     empty["date"] = pd.to_datetime(empty["date"])
     name, payload, pages = TP.build(empty, [], [], asof="2026-09-23")
     assert payload and pages >= 1 and name.endswith(".pdf")
+
+
+# --------------------------------------------------------------------------- #
+# 4 Oct 2026 — the download key is Drive's edit time NOW, not the day-old registry's
+# --------------------------------------------------------------------------- #
+class _Get:
+    def __init__(self, value=None, boom=False):
+        self.value, self.boom = value, boom
+
+    def execute(self):
+        if self.boom:
+            raise RuntimeError("drive down")
+        return {"modifiedTime": self.value}
+
+
+class _Files:
+    def __init__(self, value=None, boom=False):
+        self.value, self.boom = value, boom
+
+    def get(self, **kw):
+        return _Get(self.value, self.boom)
+
+
+class _Svc:
+    def __init__(self, value=None, boom=False):
+        self._f = _Files(value, boom)
+
+    def files(self):
+        return self._f
+
+
+def test_the_key_is_drives_current_edit_time_not_the_registrys():
+    """The bug: a 24-hour registry carried a stale modifiedTime, so a book typed into
+    all evening was never re-downloaded."""
+    import tailoring as TLR
+    stale = {"id": "abc", "modified": "2026-10-02T10:00:00.000Z"}
+    assert TLR.current_modified(_Svc("2026-10-03T17:11:00.000Z"), stale) == "2026-10-03T17:11:00.000Z"
+
+
+def test_when_drive_cannot_say_the_book_is_downloaded_not_trusted():
+    import tailoring as TLR
+    assert TLR.current_modified(_Svc(boom=True), {"id": "abc", "modified": "old"}) == ""
+
+
+def test_load_passes_the_live_time_to_fetch(monkeypatch, tmp_path):
+    import tailoring as TLR
+    seen = []
+    key = tmp_path / "k.json"; key.write_text("{}")
+    monkeypatch.setattr(TLR, "creds_path", lambda: str(key))
+    monkeypatch.setattr(TLR, "drive", lambda k: _Svc("2026-10-03T17:11:00.000Z"))
+    monkeypatch.setattr(TLR, "fetch", lambda svc, fid, dest, modified="": seen.append(modified) or dest)
+    monkeypatch.setattr(TLR, "read_workbook", lambda *a, **k: (TLR.pd.DataFrame(), []))
+    src = {"region": "South", "store_code": 107, "pr": "PRGK", "folder": "f", "name": "n",
+           "id": "abcdefgh1", "kind": "alter", "modified": "2026-10-02T10:00:00.000Z"}
+    TLR.load(cache_dir=str(tmp_path / "c"), reg=([src], [], []))
+    assert seen == ["2026-10-03T17:11:00.000Z"]

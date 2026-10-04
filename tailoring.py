@@ -252,6 +252,25 @@ def fetch(svc, fid, dest: Path, modified: str = ""):
 
 
 
+def current_modified(svc, s) -> str:
+    """The file's edit time AS DRIVE HAS IT NOW — never the registry's copy.
+
+    ★★ THE REGISTRY IS A DAY OLD; THE BOOKS ARE NOT (4 Oct 2026). The registry is
+    cached for 24 hours because folders almost never move, but it also carried each
+    file's `modifiedTime`, and that stale time was the download key. A store could type
+    all evening and `fetch` would still see the old stamp, call its copy current, and
+    serve yesterday's book: the hourly refresh refreshed nothing for up to a day.
+    One metadata call per book (~13, about a second) keeps the key honest. If even that
+    fails, return "" so `fetch` downloads rather than trusting an old copy.
+    """
+    try:
+        meta = svc.files().get(fileId=s["id"], fields="modifiedTime",
+                               supportsAllDrives=True).execute()
+        return meta.get("modifiedTime", "") or ""
+    except Exception:
+        return ""
+
+
 def creds_path() -> str:
     """The service account, from a secret on the Space or a file on his Mac.
 
@@ -328,7 +347,7 @@ def load(cache_dir="data/tailoring/cache", reg=None):
     for s in sources:
         local = cache / f"{s['store_code']}_{s['kind']}_{s['id'][:8]}.xlsx"
         try:
-            fetch(svc, s["id"], local, s.get("modified", ""))
+            fetch(svc, s["id"], local, current_modified(svc, s))
         except Exception as e:
             notes.append(f"{s['store_code']}/{s['kind']}: download failed ({e})")
             continue
