@@ -3851,7 +3851,7 @@ if nav == "📊 Executive":
     st.caption(
         f"**As of {asof:%d %b %Y}** (follows the date picker). Fiscal year "
         f"**Apr–Mar**, each store counted from its **takeover date** "
-        f"(South: 19 Apr 2025). All figures **year-on-year** vs the same period "
+        f"(South: 19 Apr 2026). All figures **year-on-year** vs the same period "
         f"last year. Respects the Store / filters."
     )
     wins = L.standard_windows(df_exec, asof=asof)
