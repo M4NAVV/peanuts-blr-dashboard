@@ -56,9 +56,11 @@ jobs:
           # backup suite errors at import HERE while passing on a laptop that
           # happens to have it — see [[feedback-test-where-it-runs]], which this
           # repo has already gone red on twice.
+          # matplotlib draws Graph analysis VFL (graph_analysis.py) — missing here it
+          # failed at import on 4 Oct while passing on the laptop, the fourth time.
           pip install "pandas==2.2.3" "numpy==1.26.4" "pillow==12.3.0" \
                       "pyyaml==6.0.2" "pyarrow==18.1.0" "openpyxl==3.1.5" \
-                      requests pytest
+                      "matplotlib==3.11.0" requests pytest
 
       - name: Run the tests
         run: python -m pytest tests -q
