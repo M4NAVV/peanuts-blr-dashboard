@@ -2792,6 +2792,12 @@ def _tailoring():
     return TLR.load(reg=reg)
 
 
+def rupees(x) -> str:
+    """Whole rupees, Indian grouping: ₹28,66,749. The alterations tab reads like
+    the books it summarises (Manav, 4 Oct), not in lakhs."""
+    return "—" if x is None or pd.isna(x) else "₹" + fmt_in(x, 0)
+
+
 if nav == "✂️ Alterations":
     import tailoring as TLR
     st.subheader("Alterations & parking")
@@ -2820,8 +2826,8 @@ if nav == "✂️ Alterations":
         _stale = int((_fr[_fr.kind == "alter"]["days_since"] > 7).sum())
 
         c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Alterations, year to date", inr(_alt["total"].sum()))
-        c2.metric("Parking", inr(_park["total"].sum()))
+        c1.metric("Alterations, year to date", rupees(_alt["total"].sum()))
+        c2.metric("Parking", rupees(_park["total"].sum()))
         c3.metric("Stores recording", f"{_fr['store_code'].nunique()} of "
                                       f"{len({f['store_code'] for f in _tfolders})}")
         c4.metric("Not recorded in a week", f"{_stale}",
@@ -2836,7 +2842,7 @@ if nav == "✂️ Alterations":
             lambda d: "today" if d == 0 else ("1 day" if d == 1 else f"{int(d)} days"))
         _disp = _f1[["Store", "kind", "Last recorded", "Ago", "rows", "total"]]
         _disp.columns = ["Store", "Book", "Last recorded", "Ago", "Bills", "Collected"]
-        st.dataframe(_disp.style.format({"Collected": lambda v: inr(v),
+        st.dataframe(_disp.style.format({"Collected": lambda v: rupees(v),
                                          "Bills": "{:,.0f}"}),
                      use_container_width=True, hide_index=True)
         if _stale:
@@ -2851,7 +2857,7 @@ if nav == "✂️ Alterations":
         _m["Total"] = _m.sum(axis=1)
         _m = _m.sort_values("Total", ascending=False)
         _m.loc["TOTAL"] = _m.sum()
-        st.dataframe(_m.style.format(lambda v: inr(v)),
+        st.dataframe(_m.style.format(lambda v: rupees(v)),
                      use_container_width=True)
 
         st.markdown("**How alterations were paid**")
@@ -2860,8 +2866,8 @@ if nav == "✂️ Alterations":
         _sp.index = [_names.get(i, str(i)) for i in _sp.index]
         _sp.columns = ["Cash", "Card / UPI", "Total", "Card %"]
         st.dataframe(_sp.sort_values("Total", ascending=False).style.format(
-            {"Cash": lambda v: inr(v), "Card / UPI": lambda v: inr(v),
-             "Total": lambda v: inr(v), "Card %": "{:.1f}%"}),
+            {"Cash": lambda v: rupees(v), "Card / UPI": lambda v: rupees(v),
+             "Total": lambda v: rupees(v), "Card %": "{:.1f}%"}),
             use_container_width=True)
 
         _probs = TLR.check(_tf)
