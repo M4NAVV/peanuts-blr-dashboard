@@ -22,6 +22,35 @@ if [ -n "$DIRTY" ]; then
     echo
 fi
 
+# ★ RECONCILIATION GATE (5 Oct 2026). Before anything goes live, the reports
+# must still reproduce the figures Manav signed off against his own workbooks.
+# The figures are private (~/Documents/peanuts-recon/golden.json) and never in
+# this public repo. A SKIP is treated as a failure here — "could not check" is
+# not "checked" (see feedback-silent-failure-must-speak). Override, with a
+# reason, only for an emergency:  SKIP_RECON=1 ./deploy.sh
+GOLDEN="${PEANUTS_RECON:-$HOME/Documents/peanuts-recon/golden.json}"
+if [ "${SKIP_RECON:-0}" = "1" ]; then
+    echo "! reconciliation SKIPPED by SKIP_RECON=1 — say why in the commit or the log"
+elif [ -f "$GOLDEN" ]; then
+    echo "→ reconciling against the signed-off figures"
+    PY=./venv/bin/python; [ -x "$PY" ] || PY=python3
+    OUT=$("$PY" -m pytest tests/test_reconciliation.py -q -rs -p no:cacheprovider 2>&1) && RC=0 || RC=$?
+    LAST=$(echo "$OUT" | tail -1)
+    if [ "$RC" -ne 0 ] || echo "$LAST" | grep -q "skipped"; then
+        echo "$OUT" | grep -E "^E +AssertionError|^FAILED|SKIPPED" | sed 's/^/    /' | head -20
+        echo "    $LAST"
+        echo
+        echo "✗ NOT DEPLOYED — a signed-off figure no longer ties (or could not be checked)."
+        echo "  Either the change broke a report, or the sheet's history was edited / a rule"
+        echo "  changed on purpose — then update 'expect' in $GOLDEN with a note."
+        exit 1
+    fi
+    echo "  ✓ $LAST"
+    echo
+else
+    echo "! no reconciliation file at $GOLDEN — deploying without the figure check"
+fi
+
 for r in origin hf; do
     echo "→ pushing $BRANCH to $r"
     git push "$r" "$BRANCH"
