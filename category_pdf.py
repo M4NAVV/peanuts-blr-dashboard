@@ -217,8 +217,9 @@ def movers(rows, min_share=1.0, n=3):
     of at least `min_share`%). Computed from the same rows the table prints."""
     c = [r for r in rows if not r.get("_sub") and not r.get("_head") and r.get("YTD_gd") is not None
          and (r.get("share") or 0) >= min_share]
-    up = sorted([r for r in c if r["YTD_gd"] > 0], key=lambda r: -r["YTD_gd"])[:n]
-    dn = sorted([r for r in c if r["YTD_gd"] < 0], key=lambda r: r["YTD_gd"])[:n]
+    # under half a percent either way is not a move: it would print as "+0%" / "-0%"
+    up = sorted([r for r in c if r["YTD_gd"] >= 0.5], key=lambda r: -r["YTD_gd"])[:n]
+    dn = sorted([r for r in c if r["YTD_gd"] <= -0.5], key=lambda r: r["YTD_gd"])[:n]
     return up, dn
 
 
@@ -316,9 +317,17 @@ def build(df_in: pd.DataFrame, asof, w=None, basis_label=""):
                 f"Growing most this year (categories with at least 1% of sales): {_phrase(up)}.  "
                 f"Falling most: {_phrase(dn)}.", A4._ft(26)[1], A4.INK)]), gap=12)
             sh.put(A4._text_block(W, [(note + note_prov, A4._ft(21)[0], A4.SUB)]), gap=16)
-            sh.put(FADM.table_image(rows, spec, W, font_px=21, total_row=total,
-                                    neg_row=_degrowth, sub_row=lambda r: r.get("_sub", False),
-                                    shade=[3, 4], total_first=True), gap=18)
+            # ★ THE TYPE FILLS THE PAGE, NOT THE NAME COLUMNS (Manav, 6 Oct: "a lot of
+            # blank space towards the right"). Stretched to the page, a table hands all
+            # its spare width to its text columns, and with the name on both edges the
+            # right-hand one became a strip of white. So the largest type whose NATURAL
+            # width still fits is used, and only the last few pixels are spread.
+            kw = dict(total_row=total, neg_row=_degrowth, shade=[3, 4], total_first=True,
+                      sub_row=lambda r: r.get("_sub", False))
+            for fpx in (30, 29, 28, 27, 26, 25, 24, 23, 22, 21):
+                if FADM.table_image(rows, spec, W, font_px=fpx, fill=False, **kw).width <= W:
+                    break
+            sh.put(FADM.table_image(rows, spec, W, font_px=fpx, **kw), gap=18)
             sh.put(A4._text_block(W, [(
                 "G/D is growth against the same days last year. SHARE is the category's part "
                 "of this page's year-to-date sales; SHARE CHANGE is this year's share minus "
