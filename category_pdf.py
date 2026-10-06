@@ -3,8 +3,8 @@
 ★ Manav, 6 Oct 2026: *"another pdf, that is focused on VFL and categories, so on a
 portfolio level, region level and then store level … like how kurtas are doing this
 year, compared to last year"*. His rulings the same day:
-  - the category is the DIVISION, with Twamev split into its own categories
-    (Twamev is one division in the feed, holding kurtas, jodhpuris, sherwanis …);
+  - the category is what the customer buys, ACROSS BRANDS (revised the same day:
+    "saree as a category … we dont care so much if its mohey saree or twamev saree");
   - periods MTD, YTD and one festive run-up, each against the same days last year;
   - measures: sales + G/D, price per piece, share of sales;
   - a store is NEW only if it has no last-year data. Every store with last year is
@@ -13,7 +13,7 @@ year, compared to last year"*. His rulings the same day:
 ★ WHY NOT THE SECTION. Sections carry COLLECTION CODES (KURTA SET-09, -12, -14, O-S).
 Stock moves from one code to the next between seasons — this year KURTA SET-14 halved
 while -09 doubled — so a section-level comparison reports the catalogue changing, not
-the customer. The division is the code-free category.
+the customer. Categories are built from the division and the code-free section stem.
 
 ★ THE SAME WINDOWS AS EVERY OTHER REPORT. MTD and YTD come from `L.report_frames`
 (South anchored to its 19 Apr takeover); the festive run-up from `festive.Window`
@@ -29,44 +29,90 @@ import festive_admin as FADM
 import loader as L
 
 # --------------------------------------------------------------------------- categories
-_LABEL = {
-    "KURTA SET": "Kurta set", "KURTA ONLY": "Kurta only", "SHORT KURTA": "Short kurta",
-    "INSIDE KURTA ONLY": "Inside kurta", "INDO WESTERN SET": "Indo-western",
-    "SHERWANI SET": "Sherwani", "JODHPURI SUIT": "Jodhpuri suit", "JACKET": "Jacket",
-    "JACKET SET": "Jacket set", "MANYAVAR ACCESSORIES": "Accessories", "CHILD": "Kidswear",
-    "LOWERS": "Lowers", "SOUTH PANCHA VESHTI": "Pancha & veshti", "SUITS": "Suits",
-    "DIWAS": "Diwas", "BLAZER": "Blazer", "SHIRTS": "Shirts", "MANTHAN": "Manthan",
-    "MOHEY-SAREE": "Saree", "MOHEY-LEHENGA": "Lehenga", "MOHEY-STITCHED SUIT": "Stitched suit",
-    "MOHEY-CROP TOP LEHENGA": "Crop top lehenga", "MOHEY ACCESSORIES": "Accessories",
-    "MOHEY": "Mohey, other", "MEBAZ": "Mebaz",
+# ★★ CATEGORY-CENTRIC, NOT BRAND-CENTRIC (Manav, 6 Oct: *"we want to treat saree as a
+# category, we dont care so much if its mohey saree or twamev saree"*). A category is
+# what the customer buys, whoever's label is on it: Saree = Mohey + Twamev; Kurta set =
+# Manyavar + Twamev + the Diwas and Manthan value lines. Grouped Menswear / Womenswear /
+# Kidswear. Mixed divisions are read by SECTION (accessories hold footwear, safas and
+# socks; the kids' juttis and dhotis sit in adult divisions) — always on the code-free
+# section stem, never on a collection code.
+GROUPS = ["Menswear", "Womenswear", "Kidswear", "Other"]
+_M, _W, _K = "Menswear", "Womenswear", "Kidswear"
+_BY_DIVISION = {
+    "KURTA SET": (_M, "Kurta set"), "KURTA ONLY": (_M, "Kurta only"),
+    "SHORT KURTA": (_M, "Short kurta"), "INSIDE KURTA ONLY": (_M, "Inside kurta"),
+    "INDO WESTERN SET": (_M, "Indo-western"), "SHERWANI SET": (_M, "Sherwani"),
+    "JODHPURI SUIT": (_M, "Jodhpuri"), "JACKET": (_M, "Jacket"), "JACKET SET": (_M, "Jacket set"),
+    "SUITS": (_M, "Suits"), "BLAZER": (_M, "Blazer"), "LOWERS": (_M, "Lowers"),
+    "SOUTH PANCHA VESHTI": (_M, "Pancha & veshti"), "SHIRTS": (_M, "Shirts"),
+    "MOHEY-SAREE": (_W, "Saree"), "MOHEY-LEHENGA": (_W, "Lehenga"),
+    "MOHEY-CROP TOP LEHENGA": (_W, "Crop top lehenga"), "MOHEY-STITCHED SUIT": (_W, "Stitched suit"),
+    "MOHEY ACCESSORIES": (_W, "Women's accessories"), "MEBAZ": (_W, "Mebaz"),
 }
-# Twamev's sections, code-free. Anything not named here folds into one line, so a
-# new or one-off section cannot quietly add a row that has no last year.
+# Twamev's sections, without the TWAM prefix. Anything unnamed folds into its
+# group's accessories line, so a one-off section cannot add a row with no last year.
 _TWAMEV = {
-    "TWAM KURTA SET": "Kurta set", "TWAM JODHPURI SET": "Jodhpuri set",
-    "TWAM SUIT SET": "Suit set", "TWAM INDO WESTERN SET": "Indo-western",
-    "TWAM SHERWANI SET": "Sherwani", "TWAM JACKET SET": "Jacket set",
-    "TWAM FOOTWEAR": "Footwear", "TWAM SAREE": "Saree", "TWAM LEHENGA": "Lehenga",
-    "TWAM CROP TOP LEHENGA": "Crop top lehenga", "TWAM STITCHED SUIT": "Stitched suit",
+    "KURTA SET": (_M, "Kurta set"), "JODHPURI SET": (_M, "Jodhpuri"), "SUIT SET": (_M, "Suits"),
+    "INDO WESTERN SET": (_M, "Indo-western"), "SHERWANI SET": (_M, "Sherwani"),
+    "JACKET SET": (_M, "Jacket set"), "JACKET": (_M, "Jacket"), "FOOTWEAR": (_M, "Footwear"),
+    "SAFA": (_M, "Safa & bandanna"), "BANDANNA": (_M, "Safa & bandanna"),
+    "SAREE": (_W, "Saree"), "LEHENGA": (_W, "Lehenga"), "CROP TOP LEHENGA": (_W, "Crop top lehenga"),
+    "STITCHED SUIT": (_W, "Stitched suit"), "INDO WESTERN WOMEN": (_W, "Indo-western & gowns"),
+    "GOWN": (_W, "Indo-western & gowns"), "WOMEN ACCESSORIES": (_W, "Women's accessories"),
 }
-_GROUP_OF = {"Manyavar": "Manyavar", "Manthan": "Manyavar", "Mohey": "Mohey",
-             "Mebaz": "Mohey", "Twamev": "Twamev"}
-GROUPS = ["Manyavar", "Mohey", "Twamev", "Other"]
 _CODE = re.compile(r"[\s-]*(O-S|\d{2}|OTHERS)$")
 
 
+def _one(div: str, sec: str):
+    """(group, category) for one division + code-free section stem."""
+    if sec.startswith("CHILD") or sec in ("JOOTI CHILD", "MALA CHILD") or div == "CHILD":
+        if "KURTA SET" in sec:
+            return _K, "Kids kurta set"
+        if "JACKET SET" in sec:
+            return _K, "Kids jacket set"
+        if "INDO WESTERN" in sec:
+            return _K, "Kids indo-western"
+        return _K, "Other kidswear"
+    if div.startswith("TWAMEV"):
+        stem = sec[5:] if sec.startswith("TWAM ") else sec
+        return _TWAMEV.get(stem, (_W, "Women's accessories") if div.endswith("WOMEN")
+                           else (_M, "Men's accessories"))
+    if div in ("DIWAS", "MANTHAN"):            # value lines: the garment, not the label
+        if "KURTA SET" in sec:
+            return _M, "Kurta set"
+        if "KURTA" in sec:
+            return _M, "Kurta only"
+        if "JACKET SET" in sec:
+            return _M, "Jacket set"
+        if "LOWERS" in sec:
+            return _M, "Lowers"
+        return _M, "Kurta only"
+    if div == "MANYAVAR ACCESSORIES":
+        if sec in ("FOOTWEAR", "JOOTI"):
+            return _M, "Footwear"
+        if sec in ("SAFA", "BANDANNA"):
+            return _M, "Safa & bandanna"
+        return _M, "Men's accessories"
+    if div == "MOHEY":
+        if sec.startswith("BLOUSE"):
+            return _W, "Blouse"
+        if "SHAPER" in sec:
+            return _W, "Women's accessories"
+        return _W, "Other womenswear"
+    return _BY_DIVISION.get(div, ("Other", "Other"))
+
+
 def categorise(df: pd.DataFrame) -> pd.DataFrame:
-    """Adds `_grp` (Manyavar / Mohey / Twamev / Other) and `_cat` (the category)."""
+    """Adds `_grp` (Menswear / Womenswear / Kidswear / Other) and `_cat`."""
     d = df.copy()
     div = d[L.COL_DIVISION].astype(str).str.strip().str.upper()
-    sec = d[L.COL_SECTION].astype(str).str.strip().str.upper().str.replace(_CODE, "", regex=True)
-    d["_grp"] = d[L.COL_BRAND].map(_GROUP_OF).fillna("Other")
-    cat = div.map(_LABEL)
-    tw = div.str.startswith("TWAMEV")
-    cat = cat.mask(tw, sec.map(_TWAMEV).fillna("Accessories & other"))
-    d["_grp"] = d["_grp"].mask(tw, "Twamev")
-    d["_cat"] = cat.fillna("Other")
-    d.loc[d["_cat"].eq("Other") & ~tw & d["_grp"].ne("Other"), "_grp"] = "Other"
+    sec = (d[L.COL_SECTION].astype(str).str.strip().str.upper()
+           .str.replace(_CODE, "", regex=True))
+    pairs = pd.Series(list(zip(div, sec)), index=d.index)
+    lut = {p: _one(*p) for p in pairs.unique()}
+    got = pairs.map(lut)
+    d["_grp"] = got.str[0]
+    d["_cat"] = got.str[1]
     return d
 
 
@@ -145,15 +191,13 @@ def table_rows(win: dict, stores):
         idx = sorted(k for k in keys if k[0] == g)
         if not idx:
             continue
-        part = [dict(line(c, [(g, c)]), _label=(c if g == "Manyavar" else f"{g} {c.lower()}"))
-                for _g, c in idx]
+        part = [dict(line(c, [(g, c)]), _label=c) for _g, c in idx]
         part = [r for r in part if any(abs(r.get(f"{k}_ty", 0) or 0) > 0 for k in s) or r["_ly_ytd"]]
         part.sort(key=lambda r: -(r["YTD_ty"] or 0))
         if not part:
             continue
-        # ★ THE BRAND'S TOTAL HEADS ITS GROUP (6 Oct): "Kurta set" is a Manyavar line
-        # and a Twamev line, so the reader must know which group they are in BEFORE
-        # the rows, not after them.
+        # ★ THE GROUP'S TOTAL HEADS IT (6 Oct), so the reader knows which group
+        # they are in before the rows, not after them.
         if g != "Other":
             sub = line(g, idx)
             sub["_sub"] = True

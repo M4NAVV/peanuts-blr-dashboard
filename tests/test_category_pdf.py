@@ -19,23 +19,44 @@ def test_collection_codes_never_split_a_category():
     assert d["_cat"].unique().tolist() == ["Kurta set"]
 
 
-def test_twamev_is_split_into_its_own_categories():
+def test_a_category_is_what_the_customer_buys_whoever_the_brand():
+    """★ Manav, 6 Oct: saree is a category, Mohey or Twamev."""
     d = C.categorise(_rows([
-        ("A", "TWAMEV-MEN", "TWAM KURTA SET", "Twamev", 1, 1),
-        ("A", "TWAMEV-MEN", "TWAM JODHPURI SET", "Twamev", 1, 1),
+        ("A", "MOHEY-SAREE", "SAREE-09", "Mohey", 1, 1),
         ("A", "TWAMEV-WOMEN", "TWAM SAREE", "Twamev", 1, 1),
+        ("A", "KURTA SET", "KURTA SET-14", "Manyavar", 1, 1),
+        ("A", "TWAMEV-MEN", "TWAM KURTA SET", "Twamev", 1, 1),
+        ("A", "DIWAS", "KURTA SET-DIWAS", "Manyavar", 1, 1),
+        ("A", "MANTHAN", "KURTA SET-MTHN", "Manthan", 1, 1),
+        ("A", "JODHPURI SUIT", "JODHPURI SUIT SET", "Manyavar", 1, 1),
+        ("A", "TWAMEV-MEN", "TWAM JODHPURI SET", "Twamev", 1, 1)]))
+    assert list(zip(d["_grp"], d["_cat"])) == [
+        ("Womenswear", "Saree"), ("Womenswear", "Saree"),
+        ("Menswear", "Kurta set"), ("Menswear", "Kurta set"), ("Menswear", "Kurta set"),
+        ("Menswear", "Kurta set"), ("Menswear", "Jodhpuri"), ("Menswear", "Jodhpuri")]
+
+
+def test_accessories_are_split_into_what_they_are_and_kids_go_to_kidswear():
+    d = C.categorise(_rows([
+        ("A", "MANYAVAR ACCESSORIES", "JOOTI", "Manyavar", 1, 1),
+        ("A", "TWAMEV-MEN", "TWAM FOOTWEAR", "Twamev", 1, 1),
+        ("A", "MANYAVAR ACCESSORIES", "SAFA", "Manyavar", 1, 1),
+        ("A", "MANYAVAR ACCESSORIES", "SOCKS", "Manyavar", 1, 1),
+        ("A", "MANYAVAR ACCESSORIES", "JOOTI CHILD", "Manyavar", 1, 1),
+        ("A", "LOWERS", "CHILD DHOTI", "Manyavar", 1, 1),
+        ("A", "CHILD", "CHILD KURTA SET-09", "Manyavar", 1, 1),
         ("A", "TWAMEV-MEN", "TWAM MALA", "Twamev", 1, 1)]))
     assert list(zip(d["_grp"], d["_cat"])) == [
-        ("Twamev", "Kurta set"), ("Twamev", "Jodhpuri set"), ("Twamev", "Saree"),
-        ("Twamev", "Accessories & other")]
+        ("Menswear", "Footwear"), ("Menswear", "Footwear"), ("Menswear", "Safa & bandanna"),
+        ("Menswear", "Men's accessories"), ("Kidswear", "Other kidswear"),
+        ("Kidswear", "Other kidswear"), ("Kidswear", "Kids kurta set"),
+        ("Menswear", "Men's accessories")]
 
 
-def test_sub_brands_sit_under_their_parent_and_unknowns_under_other():
-    d = C.categorise(_rows([
-        ("A", "MEBAZ", "X", "Mebaz", 1, 1), ("A", "MANTHAN", "X", "Manthan", 1, 1),
-        ("A", "OUTPUT ITEM", "X", "Other", 1, 1), ("A", "SOMETHING NEW", "X", "Manyavar", 1, 1)]))
-    assert list(zip(d["_grp"], d["_cat"])) == [
-        ("Mohey", "Mebaz"), ("Manyavar", "Manthan"), ("Other", "Other"), ("Other", "Other")]
+def test_unknown_divisions_go_to_other():
+    d = C.categorise(_rows([("A", "OUTPUT ITEM", "X", "Other", 1, 1),
+                            ("A", "SOMETHING NEW", "X", "Manyavar", 1, 1)]))
+    assert list(zip(d["_grp"], d["_cat"])) == [("Other", "Other"), ("Other", "Other")]
 
 
 def _win():
@@ -50,9 +71,9 @@ def _win():
     return {"MTD": (ty, ly), "YTD": (ty, ly)}
 
 
-def test_brand_heading_comes_before_its_categories():
+def test_group_heading_comes_before_its_categories():
     rows, _t, _ = C.table_rows(_win(), ["A"])
-    assert [r["cat"] for r in rows] == ["Manyavar", "Kurta set", "Sherwani", "Mohey", "Saree"]
+    assert [r["cat"] for r in rows] == ["Menswear", "Kurta set", "Sherwani", "Womenswear", "Saree"]
     assert rows[0]["_sub"] and rows[3]["_sub"]
 
 
