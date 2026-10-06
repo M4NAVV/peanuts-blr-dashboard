@@ -129,8 +129,11 @@ def table_rows(win: dict, stores):
                 sh_t = ts / tot_ty * 100 if tot_ty else None
                 sh_l = ls / tot_ly * 100 if tot_ly > 0 else None
                 r["share"] = sh_t
-                r["share_chg"] = (f"{sh_t - sh_l:+.1f} pts"
-                                  if sh_t is not None and sh_l is not None else "")
+                # ★ IN %, NOT "PTS" (Manav, 6 Oct: "dont put anything in points,
+                # percentage is fine"): the difference between this year's share
+                # and last year's, written as a percentage.
+                _d = round(sh_t - sh_l, 1) if sh_t is not None and sh_l is not None else None
+                r["share_chg"] = ("" if _d is None else "0.0%" if _d == 0 else f"{_d:+.1f}%")
                 r["_ly_ytd"] = ls
         return r
 
@@ -263,8 +266,8 @@ def build(df_in: pd.DataFrame, asof, w=None, basis_label=""):
                                     shade=[3, 4]), gap=18)
             sh.put(A4._text_block(W, [(
                 "G/D is growth against the same days last year. SHARE is the category's part "
-                "of this page's year-to-date sales; SHARE CHANGE is how many points that part "
-                "moved from last year. PRICE/PC is sales divided by pieces sold, so a rise "
+                "of this page's year-to-date sales; SHARE CHANGE is this year's share minus "
+                "last year's (12.0% against 10.5% reads +1.5%). PRICE/PC is sales divided by pieces sold, so a rise "
                 "with flat pieces is price, not volume. A row in red is down on the year. "
                 "Subtotals and the total are worked from their own sums, not averaged.",
                 A4._ft(19)[0], A4.SUB)]), gap=0)
