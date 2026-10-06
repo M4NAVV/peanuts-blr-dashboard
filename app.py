@@ -2705,6 +2705,7 @@ def render_productivity(pr, key):
 # Selection lives in session_state (active_nav), so it PERSISTS on rerun.
 _TAB_LABELS = [
     "🧾 VFL G/D", "🧾 VFL Gender", "📄 REPORTS PDF", "🖼️ REPORTS IMAGES",
+    "📝 Intake vs Tableau",
     "📋 MTD / YTD Report", "📉 Degrowth", "🔎 Degrowth Drivers",
     "💸 DB REPORTS", "⭐ Google Reviews", "🗓️ Day calendar",
     "🧑‍🤝‍🧑 Gender G/D", "🏷️ Brand G/D", "🏬 Store × Brand G/D",
@@ -2796,6 +2797,110 @@ def rupees(x) -> str:
     """Whole rupees, Indian grouping: ₹28,66,749. The alterations tab reads like
     the books it summarises (Manav, 4 Oct), not in lakhs."""
     return "—" if x is None or pd.isna(x) else "₹" + fmt_in(x, 0)
+
+
+# =========================================================================== #
+# INTAKE vs TABLEAU — what the managers typed at night, against the till
+# =========================================================================== #
+@st.cache_data(ttl=600, show_spinner=False)
+def _intake_filings():
+    """The form, read every ten minutes: managers file through the evening."""
+    import intake_brands as IB
+    import intake_check as IC
+    try:
+        return IC.filings(IB.read_responses(), IB.mail_map()), None
+    except Exception as e:                       # say why, never a blank tab
+        return pd.DataFrame(), f"{type(e).__name__}: {e}"
+
+
+if nav == "📝 Intake vs Tableau":
+    import intake_check as IC
+    st.subheader("Intake vs Tableau")
+    st.caption(
+        "What each store manager typed in the night intake form, against the same day "
+        "in Tableau once the VFL sheet is updated in the morning. **Tableau is the "
+        "truth**: a difference is typed minus Tableau, so a positive number means the "
+        "store over-reported. Differences of ₹5 or less are rounding and count as a "
+        "match. Only settled Tableau days are used, never the provisional night figure.")
+    _fil, _ferr = _intake_filings()
+    if _ferr:
+        st.error(f"The intake form could not be read: {_ferr}")
+    _tab = IC.tableau(get_data(), L)
+    _m = L.load_store_master()
+    _names = {int(c): n for c, n in zip(pd.to_numeric(_m["code"], errors="coerce"),
+                                        _m["tableau_name"]) if pd.notna(c)}
+    if _fil.empty or _tab.empty:
+        st.info("Nothing to compare yet: " + ("no filings in the intake form." if _fil.empty
+                                              else "no settled Tableau days."))
+    else:
+        _both = sorted(set(_fil["date"]) & set(_tab["date"]))
+        _last_t = _tab["date"].max()
+        _default = (_both[-1] if _both else _last_t).date()
+        _day = pd.Timestamp(st.date_input(
+            "Day", value=_default, min_value=_fil["date"].min().date(),
+            max_value=max(_fil["date"].max(), _last_t).date(), key="ivt_day",
+            help="Defaults to the latest day that has both filings and Tableau."))
+        _cmp = IC.compare(_day, _fil, _tab, _names)
+        _exp = IC.expected(_fil, _day)
+        _off = _cmp[(_cmp["status"] == "Not filed") & ~_cmp["code"].isin(_exp)]
+        _cmp = _cmp[~((_cmp["status"] == "Not filed") & ~_cmp["code"].isin(_exp))]
+        _n = _cmp["status"].value_counts()
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Filed", int(sum(_n.get(k, 0) for k in ("Matches", "Differs", "Waiting for Tableau"))))
+        c2.metric("Match Tableau", int(_n.get("Matches", 0)))
+        c3.metric("Differ", int(_n.get("Differs", 0)))
+        c4.metric("Expected, not filed", int(_n.get("Not filed", 0)),
+                  help=f"Stores that filed at least once in the last {IC.EXPECT_DAYS} days.")
+        if _day > _last_t:
+            st.warning(f"Tableau runs to {_last_t:%d %b %Y}; {_day:%d %b} is not in it yet.")
+        if _cmp.empty:
+            st.info(f"No filings and no expected stores for {_day:%d %b %Y}.")
+        else:
+            def _pair(r, k, money=True):
+                t, b = r.get(f"{k}_typed"), r.get(f"{k}_tableau")
+                f = (lambda x: "—" if x is None or pd.isna(x) else (fmt_in(x, 0) if money else f"{int(x)}"))
+                return f"{f(t)} / {f(b)}"
+
+            def _delta(x, money=True):
+                if x is None or pd.isna(x):
+                    return ""
+                if abs(x) < 0.5:
+                    return "0"
+                return ("+" if x > 0 else "−") + (fmt_in(abs(x), 0) if money else f"{int(abs(x))}")
+
+            _view = pd.DataFrame({
+                "Store": _cmp["store"],
+                "Status": _cmp["status"],
+                "Day sales: typed / Tableau": [_pair(r, "sales") for _, r in _cmp.iterrows()],
+                "Difference": [_delta(x) for x in _cmp["sales_diff"]],
+                "Manyavar ±": [_delta(x) for x in _cmp["manyavar_diff"]],
+                "Mohey ±": [_delta(x) for x in _cmp["mohey_diff"]],
+                "Twamev ±": [_delta(x) for x in _cmp["twamev_diff"]],
+                "Bills: typed / Tableau": [_pair(r, "bills", False) for _, r in _cmp.iterrows()],
+                "Pieces: typed / Tableau": [_pair(r, "units", False) for _, r in _cmp.iterrows()],
+                "Note": _cmp["hint"].fillna(""),
+            })
+
+            def _row_style(row):
+                col = {"Differs": "color:#a3342a", "Not filed": "color:#8a6216"}.get(row["Status"], "")
+                return [col] * len(row)
+            st.dataframe(_view.style.apply(_row_style, axis=1), hide_index=True,
+                         width="stretch")
+        if len(_off):
+            st.caption("Not on the form yet (no filing in the last "
+                       f"{IC.EXPECT_DAYS} days, though Tableau shows sales): "
+                       + ", ".join(_off["store"].tolist()) + ".")
+        with st.expander("Each store's record, last 30 days"):
+            _tr = IC.track_record(_fil, _tab, _names, _day - pd.Timedelta(days=29), _day)
+            if _tr.empty:
+                st.caption("No filings in this window.")
+            else:
+                st.dataframe(pd.DataFrame({
+                    "Store": _tr["store"], "Filings": _tr["filings"],
+                    "Checked against Tableau": _tr["checked"], "Matched": _tr["matched"],
+                    "Match rate": [("" if v is None or pd.isna(v) else f"{v:.0f}%") for v in _tr["match_rate"]],
+                    "Typical sales gap": [("" if v is None or pd.isna(v) else "₹" + fmt_in(v, 0)) for v in _tr["typical_gap"]],
+                }), hide_index=True, width="stretch")
 
 
 if nav == "✂️ Alterations":
