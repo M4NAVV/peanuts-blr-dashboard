@@ -102,6 +102,47 @@ def _one(div: str, sec: str):
     return _BY_DIVISION.get(div, ("Other", "Other"))
 
 
+# --- BY BRAND: the first version (division, Twamev split into its sections), kept as
+# its own report (Manav, 6 Oct: "one becomes this report … one becomes the previous
+# report we made which was brand wise").
+BRAND_GROUPS = ["Manyavar", "Mohey", "Twamev", "Other"]
+_BRAND_LABEL = {
+    "KURTA SET": "Kurta set", "KURTA ONLY": "Kurta only", "SHORT KURTA": "Short kurta",
+    "INSIDE KURTA ONLY": "Inside kurta", "INDO WESTERN SET": "Indo-western",
+    "SHERWANI SET": "Sherwani", "JODHPURI SUIT": "Jodhpuri suit", "JACKET": "Jacket",
+    "JACKET SET": "Jacket set", "MANYAVAR ACCESSORIES": "Accessories", "CHILD": "Kidswear",
+    "LOWERS": "Lowers", "SOUTH PANCHA VESHTI": "Pancha & veshti", "SUITS": "Suits",
+    "DIWAS": "Diwas", "BLAZER": "Blazer", "SHIRTS": "Shirts", "MANTHAN": "Manthan",
+    "MOHEY-SAREE": "Saree", "MOHEY-LEHENGA": "Lehenga", "MOHEY-STITCHED SUIT": "Stitched suit",
+    "MOHEY-CROP TOP LEHENGA": "Crop top lehenga", "MOHEY ACCESSORIES": "Accessories",
+    "MOHEY": "Mohey, other", "MEBAZ": "Mebaz",
+}
+_BRAND_TWAMEV = {
+    "TWAM KURTA SET": "Kurta set", "TWAM JODHPURI SET": "Jodhpuri set",
+    "TWAM SUIT SET": "Suit set", "TWAM INDO WESTERN SET": "Indo-western",
+    "TWAM SHERWANI SET": "Sherwani", "TWAM JACKET SET": "Jacket set",
+    "TWAM FOOTWEAR": "Footwear", "TWAM SAREE": "Saree", "TWAM LEHENGA": "Lehenga",
+    "TWAM CROP TOP LEHENGA": "Crop top lehenga", "TWAM STITCHED SUIT": "Stitched suit",
+}
+_BRAND_OF = {"Manyavar": "Manyavar", "Manthan": "Manyavar", "Mohey": "Mohey",
+             "Mebaz": "Mohey", "Twamev": "Twamev"}
+
+
+def categorise_by_brand(df: pd.DataFrame) -> pd.DataFrame:
+    """Adds `_grp` (Manyavar / Mohey / Twamev / Other) and `_cat` (the brand's category)."""
+    d = df.copy()
+    div = d[L.COL_DIVISION].astype(str).str.strip().str.upper()
+    sec = d[L.COL_SECTION].astype(str).str.strip().str.upper().str.replace(_CODE, "", regex=True)
+    d["_grp"] = d[L.COL_BRAND].map(_BRAND_OF).fillna("Other")
+    cat = div.map(_BRAND_LABEL)
+    tw = div.str.startswith("TWAMEV")
+    cat = cat.mask(tw, sec.map(_BRAND_TWAMEV).fillna("Accessories & other"))
+    d["_grp"] = d["_grp"].mask(tw, "Twamev")
+    d["_cat"] = cat.fillna("Other")
+    d.loc[d["_cat"].eq("Other") & ~tw & d["_grp"].ne("Other"), "_grp"] = "Other"
+    return d
+
+
 def categorise(df: pd.DataFrame) -> pd.DataFrame:
     """Adds `_grp` (Menswear / Womenswear / Kidswear / Other) and `_cat`."""
     d = df.copy()
@@ -125,7 +166,10 @@ def _sums(frame: pd.DataFrame) -> pd.DataFrame:
 
 def _gd(ty, ly):
     # ★ A NEGATIVE OR NIL BASE IS NOT A BASE (same rule as the brand page).
-    return (ty / ly - 1) * 100 if ly and ly > 0 else None
+    if not (ly and ly > 0):
+        return None
+    v = round((ty / ly - 1) * 100, 1)
+    return v or 0.0                    # never a "-0.0%"
 
 
 def _ppc(sales, pcs):
@@ -144,7 +188,7 @@ def windows(df: pd.DataFrame, asof, w):
     return out
 
 
-def table_rows(win: dict, stores):
+def table_rows(win: dict, stores, groups=None):
     """Rows for one scope (a set of stores), grouped by brand, with subtotals.
 
     ★ RATIOS FROM SUMMED PAIRS: a subtotal's G/D, share and price per piece are taken
@@ -187,11 +231,14 @@ def table_rows(win: dict, stores):
         return r
 
     rows = []
-    for g in GROUPS:
+    for g in (groups or GROUPS):
         idx = sorted(k for k in keys if k[0] == g)
         if not idx:
             continue
-        part = [dict(line(c, [(g, c)]), _label=c) for _g, c in idx]
+        # the reading line names the brand where the category alone is ambiguous
+        part = [dict(line(c, [(g, c)]),
+                     _label=(c if g in GROUPS or g in ("Manyavar", "Other") else f"{g} {c.lower()}"))
+                for _g, c in idx]
         part = [r for r in part if any(abs(r.get(f"{k}_ty", 0) or 0) > 0 for k in s) or r["_ly_ytd"]]
         part.sort(key=lambda r: -(r["YTD_ty"] or 0))
         if not part:
@@ -248,7 +295,16 @@ def _degrowth(r):
     return isinstance(v, (int, float)) and v < 0
 
 
-def build(df_in: pd.DataFrame, asof, w=None, basis_label=""):
+MODES = {
+    "category": dict(cat=lambda d: categorise(d), groups=GROUPS, title="Categories",
+                     sheet="Category analysis VFL", file="CATEGORY ANALYSIS VFL"),
+    "brand": dict(cat=lambda d: categorise_by_brand(d), groups=BRAND_GROUPS,
+                  title="Categories by brand", sheet="Category analysis by brand VFL",
+                  file="CATEGORY ANALYSIS BY BRAND VFL"),
+}
+
+
+def build(df_in: pd.DataFrame, asof, w=None, basis_label="", mode="category"):
     """-> (filename, pdf bytes). `df_in` = the full VFL frame (never the sidebar
     filters: the portfolio and region pages are totals). `w` = one festive Window
     already re-dated to `asof` (festive.at), or None for no festive columns."""
@@ -270,7 +326,8 @@ def build(df_in: pd.DataFrame, asof, w=None, basis_label=""):
     asof = min(pd.Timestamp(asof).normalize(), df["date"].max().normalize())
     if w is not None:
         w = F.at(w, asof)
-    df = categorise(df)
+    M = MODES[mode]
+    df = M["cat"](df)
     win = windows(df, asof, w)
     has_fest = "FEST" in win
 
@@ -309,8 +366,8 @@ def build(df_in: pd.DataFrame, asof, w=None, basis_label=""):
         pages = []
 
         def page(title, sub, scope, note):
-            rows, total, _ = table_rows(win, scope)
-            sh = A4._Sheet("Category analysis VFL", asof, "", bounded=False, footer=True)
+            rows, total, _ = table_rows(win, scope, M["groups"])
+            sh = A4._Sheet(M["sheet"], asof, "", bounded=False, footer=True)
             sh.put(A4._heading(W, title, sub), gap=14)
             up, dn = movers(rows)
             sh.put(A4._text_block(W, [(
@@ -341,12 +398,12 @@ def build(df_in: pd.DataFrame, asof, w=None, basis_label=""):
 
         left = (f" {', '.join(new)} {'is' if len(new) == 1 else 'are'} left out of the group "
                 f"pages: no last year to compare with." if new else "")
-        pages += page("Categories · VFL portfolio", periods(), l2l,
+        pages += page(f"{M['title']} · VFL portfolio", periods(), l2l,
                       f"{len(l2l)} stores, every one with last year's data.{left}{shut_note}")
         for reg in ("East & NE", "South"):
             sc = [s for s in l2l if region[s] == reg]
             if sc:
-                pages += page(f"Categories · {'East & North-East' if reg == 'East & NE' else reg}",
+                pages += page(f"{M['title']} · {'East & North-East' if reg == 'East & NE' else reg}",
                               periods(reg), sc, f"{len(sc)} stores, every one with last year's data."
                               + (f" {', '.join(s for s in new if region[s] == reg)} left out: "
                                  f"no last year." if any(region[s] == reg for s in new) else "")
@@ -355,7 +412,7 @@ def build(df_in: pd.DataFrame, asof, w=None, basis_label=""):
                                                                     if s in master.index else "") == reg))
         for reg in ("East & NE", "South"):
             for s in sorted([s for s in stores if region[s] == reg], key=lambda s: code[s]):
-                pages += page(f"Categories · {s}", f"{city[s]}  ·  {reg}  ·  " + periods(reg), [s],
+                pages += page(f"{M['title']} · {s}", f"{city[s]}  ·  {reg}  ·  " + periods(reg), [s],
                               ("New this year: no last year, so no growth to state." if s in new
                                else "One store, against its own last year."))
 
@@ -365,5 +422,5 @@ def build(df_in: pd.DataFrame, asof, w=None, basis_label=""):
         out = buf.getvalue()
     finally:
         A4.MARGIN, A4.CONTENT_W, FADM.PP.PAD_Y = _keep
-    return f"CATEGORY ANALYSIS VFL {asof:%d-%m-%Y}.pdf", out
+    return f"{M['file']} {asof:%d-%m-%Y}.pdf", out
 

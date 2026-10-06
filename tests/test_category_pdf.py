@@ -83,7 +83,7 @@ def test_a_subtotal_growth_is_worked_from_its_summed_pair():
     mv = rows[3]
     assert mv["YTD_ty"] == 400 and abs(mv["YTD_gd"] - 0.0) < 1e-9          # 400 against 400
     assert abs(rows[1]["YTD_gd"] - 50.0) < 1e-9                             # kurta 300 v 200
-    assert abs(total["YTD_gd"] - (500 / 350 - 1) * 100) < 1e-9
+    assert abs(total["YTD_gd"] - (500 / 350 - 1) * 100) < 0.05             # rounded to 0.1
 
 
 def test_a_negative_last_year_gives_no_growth_rather_a_wrong_one():
@@ -103,3 +103,30 @@ def test_movers_ignore_subtotals():
     rows, _t, _ = C.table_rows(_win(), ["A"])
     up, dn = C.movers(rows)
     assert [r["cat"] for r in up] == ["Kurta set"] and [r["cat"] for r in dn] == ["Sherwani"]
+
+
+# --- the brand-wise report (kept as its own report, 6 Oct) ---------------------------
+def test_by_brand_twamev_is_split_into_its_own_categories():
+    d = C.categorise_by_brand(_rows([
+        ("A", "TWAMEV-MEN", "TWAM KURTA SET", "Twamev", 1, 1),
+        ("A", "TWAMEV-WOMEN", "TWAM SAREE", "Twamev", 1, 1),
+        ("A", "TWAMEV-MEN", "TWAM MALA", "Twamev", 1, 1),
+        ("A", "MOHEY-SAREE", "SAREE-09", "Mohey", 1, 1)]))
+    assert list(zip(d["_grp"], d["_cat"])) == [
+        ("Twamev", "Kurta set"), ("Twamev", "Saree"), ("Twamev", "Accessories & other"),
+        ("Mohey", "Saree")]
+
+
+def test_by_brand_sub_brands_sit_under_their_parent():
+    d = C.categorise_by_brand(_rows([("A", "MEBAZ", "X", "Mebaz", 1, 1),
+                                     ("A", "MANTHAN", "X", "Manthan", 1, 1)]))
+    assert list(zip(d["_grp"], d["_cat"])) == [("Mohey", "Mebaz"), ("Manyavar", "Manthan")]
+
+
+def test_by_brand_groups_follow_the_brand_order():
+    ty = C.categorise_by_brand(_rows([("A", "MOHEY-SAREE", "SAREE-09", "Mohey", 50, 1),
+                                      ("A", "KURTA SET", "KURTA SET-09", "Manyavar", 100, 1)]))
+    rows, _t, _ = C.table_rows({"MTD": (ty, ty), "YTD": (ty, ty)}, ["A"], C.BRAND_GROUPS)
+    assert [r["cat"] for r in rows] == ["MANYAVAR", "Kurta set", "Manyavar total",
+                                        "MOHEY", "Saree", "Mohey total"]
+    assert rows[4]["_label"] == "Mohey saree"

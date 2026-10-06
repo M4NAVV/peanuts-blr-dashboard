@@ -3516,7 +3516,8 @@ if nav == "📄 REPORTS PDF":
         # is exactly what a master tick must do. The default is set once, on
         # the first render, and the widget then owns it.
         _VRP_KEYS = ("vrp_pack", "vrp_db", "vrp_morning", "vrp_sp_detail",
-                     "vrp_alter", "vrp_books", "vrp_graph", "vrp_cat")
+                     "vrp_alter", "vrp_books", "vrp_graph", "vrp_cat",
+                     "vrp_catb")
         st.session_state.setdefault("vrp_pack", True)
         if _pack_all and not st.session_state.get("_vrp_all_was"):
             for _k in _VRP_KEYS:
@@ -3579,12 +3580,18 @@ if nav == "📄 REPORTS PDF":
                  "portfolio first, then each region, then one page per store. "
                  "A store with no last year is left out of the group pages and "
                  "named. Full estate, never the sidebar filters.")
+        picked["category_brand"] = st.checkbox(
+            "Category analysis by brand VFL  ·  the same, grouped Manyavar / Mohey / Twamev",
+            key="vrp_catb",
+            help="The same pages and columns, but each brand's categories on their "
+                 "own: Mohey saree and Twamev saree as two lines, with a total per "
+                 "brand. Full estate, never the sidebar filters.")
         # ★ ONE FESTIVE RUN-UP ON THE CATEGORY PAGES: several can be open at once
         # (6 Oct: Durga Puja 45 and 30, Diwali 45), and three pairs of columns
         # would not fit a page. The longest open one is the default.
         _cat_fw = [w for w in (FEST.at(_w, p_asof) for _w in _festive_windows())
                    if w.started]
-        if picked["category"] and _cat_fw:
+        if (picked["category"] or picked["category_brand"]) and _cat_fw:
             _cat_fw.sort(key=lambda w: (-w.tenure, w.ty_start))
             st.session_state["vrp_cat_w"] = st.selectbox(
                 "Festive run-up on the category pages",
@@ -3716,15 +3723,19 @@ if nav == "📄 REPORTS PDF":
                     _prog.step("Graph analysis VFL")
                     import graph_analysis as GA
                     built.append(GA.build(get_data(), asof=p_asof))
-                if "category" in chosen:
+                for _ck, _cm, _cl in (("category", "category", "Category analysis VFL"),
+                                      ("category_brand", "brand",
+                                       "Category analysis by brand VFL")):
+                    if _ck not in chosen:
+                        continue
                     # ★ The full estate, like the graph pack: its portfolio and
                     # region pages are totals.
-                    _prog.step("Category analysis VFL")
+                    _prog.step(_cl)
                     import category_pdf as CATPDF
                     _cw = (_cat_fw[st.session_state.get("vrp_cat_w", 0)]
                            if _cat_fw else None)
                     built.append(CATPDF.build(get_data(), asof=p_asof, w=_cw,
-                                              basis_label=p_basis))
+                                              basis_label=p_basis, mode=_cm))
                 _prog.done("Packaging…")
                 name, payload, mime = RTD.bundle(
                     built, zip_name=f"VFL REPORTS {p_asof:%d-%m-%Y}.zip")
