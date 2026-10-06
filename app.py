@@ -3516,7 +3516,7 @@ if nav == "📄 REPORTS PDF":
         # is exactly what a master tick must do. The default is set once, on
         # the first render, and the widget then owns it.
         _VRP_KEYS = ("vrp_pack", "vrp_db", "vrp_morning", "vrp_sp_detail",
-                     "vrp_alter", "vrp_books", "vrp_graph")
+                     "vrp_alter", "vrp_books", "vrp_graph", "vrp_cat")
         st.session_state.setdefault("vrp_pack", True)
         if _pack_all and not st.session_state.get("_vrp_all_was"):
             for _k in _VRP_KEYS:
@@ -3570,6 +3570,28 @@ if nav == "📄 REPORTS PDF":
                  "and three numbers that say whether a gap is the festival "
                  "moving or the store. Page one summarises every store. Full "
                  "estate, never the sidebar filters.")
+        picked["category"] = st.checkbox(
+            "Category analysis VFL  ·  portfolio, regions and every store, ~24 pages",
+            key="vrp_cat",
+            help="Every category — kurta set, sherwani, jodhpuri, saree, lehenga, "
+                 "Twamev's own lines — against last year: MTD, YTD and a festive "
+                 "run-up, with share of sales and price per piece. The VFL "
+                 "portfolio first, then each region, then one page per store. "
+                 "A store with no last year is left out of the group pages and "
+                 "named. Full estate, never the sidebar filters.")
+        # ★ ONE FESTIVE RUN-UP ON THE CATEGORY PAGES: several can be open at once
+        # (6 Oct: Durga Puja 45 and 30, Diwali 45), and three pairs of columns
+        # would not fit a page. The longest open one is the default.
+        _cat_fw = [w for w in (FEST.at(_w, p_asof) for _w in _festive_windows())
+                   if w.started]
+        if picked["category"] and _cat_fw:
+            _cat_fw.sort(key=lambda w: (-w.tenure, w.ty_start))
+            st.session_state["vrp_cat_w"] = st.selectbox(
+                "Festive run-up on the category pages",
+                list(range(len(_cat_fw))),
+                format_func=lambda i: f"{_cat_fw[i].festival} {_cat_fw[i].tenure}-day"
+                                      f"  ·  day {_cat_fw[i].elapsed}",
+                key="vrp_cat_wsel")
         picked["books"] = st.checkbox(
             "Collection books  ·  a page per store, ~13 pages",
             key="vrp_books",
@@ -3694,6 +3716,15 @@ if nav == "📄 REPORTS PDF":
                     _prog.step("Graph analysis VFL")
                     import graph_analysis as GA
                     built.append(GA.build(get_data(), asof=p_asof))
+                if "category" in chosen:
+                    # ★ The full estate, like the graph pack: its portfolio and
+                    # region pages are totals.
+                    _prog.step("Category analysis VFL")
+                    import category_pdf as CATPDF
+                    _cw = (_cat_fw[st.session_state.get("vrp_cat_w", 0)]
+                           if _cat_fw else None)
+                    built.append(CATPDF.build(get_data(), asof=p_asof, w=_cw,
+                                              basis_label=p_basis))
                 _prog.done("Packaging…")
                 name, payload, mime = RTD.bundle(
                     built, zip_name=f"VFL REPORTS {p_asof:%d-%m-%Y}.zip")
