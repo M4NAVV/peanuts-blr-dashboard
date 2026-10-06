@@ -220,7 +220,7 @@ def daily_chart(width, height, w, ty_days, ly_days):
 # The exact number stays beside it, so nothing is lost to anyone who needs it.
 def table_image(df, spec, width, font_px=26, bar_col=None, bar_label="",
                 total_row=None, shade=(), neg_row=None, fill=True, sub_row=None,
-                total_first=False):
+                total_first=False, spread_numbers=False):
     """`spec` is [(column, kind, header)] with kind in
     text | money | pct | int | bar.
 
@@ -244,6 +244,11 @@ def table_image(df, spec, width, font_px=26, bar_col=None, bar_label="",
     `total_first=True` prints the yellow total row ALSO directly under the
     header (Manav, 6 Oct, category pack: *"the total for everything, make that
     appear at the top of the table and the bottom"*). Off by default.
+
+    `spread_numbers=True` hands spare width to the FIGURE columns instead of the
+    text columns, and kind `rtext` is text set flush RIGHT — together they let a
+    table carry a name on both edges with nothing pooling in either (Manav,
+    6 Oct: *"push the entire thing to as right as it can get"*). Off by default.
 
     ★ THE ROW, NOT JUST THE G/D CELL (Manav, 8 Sep). The percentage already
     coloured itself, but a reader scanning fifty-two stores for the ones going
@@ -315,6 +320,13 @@ def table_image(df, spec, width, font_px=26, bar_col=None, bar_label="",
         j = max(range(len(spec)),
                 key=lambda i: widths[i] if spec[i][1] == "text" else 0)
         widths[j] = max(widths[j] - over, PP._px(120))
+    elif over < 0 and fill and spread_numbers:
+        nums = [i for i, sp in enumerate(spec) if sp[1] not in ("text", "rtext", "bar")]
+        if nums:
+            each = (-over) // len(nums)
+            for i in nums:
+                widths[i] += each
+            widths[nums[-1]] += (-over) - each * len(nums)
     elif over < 0 and fill:
         # ★ SPREAD THE SLACK, DO NOT DUMP IT. Giving every spare pixel to the
         # single widest text column made the ladder's date cell enormous, with

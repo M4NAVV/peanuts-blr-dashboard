@@ -239,7 +239,7 @@ def _spec(has_fest: bool):
     # ★ THE NAME ON BOTH EDGES (Manav, 6 Oct: "put them on both sides of the table,
     # left and right, makes it more readable"): eleven figures wide, the eye loses
     # its row by the festive columns; a second name brings it back.
-    sp.append(("cat", "text", "CATEGORY"))
+    sp.append(("cat", "rtext", "CATEGORY"))       # flush right: the page edge holds it
     return sp
 
 
@@ -323,7 +323,7 @@ def build(df_in: pd.DataFrame, asof, w=None, basis_label=""):
             # right-hand one became a strip of white. So the largest type whose NATURAL
             # width still fits is used, and only the last few pixels are spread.
             kw = dict(total_row=total, neg_row=_degrowth, shade=[3, 4], total_first=True,
-                      sub_row=lambda r: r.get("_sub", False))
+                      sub_row=lambda r: r.get("_sub", False), spread_numbers=True)
             for fpx in (30, 29, 28, 27, 26, 25, 24, 23, 22, 21):
                 if FADM.table_image(rows, spec, W, font_px=fpx, fill=False, **kw).width <= W:
                     break
