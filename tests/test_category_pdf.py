@@ -71,15 +71,16 @@ def _win():
     return {"MTD": (ty, ly), "YTD": (ty, ly)}
 
 
-def test_group_heading_comes_before_its_categories():
+def test_group_label_on_top_and_its_total_at_the_bottom():
     rows, _t, _ = C.table_rows(_win(), ["A"])
-    assert [r["cat"] for r in rows] == ["Menswear", "Kurta set", "Sherwani", "Womenswear", "Saree"]
-    assert rows[0]["_sub"] and rows[3]["_sub"]
+    assert [r["cat"] for r in rows] == ["MENSWEAR", "Kurta set", "Sherwani", "Menswear total",
+                                        "WOMENSWEAR", "Saree", "Womenswear total"]
+    assert rows[0]["_head"] and rows[3]["_sub"] and rows[4]["_head"] and rows[6]["_sub"]
 
 
 def test_a_subtotal_growth_is_worked_from_its_summed_pair():
     rows, total, _ = C.table_rows(_win(), ["A"])
-    mv = rows[0]
+    mv = rows[3]
     assert mv["YTD_ty"] == 400 and abs(mv["YTD_gd"] - 0.0) < 1e-9          # 400 against 400
     assert abs(rows[1]["YTD_gd"] - 50.0) < 1e-9                             # kurta 300 v 200
     assert abs(total["YTD_gd"] - (500 / 350 - 1) * 100) < 1e-9
@@ -87,14 +88,14 @@ def test_a_subtotal_growth_is_worked_from_its_summed_pair():
 
 def test_a_negative_last_year_gives_no_growth_rather_a_wrong_one():
     rows, _t, _ = C.table_rows(_win(), ["A"])
-    assert rows[4]["YTD_gd"] is None                                        # saree LY was returns only
+    assert rows[5]["YTD_gd"] is None                                        # saree LY was returns only
 
 
 def test_price_per_piece_and_share():
     rows, total, _ = C.table_rows(_win(), ["A"])
     kurta = rows[1]
     assert kurta["ppc_ty"] == 100 and kurta["ppc_ly"] == 50 and abs(kurta["ppc_gd"] - 100) < 1e-9
-    assert abs(sum(r["share"] for r in rows if not r.get("_sub")) - 100) < 1e-9
+    assert abs(sum(r["share"] for r in rows if not r.get("_sub") and not r.get("_head")) - 100) < 1e-9
     assert total["share_chg"] is None
 
 

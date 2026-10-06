@@ -196,13 +196,17 @@ def table_rows(win: dict, stores):
         part.sort(key=lambda r: -(r["YTD_ty"] or 0))
         if not part:
             continue
-        # ★ THE GROUP'S TOTAL HEADS IT (6 Oct), so the reader knows which group
-        # they are in before the rows, not after them.
+        # ★ A LABEL ON TOP, THE TOTAL AT THE BOTTOM (Manav, 6 Oct: *"do the
+        # menswear total at the bottom of the menswear, so its more obvious, right
+        # now its confusing at the top"*). The label row carries no figures, so the
+        # reader still knows the group before its rows; the blue total closes it.
         if g != "Other":
-            sub = line(g, idx)
+            rows.append({"cat": g.upper(), "_head": True})
+        rows += part
+        if g != "Other":
+            sub = line(f"{g} total", idx)
             sub["_sub"] = True
             rows.append(sub)
-        rows += part
     total = line("Total", sorted(keys))
     total["share_chg"] = None                # the whole is always 100%: nothing moved
     return rows, total, s
@@ -211,7 +215,7 @@ def table_rows(win: dict, stores):
 def movers(rows, min_share=1.0, n=3):
     """The categories that moved most on the year, among those that matter (share
     of at least `min_share`%). Computed from the same rows the table prints."""
-    c = [r for r in rows if not r.get("_sub") and r.get("YTD_gd") is not None
+    c = [r for r in rows if not r.get("_sub") and not r.get("_head") and r.get("YTD_gd") is not None
          and (r.get("share") or 0) >= min_share]
     up = sorted([r for r in c if r["YTD_gd"] > 0], key=lambda r: -r["YTD_gd"])[:n]
     dn = sorted([r for r in c if r["YTD_gd"] < 0], key=lambda r: r["YTD_gd"])[:n]
@@ -310,7 +314,7 @@ def build(df_in: pd.DataFrame, asof, w=None, basis_label=""):
             sh.put(A4._text_block(W, [(note + note_prov, A4._ft(21)[0], A4.SUB)]), gap=16)
             sh.put(FADM.table_image(rows, spec, W, font_px=21, total_row=total,
                                     neg_row=_degrowth, sub_row=lambda r: r.get("_sub", False),
-                                    shade=[3, 4]), gap=18)
+                                    shade=[3, 4], total_first=True), gap=18)
             sh.put(A4._text_block(W, [(
                 "G/D is growth against the same days last year. SHARE is the category's part "
                 "of this page's year-to-date sales; SHARE CHANGE is this year's share minus "

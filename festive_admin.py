@@ -219,7 +219,8 @@ def daily_chart(width, height, w, ty_days, ly_days):
 # reading each one; a bar of the same value is compared without reading at all.
 # The exact number stays beside it, so nothing is lost to anyone who needs it.
 def table_image(df, spec, width, font_px=26, bar_col=None, bar_label="",
-                total_row=None, shade=(), neg_row=None, fill=True, sub_row=None):
+                total_row=None, shade=(), neg_row=None, fill=True, sub_row=None,
+                total_first=False):
     """`spec` is [(column, kind, header)] with kind in
     text | money | pct | int | bar.
 
@@ -239,6 +240,10 @@ def table_image(df, spec, width, font_px=26, bar_col=None, bar_label="",
     `sub_row(row) -> bool` marks a SUBTOTAL inside the body: bold, on the header
     blue, so it reads as a summary of the rows above it and not as the grand
     total, which keeps the yellow.
+
+    `total_first=True` prints the yellow total row ALSO directly under the
+    header (Manav, 6 Oct, category pack: *"the total for everything, make that
+    appear at the top of the table and the bottom"*). Off by default.
 
     ★ THE ROW, NOT JUST THE G/D CELL (Manav, 8 Sep). The percentage already
     coloured itself, but a reader scanning fifty-two stores for the ones going
@@ -291,6 +296,9 @@ def table_image(df, spec, width, font_px=26, bar_col=None, bar_label="",
     txt = [[fmt(k, r.get(c)) for c, k, _ in spec] for r in df]
     if total_row is not None:
         txt.append([fmt(k, total_row.get(c)) for c, k, _ in spec])
+    top = 1 if (total_first and total_row is not None) else 0
+    if top:
+        txt.insert(0, list(txt[-1]))
 
     # width: data drives it, header wraps into it
     widths = []
@@ -366,8 +374,8 @@ def table_image(df, spec, width, font_px=26, bar_col=None, bar_label="",
 
     y = head_h
     for i in range(rows_n):
-        is_total = total_row is not None and i == rows_n - 1
-        is_sub = bool(sub_row and not is_total and sub_row(df[i]))
+        is_total = total_row is not None and (i == rows_n - 1 or (top and i == 0))
+        is_sub = bool(sub_row and not is_total and sub_row(df[i - top]))
         if is_total:
             d.rectangle([0, y, W, y + row_h], fill=PP.TOTAL_BG)
         elif is_sub:
@@ -381,7 +389,7 @@ def table_image(df, spec, width, font_px=26, bar_col=None, bar_label="",
                 d.rectangle([xs[j], y, xs[j] + widths[j], y + row_h],
                             fill=SHADE)
         x = 0
-        src = total_row if is_total else df[i]
+        src = total_row if is_total else df[i - top]
         # ★ A TOTAL ROW IS NEVER REDDENED — it is yellow and bold already, and
         # a red-on-yellow total reads as an error rather than as a summary.
         row_neg = bool(neg_row and not (is_total or is_sub) and neg_row(src))
