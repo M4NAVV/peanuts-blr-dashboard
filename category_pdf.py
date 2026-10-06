@@ -235,6 +235,10 @@ def _spec(has_fest: bool):
           ("ppc_ty", "money", "ASP\nYTD"), ("ppc_gd", "gd", "ASP\nG/D")]
     if has_fest:
         sp += [("FEST_ty", "money", "FESTIVE\nSALES"), ("FEST_gd", "gd", "FESTIVE\nG/D")]
+    # ★ THE NAME ON BOTH EDGES (Manav, 6 Oct: "put them on both sides of the table,
+    # left and right, makes it more readable"): eleven figures wide, the eye loses
+    # its row by the festive columns; a second name brings it back.
+    sp.append(("cat", "text", "CATEGORY"))
     return sp
 
 
