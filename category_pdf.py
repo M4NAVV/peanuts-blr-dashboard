@@ -132,8 +132,11 @@ def table_rows(win: dict, stores):
                 # ★ IN %, NOT "PTS" (Manav, 6 Oct: "dont put anything in points,
                 # percentage is fine"): the difference between this year's share
                 # and last year's, written as a percentage.
+                # A NUMBER, so the cell takes the G/D ink: green when the category's
+                # share grew, red when it shrank (Manav, 6 Oct). Rounded first, so a
+                # rounding crumb prints 0.0% in black rather than a red -0.0%.
                 _d = round(sh_t - sh_l, 1) if sh_t is not None and sh_l is not None else None
-                r["share_chg"] = ("" if _d is None else "0.0%" if _d == 0 else f"{_d:+.1f}%")
+                r["share_chg"] = None if _d is None else (_d or 0.0)
                 r["_ly_ytd"] = ls
         return r
 
@@ -157,7 +160,7 @@ def table_rows(win: dict, stores):
             rows.append(sub)
         rows += part
     total = line("Total", sorted(keys))
-    total["share_chg"] = ""                  # the whole is always 100%: nothing moved
+    total["share_chg"] = None                # the whole is always 100%: nothing moved
     return rows, total, s
 
 
@@ -180,8 +183,8 @@ def _spec(has_fest: bool):
     sp = [("cat", "text", "CATEGORY"),
           ("MTD_ty", "money", "MTD\nSALES"), ("MTD_gd", "gd", "MTD\nG/D"),
           ("YTD_ty", "money", "YTD\nSALES"), ("YTD_gd", "gd", "YTD\nG/D"),
-          ("share", "pct", "SHARE\nYTD"), ("share_chg", "pct", "SHARE\nCHANGE"),
-          ("ppc_ty", "money", "PRICE/PC\nYTD"), ("ppc_gd", "gd", "PRICE/PC\nG/D")]
+          ("share", "pct", "SHARE\nYTD"), ("share_chg", "gd", "SHARE\nCHANGE"),
+          ("ppc_ty", "money", "ASP\nYTD"), ("ppc_gd", "gd", "ASP\nG/D")]
     if has_fest:
         sp += [("FEST_ty", "money", "FESTIVE\nSALES"), ("FEST_gd", "gd", "FESTIVE\nG/D")]
     return sp
@@ -267,8 +270,9 @@ def build(df_in: pd.DataFrame, asof, w=None, basis_label=""):
             sh.put(A4._text_block(W, [(
                 "G/D is growth against the same days last year. SHARE is the category's part "
                 "of this page's year-to-date sales; SHARE CHANGE is this year's share minus "
-                "last year's (12.0% against 10.5% reads +1.5%). PRICE/PC is sales divided by pieces sold, so a rise "
-                "with flat pieces is price, not volume. A row in red is down on the year. "
+                "last year's (12.0% against 10.5% reads 1.5%), green when the share grew and red "
+                "when it shrank. ASP is the average selling price: sales divided by pieces sold, "
+                "net of returns, the same ASP as the morning snapshots. A row in red is down on the year. "
                 "Subtotals and the total are worked from their own sums, not averaged.",
                 A4._ft(19)[0], A4.SUB)]), gap=0)
             sh._footers()

@@ -74,7 +74,7 @@ def test_price_per_piece_and_share():
     kurta = rows[1]
     assert kurta["ppc_ty"] == 100 and kurta["ppc_ly"] == 50 and abs(kurta["ppc_gd"] - 100) < 1e-9
     assert abs(sum(r["share"] for r in rows if not r.get("_sub")) - 100) < 1e-9
-    assert total["share_chg"] == ""
+    assert total["share_chg"] is None
 
 
 def test_movers_ignore_subtotals():
