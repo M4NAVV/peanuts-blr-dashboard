@@ -143,6 +143,47 @@ def categorise_by_brand(df: pd.DataFrame) -> pd.DataFrame:
     return d
 
 
+# --- PRICE BRACKETS (Manav, 9 Oct 2026: "price bracket analysis … 1000 to 5000 last year versus this
+# year … similarly for every 5k gap … which price points are growing … portfolio, region and store wise";
+# then "yes" to bracketing on the bill's selling price (the feed has no MRP) and to a menswear / womenswear
+# split inside each page). A piece's price is its line amount over its pieces (99.4% of lines are one piece);
+# a return is bracketed by the price it was sold at, so it comes off the bracket it was sold in.
+BRACKET_EDGES = [1000, 5000, 10000, 15000, 20000, 25000, 30000, 35000, 40000, 45000, 50000]
+
+
+def bracket_labels():
+    out = ["Under ₹1,000", "₹1,000–5,000"]
+    for lo, hi in zip(BRACKET_EDGES[1:], BRACKET_EDGES[2:]):
+        out.append(f"₹{lo + 1:,}–{hi:,}")
+    out.append(f"Above ₹{BRACKET_EDGES[-1]:,}")
+    return out
+
+
+BRACKETS = bracket_labels()
+
+
+def _bracket(price: float) -> str:
+    if price < BRACKET_EDGES[0]:
+        return BRACKETS[0]
+    if price <= BRACKET_EDGES[1]:
+        return BRACKETS[1]
+    for i, (lo, hi) in enumerate(zip(BRACKET_EDGES[1:], BRACKET_EDGES[2:])):
+        if lo < price <= hi:
+            return BRACKETS[2 + i]
+    return BRACKETS[-1]
+
+
+def categorise_by_price(df: pd.DataFrame) -> pd.DataFrame:
+    """Adds `_grp` (Menswear / Womenswear / Kidswear / Other, from the category map) and `_cat`
+    (the price bracket of the piece)."""
+    d = categorise(df)
+    u = d[L.COL_UNITS].astype(float)
+    amt = d[L.COL_AMOUNT].astype(float)
+    price = (amt / u.where(u != 0)).abs().fillna(amt.abs())
+    d["_cat"] = price.map(_bracket)
+    return d
+
+
 def categorise(df: pd.DataFrame) -> pd.DataFrame:
     """Adds `_grp` (Menswear / Womenswear / Kidswear / Other) and `_cat`."""
     d = df.copy()
@@ -188,7 +229,7 @@ def windows(df: pd.DataFrame, asof, w):
     return out
 
 
-def table_rows(win: dict, stores, groups=None):
+def table_rows(win: dict, stores, groups=None, order=None):
     """Rows for one scope (a set of stores), grouped by brand, with subtotals.
 
     ★ RATIOS FROM SUMMED PAIRS: a subtotal's G/D, share and price per piece are taken
@@ -214,6 +255,7 @@ def table_rows(win: dict, stores, groups=None):
                 tp = float(t.loc[t.index.isin(idx), "pcs"].sum()) if len(t) else 0.0
                 lp = float(l.loc[l.index.isin(idx), "pcs"].sum()) if len(l) else 0.0
                 r["ppc_ty"], r["ppc_ly"] = _ppc(ts, tp), _ppc(ls, lp)
+                r["pcs_ty"], r["pcs_gd"] = tp, _gd(tp, lp)
                 r["ppc_gd"] = (_gd(r["ppc_ty"], r["ppc_ly"])
                                if r["ppc_ty"] is not None and r["ppc_ly"] is not None else None)
                 sh_t = ts / tot_ty * 100 if tot_ty else None
@@ -231,6 +273,20 @@ def table_rows(win: dict, stores, groups=None):
         return r
 
     rows = []
+    if order is not None:
+        # ★ OVERALL FIRST (price brackets): every group together, bracket by bracket — the
+        # answer to "which price points are growing" before the menswear / womenswear split.
+        # Its total IS the page total, so it closes on no subtotal of its own.
+        ov = []
+        for b in order:
+            idx = sorted(k for k in keys if k[1] == b)
+            if idx:
+                r = dict(line(b, idx), _label=b, _ov=True)
+                if any(abs(r.get(f"{k}_ty", 0) or 0) > 0 for k in s) or r["_ly_ytd"]:
+                    ov.append(r)
+        if ov:
+            rows.append({"cat": "OVERALL", "_head": True})
+            rows += ov
     for g in (groups or GROUPS):
         idx = sorted(k for k in keys if k[0] == g)
         if not idx:
@@ -240,17 +296,20 @@ def table_rows(win: dict, stores, groups=None):
                      _label=(c if g in GROUPS or g in ("Manyavar", "Other") else f"{g} {c.lower()}"))
                 for _g, c in idx]
         part = [r for r in part if any(abs(r.get(f"{k}_ty", 0) or 0) > 0 for k in s) or r["_ly_ytd"]]
-        part.sort(key=lambda r: -(r["YTD_ty"] or 0))
+        # brackets read in price order; categories by size
+        part.sort(key=(lambda r: order.index(r["cat"]) if r["cat"] in order else 99) if order
+                  else (lambda r: -(r["YTD_ty"] or 0)))
         if not part:
             continue
         # ★ A LABEL ON TOP, THE TOTAL AT THE BOTTOM (Manav, 6 Oct: *"do the
         # menswear total at the bottom of the menswear, so its more obvious, right
         # now its confusing at the top"*). The label row carries no figures, so the
         # reader still knows the group before its rows; the blue total closes it.
-        if g != "Other":
+        labelled = g != "Other" or order is not None     # brackets: every group named
+        if labelled:
             rows.append({"cat": g.upper(), "_head": True})
         rows += part
-        if g != "Other":
+        if labelled:
             sub = line(f"{g} total", idx)
             sub["_sub"] = True
             rows.append(sub)
@@ -262,6 +321,8 @@ def table_rows(win: dict, stores, groups=None):
 def movers(rows, min_share=1.0, n=3):
     """The categories that moved most on the year, among those that matter (share
     of at least `min_share`%). Computed from the same rows the table prints."""
+    if any(r.get("_ov") for r in rows):          # brackets: name the OVERALL movers, not a group's
+        rows = [r for r in rows if r.get("_ov")]
     c = [r for r in rows if not r.get("_sub") and not r.get("_head") and r.get("YTD_gd") is not None
          and (r.get("share") or 0) >= min_share]
     # under half a percent either way is not a move: it would print as "+0%" / "-0%"
@@ -275,7 +336,17 @@ def _phrase(rs):
 
 
 # --------------------------------------------------------------------------- drawing
-def _spec(has_fest: bool):
+def _spec(has_fest: bool, mode="category"):
+    if mode == "price":
+        sp = [("cat", "text", "PRICE"),
+              ("MTD_ty", "money", "MTD\nSALES"), ("MTD_gd", "gd", "MTD\nG/D"),
+              ("YTD_ty", "money", "YTD\nSALES"), ("YTD_gd", "gd", "YTD\nG/D"),
+              ("pcs_ty", "int", "PIECES\nYTD"), ("pcs_gd", "gd", "PIECES\nG/D"),
+              ("share", "pct", "SHARE\nYTD"), ("share_chg", "gd", "SHARE\nCHANGE")]
+        if has_fest:
+            sp += [("FEST_ty", "money", "FESTIVE\nSALES"), ("FEST_gd", "gd", "FESTIVE\nG/D")]
+        sp.append(("cat", "rtext", "PRICE"))
+        return sp
     sp = [("cat", "text", "CATEGORY"),
           ("MTD_ty", "money", "MTD\nSALES"), ("MTD_gd", "gd", "MTD\nG/D"),
           ("YTD_ty", "money", "YTD\nSALES"), ("YTD_gd", "gd", "YTD\nG/D"),
@@ -298,6 +369,8 @@ def _degrowth(r):
 MODES = {
     "category": dict(cat=lambda d: categorise(d), groups=GROUPS, title="Categories",
                      sheet="Category analysis VFL", file="CATEGORY ANALYSIS VFL"),
+    "price": dict(cat=lambda d: categorise_by_price(d), groups=GROUPS, title="Price brackets",
+                  sheet="Price bracket analysis VFL", file="PRICE BRACKET ANALYSIS VFL", order=BRACKETS),
     "brand": dict(cat=lambda d: categorise_by_brand(d), groups=BRAND_GROUPS,
                   title="Categories by brand", sheet="Category analysis by brand VFL",
                   file="CATEGORY ANALYSIS BY BRAND VFL"),
@@ -362,16 +435,16 @@ def build(df_in: pd.DataFrame, asof, w=None, basis_label="", mode="category"):
     A4.CONTENT_W = A4.PAGE_W - 2 * A4.MARGIN
     try:
         W = A4.CONTENT_W
-        spec = _spec(has_fest)
+        spec = _spec(has_fest, mode)
         pages = []
 
         def page(title, sub, scope, note):
-            rows, total, _ = table_rows(win, scope, M["groups"])
+            rows, total, _ = table_rows(win, scope, M["groups"], M.get("order"))
             sh = A4._Sheet(M["sheet"], asof, "", bounded=False, footer=True)
             sh.put(A4._heading(W, title, sub), gap=14)
             up, dn = movers(rows)
             sh.put(A4._text_block(W, [(
-                f"Growing most this year (categories with at least 1% of sales): {_phrase(up)}.  "
+                f"Growing most this year ({'price brackets' if mode == 'price' else 'categories'} with at least 1% of sales): {_phrase(up)}.  "
                 f"Falling most: {_phrase(dn)}.", A4._ft(26)[1], A4.INK)]), gap=12)
             sh.put(A4._text_block(W, [(note + note_prov, A4._ft(21)[0], A4.SUB)]), gap=16)
             # ★ THE TYPE FILLS THE PAGE, NOT THE NAME COLUMNS (Manav, 6 Oct: "a lot of
@@ -386,12 +459,18 @@ def build(df_in: pd.DataFrame, asof, w=None, basis_label="", mode="category"):
                     break
             sh.put(FADM.table_image(rows, spec, W, font_px=fpx, **kw), gap=18)
             sh.put(A4._text_block(W, [(
+                ("A piece is placed in a bracket by its selling price on the bill (the feed carries no MRP), "
+                 "so a discounted piece sits in the bracket it was sold at. G/D is growth against the same "
+                 "days last year; PIECES are pieces sold, net of returns. SHARE is the bracket's part of its "
+                 "page's year-to-date sales; SHARE CHANGE is this year's share minus last year's, green when "
+                 "the bracket's share grew and red when it shrank. A row in red is down on the year. Subtotals "
+                 "and the total are worked from their own sums." if mode == "price" else
                 "G/D is growth against the same days last year. SHARE is the category's part "
                 "of this page's year-to-date sales; SHARE CHANGE is this year's share minus "
                 "last year's (12.0% against 10.5% reads 1.5%), green when the share grew and red "
                 "when it shrank. ASP is the average selling price: sales divided by pieces sold, "
                 "net of returns, the same ASP as the morning snapshots. A row in red is down on the year. "
-                "Subtotals and the total are worked from their own sums, not averaged.",
+                "Subtotals and the total are worked from their own sums, not averaged."),
                 A4._ft(19)[0], A4.SUB)]), gap=0)
             sh._footers()
             return sh.pages
