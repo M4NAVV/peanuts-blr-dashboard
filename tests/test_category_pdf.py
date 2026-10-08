@@ -130,3 +130,40 @@ def test_by_brand_groups_follow_the_brand_order():
     assert [r["cat"] for r in rows] == ["MANYAVAR", "Kurta set", "Manyavar total",
                                         "MOHEY", "Saree", "Mohey total"]
     assert rows[4]["_label"] == "Mohey saree"
+
+
+# --------------------------------------------------------------------------- price brackets
+def test_price_brackets_by_selling_price_per_piece():
+    """★ Manav, 9 Oct: brackets on the bill's selling price, ₹5,000 steps from ₹1,000 to ₹50,000."""
+    d = C.categorise_by_price(_rows([
+        ("A", "KURTA SET", "KURTA SET-09", "Manyavar", 999, 1),
+        ("A", "KURTA SET", "KURTA SET-09", "Manyavar", 1000, 1),
+        ("A", "KURTA SET", "KURTA SET-09", "Manyavar", 5000, 1),
+        ("A", "KURTA SET", "KURTA SET-09", "Manyavar", 5001, 1),
+        ("A", "KURTA SET", "KURTA SET-09", "Manyavar", 20000, 2),      # two pieces at 10,000
+        ("A", "MOHEY-LEHENGA", "LEHENGA-09", "Mohey", 50001, 1),
+        ("A", "KURTA SET", "KURTA SET-09", "Manyavar", -5001, -1)]))   # a return, at its own price
+    assert d["_cat"].tolist() == ["Under ₹1,000", "₹1,000–5,000", "₹1,000–5,000", "₹5,001–10,000",
+                                  "₹5,001–10,000", "Above ₹50,000", "₹5,001–10,000"]
+    assert d["_grp"].tolist()[5] == "Womenswear"
+    assert len(C.BRACKETS) == 12
+
+
+def test_price_rows_overall_first_in_price_order_and_tie_to_the_total():
+    d = C.categorise_by_price(_rows([
+        ("A", "KURTA SET", "KURTA SET-09", "Manyavar", 30000, 1),
+        ("A", "KURTA SET", "KURTA SET-09", "Manyavar", 2000, 1),
+        ("A", "MOHEY-SAREE", "SAREE-09", "Mohey", 3000, 1)]))
+    win = {"MTD": (d, d.iloc[0:0]), "YTD": (d, d.assign(**{L.COL_AMOUNT: d[L.COL_AMOUNT] / 2}))}
+    rows, total, _ = C.table_rows(win, ["A"], C.GROUPS, C.BRACKETS)
+    assert rows[0]["cat"] == "OVERALL"
+    ov = [r for r in rows if r.get("_ov")]
+    assert [r["cat"] for r in ov] == ["₹1,000–5,000", "₹25,001–30,000"]   # price order, not size
+    assert ov[0]["YTD_ty"] == 5000 and ov[0]["YTD_ly"] == 2500 and ov[0]["YTD_gda"] == 2500
+    assert sum(r["YTD_ty"] for r in ov) == total["YTD_ty"]
+    # the store page: sections only
+    rows2, _, _ = C.table_rows(win, ["A"], C.GROUPS, C.BRACKETS, overall=False)
+    assert not any(r.get("_ov") for r in rows2) and rows2[0]["cat"] == "MENSWEAR"
+    # the movers line names the section when there is no OVERALL block
+    assert all(r["_label"].startswith(("Menswear", "Womenswear")) for r in rows2
+               if not r.get("_head") and not r.get("_sub"))
