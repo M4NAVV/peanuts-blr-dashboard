@@ -229,7 +229,7 @@ def windows(df: pd.DataFrame, asof, w):
     return out
 
 
-def table_rows(win: dict, stores, groups=None, order=None):
+def table_rows(win: dict, stores, groups=None, order=None, overall=True):
     """Rows for one scope (a set of stores), grouped by brand, with subtotals.
 
     ★ RATIOS FROM SUMMED PAIRS: a subtotal's G/D, share and price per piece are taken
@@ -251,6 +251,7 @@ def table_rows(win: dict, stores, groups=None, order=None):
             ts = float(t.loc[t.index.isin(idx), "sales"].sum()) if len(t) else 0.0
             ls = float(l.loc[l.index.isin(idx), "sales"].sum()) if len(l) else 0.0
             r[f"{k}_ty"], r[f"{k}_gd"] = ts, _gd(ts, ls)
+            r[f"{k}_ly"], r[f"{k}_gda"] = ls, ts - ls
             if k == "YTD":
                 tp = float(t.loc[t.index.isin(idx), "pcs"].sum()) if len(t) else 0.0
                 lp = float(l.loc[l.index.isin(idx), "pcs"].sum()) if len(l) else 0.0
@@ -273,7 +274,7 @@ def table_rows(win: dict, stores, groups=None, order=None):
         return r
 
     rows = []
-    if order is not None:
+    if order is not None and overall:
         # ★ OVERALL FIRST (price brackets): every group together, bracket by bracket — the
         # answer to "which price points are growing" before the menswear / womenswear split.
         # Its total IS the page total, so it closes on no subtotal of its own.
@@ -293,7 +294,8 @@ def table_rows(win: dict, stores, groups=None, order=None):
             continue
         # the reading line names the brand where the category alone is ambiguous
         part = [dict(line(c, [(g, c)]),
-                     _label=(c if g in GROUPS or g in ("Manyavar", "Other") else f"{g} {c.lower()}"))
+                     _label=(f"{g} {c}" if order is not None
+                             else c if g in GROUPS or g in ("Manyavar", "Other") else f"{g} {c.lower()}"))
                 for _g, c in idx]
         part = [r for r in part if any(abs(r.get(f"{k}_ty", 0) or 0) > 0 for k in s) or r["_ly_ytd"]]
         # brackets read in price order; categories by size
@@ -338,15 +340,15 @@ def _phrase(rs):
 # --------------------------------------------------------------------------- drawing
 def _spec(has_fest: bool, mode="category"):
     if mode == "price":
-        sp = [("cat", "text", "PRICE"),
-              ("MTD_ty", "money", "MTD\nSALES"), ("MTD_gd", "gd", "MTD\nG/D"),
-              ("YTD_ty", "money", "YTD\nSALES"), ("YTD_gd", "gd", "YTD\nG/D"),
-              ("pcs_ty", "int", "PIECES\nYTD"), ("pcs_gd", "gd", "PIECES\nG/D"),
-              ("share", "pct", "SHARE\nYTD"), ("share_chg", "gd", "SHARE\nCHANGE")]
-        if has_fest:
-            sp += [("FEST_ty", "money", "FESTIVE\nSALES"), ("FEST_gd", "gd", "FESTIVE\nG/D")]
-        sp.append(("cat", "rtext", "PRICE"))
-        return sp
+        # ★ HIS COLUMNS (Manav, 9 Oct): "MTD TY | MTD LY | GD AMOUNT | GD % IIII YTD TY | YTD LY
+        # | GD AMOUNT | GD %" … "keep the share ytd and share change". No pieces, no festive.
+        return [("cat", "text", "PRICE"),
+                ("MTD_ty", "money", "MTD\nTY"), ("MTD_ly", "money", "MTD\nLY"),
+                ("MTD_gda", "gdmoney", "GD\nAMOUNT"), ("MTD_gd", "gd", "GD\n%"),
+                ("YTD_ty", "money", "YTD\nTY"), ("YTD_ly", "money", "YTD\nLY"),
+                ("YTD_gda", "gdmoney", "GD\nAMOUNT"), ("YTD_gd", "gd", "GD\n%"),
+                ("share", "pct", "SHARE\nYTD"), ("share_chg", "gd", "SHARE\nCHANGE"),
+                ("cat", "rtext", "PRICE")]
     sp = [("cat", "text", "CATEGORY"),
           ("MTD_ty", "money", "MTD\nSALES"), ("MTD_gd", "gd", "MTD\nG/D"),
           ("YTD_ty", "money", "YTD\nSALES"), ("YTD_gd", "gd", "YTD\nG/D"),
@@ -400,6 +402,8 @@ def build(df_in: pd.DataFrame, asof, w=None, basis_label="", mode="category"):
     if w is not None:
         w = F.at(w, asof)
     M = MODES[mode]
+    if mode == "price":
+        w = None                     # his columns carry no festive run-up
     df = M["cat"](df)
     win = windows(df, asof, w)
     has_fest = "FEST" in win
@@ -438,8 +442,8 @@ def build(df_in: pd.DataFrame, asof, w=None, basis_label="", mode="category"):
         spec = _spec(has_fest, mode)
         pages = []
 
-        def page(title, sub, scope, note):
-            rows, total, _ = table_rows(win, scope, M["groups"], M.get("order"))
+        def page(title, sub, scope, note, overall=True):
+            rows, total, _ = table_rows(win, scope, M["groups"], M.get("order"), overall)
             sh = A4._Sheet(M["sheet"], asof, "", bounded=False, footer=True)
             sh.put(A4._heading(W, title, sub), gap=14)
             up, dn = movers(rows)
@@ -454,14 +458,16 @@ def build(df_in: pd.DataFrame, asof, w=None, basis_label="", mode="category"):
             # width still fits is used, and only the last few pixels are spread.
             kw = dict(total_row=total, neg_row=_degrowth, shade=[3, 4], total_first=True,
                       sub_row=lambda r: r.get("_sub", False), spread_numbers=True)
+            if mode == "price":
+                kw.update(shade=[5, 6, 7, 8], head_row=lambda r: r.get("_head", False))
             for fpx in (30, 29, 28, 27, 26, 25, 24, 23, 22, 21):
                 if FADM.table_image(rows, spec, W, font_px=fpx, fill=False, **kw).width <= W:
                     break
             sh.put(FADM.table_image(rows, spec, W, font_px=fpx, **kw), gap=18)
             sh.put(A4._text_block(W, [(
                 ("A piece is placed in a bracket by its selling price on the bill (the feed carries no MRP), "
-                 "so a discounted piece sits in the bracket it was sold at. G/D is growth against the same "
-                 "days last year; PIECES are pieces sold, net of returns. SHARE is the bracket's part of its "
+                 "so a discounted piece sits in the bracket it was sold at. TY is this year, LY the same days "
+                 "last year; GD AMOUNT is TY minus LY and GD % the growth. SHARE is the bracket's part of its "
                  "page's year-to-date sales; SHARE CHANGE is this year's share minus last year's, green when "
                  "the bracket's share grew and red when it shrank. A row in red is down on the year. Subtotals "
                  "and the total are worked from their own sums." if mode == "price" else
@@ -493,7 +499,8 @@ def build(df_in: pd.DataFrame, asof, w=None, basis_label="", mode="category"):
             for s in sorted([s for s in stores if region[s] == reg], key=lambda s: code[s]):
                 pages += page(f"{M['title']} · {s}", f"{city[s]}  ·  {reg}  ·  " + periods(reg), [s],
                               ("New this year: no last year, so no growth to state." if s in new
-                               else "One store, against its own last year."))
+                               else "One store, against its own last year."),
+                              overall=(mode != "price"))   # the store page: groups only (Manav, 9 Oct)
 
         buf = io.BytesIO()
         pages[0].save(buf, "PDF", save_all=True, append_images=pages[1:],

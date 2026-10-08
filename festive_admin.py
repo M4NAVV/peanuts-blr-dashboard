@@ -220,7 +220,7 @@ def daily_chart(width, height, w, ty_days, ly_days):
 # The exact number stays beside it, so nothing is lost to anyone who needs it.
 def table_image(df, spec, width, font_px=26, bar_col=None, bar_label="",
                 total_row=None, shade=(), neg_row=None, fill=True, sub_row=None,
-                total_first=False, spread_numbers=False):
+                total_first=False, spread_numbers=False, head_row=None):
     """`spec` is [(column, kind, header)] with kind in
     text | money | pct | int | bar.
 
@@ -244,6 +244,10 @@ def table_image(df, spec, width, font_px=26, bar_col=None, bar_label="",
     `total_first=True` prints the yellow total row ALSO directly under the
     header (Manav, 6 Oct, category pack: *"the total for everything, make that
     appear at the top of the table and the bottom"*). Off by default.
+
+    `head_row(row) -> bool` marks a row that REPEATS THE COLUMN HEADINGS inside the body,
+    with the row's own name in its text columns (Manav, 9 Oct, price brackets: *"repeat
+    this for each header subsection also"*). Headings print on one line there.
 
     `spread_numbers=True` hands spare width to the FIGURE columns instead of the
     text columns, and kind `rtext` is text set flush RIGHT — together they let a
@@ -280,6 +284,9 @@ def table_image(df, spec, width, font_px=26, bar_col=None, bar_label="",
             # one-pager a zero is a statement (a book nobody wrote in), and its
             # footnote says so (Manav, 4 Oct: full figures, not 31.5 L).
             return PP._fmt_in(v, 0)
+        if kind == "gdmoney":
+            # a growth IN RUPEES: money, inked like a G/D
+            return money(v) if isinstance(v, (int, float)) else str(v)
         if kind in ("pct", "gd"):
             # ★ A G/D CELL MAY HOLD A WORD. A store with no last year has no
             # growth to state, and printing an empty cell beside a -100% reads
@@ -314,6 +321,8 @@ def table_image(df, spec, width, font_px=26, bar_col=None, bar_label="",
         w_data = max([scratch.textlength(t[j], font=bold) for t in txt] or [0])
         w_head = max(scratch.textlength(p, font=hbold)
                      for p in head.split("\n"))
+        if head_row is not None:                 # the repeated heading is one line
+            w_head = max(w_head, scratch.textlength(head.replace("\n", " "), font=hbold))
         widths.append(int(max(w_data, w_head)) + pad_x * 2)
     over = sum(widths) - width
     if over > 0:                      # give it back from the widest text column
@@ -388,6 +397,22 @@ def table_image(df, spec, width, font_px=26, bar_col=None, bar_label="",
     for i in range(rows_n):
         is_total = total_row is not None and (i == rows_n - 1 or (top and i == 0))
         is_sub = bool(sub_row and not is_total and sub_row(df[i - top]))
+        if head_row is not None and not is_total and head_row(df[i - top]):
+            d.rectangle([0, y, W, y + row_h], fill=PP.HDR_BG)
+            for j in shade:
+                d.rectangle([xs[j], y, xs[j] + widths[j], y + row_h], fill=SHADE_HEAD)
+            x = 0
+            name = str(df[i - top].get(spec[0][0], ""))
+            for j, (c, k, head) in enumerate(spec):
+                t = name if k in ("text", "rtext") else head.replace("\n", " ")
+                if k == "text":
+                    _text(d, (x + pad_x, y + pad_y), t, hbold, PP.INK)
+                else:
+                    _text(d, (0, y + pad_y), t, hbold, PP.INK, right=x + widths[j] - pad_x)
+                x += widths[j]
+            d.line([(0, y), (W, y)], fill=PP.GRID, width=1)
+            y += row_h
+            continue
         if is_total:
             d.rectangle([0, y, W, y + row_h], fill=PP.TOTAL_BG)
         elif is_sub:
@@ -422,7 +447,7 @@ def table_image(df, spec, width, font_px=26, bar_col=None, bar_label="",
                 # means nothing, and on a degrowth row it broke the red line by
                 # putting one green cell in the middle of it. A share follows
                 # the row; a growth speaks for itself.
-                if k == "gd" and txt[i][j]:
+                if k in ("gd", "gdmoney") and txt[i][j]:
                     val = src.get(c)
                     # `new` is not a growth and gets neither ink
                     if isinstance(val, (int, float)) and not pd.isna(val):
