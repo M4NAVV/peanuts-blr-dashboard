@@ -167,3 +167,20 @@ def test_price_rows_overall_first_in_price_order_and_tie_to_the_total():
     # the movers line names the section when there is no OVERALL block
     assert all(r["_label"].startswith(("Menswear", "Womenswear")) for r in rows2
                if not r.get("_head") and not r.get("_sub"))
+
+
+
+def test_price_report_adds_ttm_sales_and_share_without_a_last_year():
+    """★ Manav, 9 Oct 2026: keep YTD, add TTM. The feed starts 1 Apr 2025, so a TTM has no last year yet."""
+    spec = [c for c, _k, _h in C._spec(False, "price")]
+    assert spec[-3:] == ["TTM_ty", "share_ttm", "cat"] and "YTD_ty" in spec
+    assert "TTM_ty" not in [c for c, _k, _h in C._spec(False, "category")]     # the category reports are untouched
+    d = C.categorise_by_price(_rows([
+        ("A", "KURTA SET", "KURTA SET-09", "Manyavar", 3000, 1),
+        ("A", "MOHEY-SAREE", "SAREE-09", "Mohey", 12000, 1)]))
+    win = {"MTD": (d, d.iloc[0:0]), "YTD": (d, d), "TTM": (d, d.iloc[0:0])}
+    rows, total, _ = C.table_rows(win, ["A"], C.GROUPS, C.BRACKETS)
+    ov = {r["cat"]: r for r in rows if r.get("_ov")}
+    assert ov["₹1,000–5,000"]["TTM_ty"] == 3000 and round(ov["₹1,000–5,000"]["share_ttm"], 1) == 20.0
+    assert ov["₹1,000–5,000"]["TTM_gd"] is None                                # no last year: no growth
+    assert total["TTM_ty"] == 15000

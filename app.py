@@ -3592,7 +3592,8 @@ if nav == "📄 REPORTS PDF":
             help="Sales by selling price in ₹5,000 brackets (under ₹1,000, ₹1,000–5,000, "
                  "then every ₹5,000 to ₹50,000, and above) against last year: MTD and "
                  "YTD this year, last year, the growth in rupees and in %, and each "
-                 "bracket's share of sales. OVERALL, then Menswear / Womenswear / "
+                 "bracket's share of sales, plus TTM sales and share (last 365 days; no "
+                 "last-year TTM until the data covers two years). OVERALL, then Menswear / Womenswear / "
                  "Kidswear; store pages carry the sections only. Priced on the bill "
                  "(the feed has no MRP). Full estate, never the sidebar filters.")
         # ★ ONE FESTIVE RUN-UP ON THE CATEGORY PAGES: several can be open at once

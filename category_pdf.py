@@ -217,11 +217,17 @@ def _ppc(sales, pcs):
     return sales / pcs if pcs and pcs > 0 else None
 
 
-def windows(df: pd.DataFrame, asof, w):
+def windows(df: pd.DataFrame, asof, w, ttm=False):
     """{period: (this-year rows, last-year rows)} on the house windows."""
     ym, yp = L.report_frames(df, "YTD", asof=asof)
     mm, mp = L.report_frames(df, "MTD", asof=asof)
     out = {"MTD": (mm, mp), "YTD": (ym, yp)}
+    if ttm:
+        # ★ TTM, THE GD SHEETS' OWN WINDOW (Manav, 9 Oct 2026, price brackets: "make it TTM", then "keep YTD,
+        # add TTM"): 365 days to `asof`, and a store the window outruns contributes nothing. NO LAST YEAR: the
+        # VFL feed starts 1 Apr 2025, so a TTM a year back would be half empty (until about Apr 2027).
+        _, _, _, _, t = L._extra_gd_windows(df, asof)
+        out["TTM"] = (t, t.iloc[0:0])
     if w is not None and w.started:
         dd = df["date"]
         out["FEST"] = (df[(dd >= w.ty_start) & (dd <= w.ty_cut)],
@@ -242,6 +248,7 @@ def table_rows(win: dict, stores, groups=None, order=None, overall=True):
     for t, l in s.values():
         keys |= set(t.index) | set(l.index)
     ytd_t, ytd_l = s["YTD"]
+    tot_ttm = float(s["TTM"][0]["sales"].sum()) if "TTM" in s and len(s["TTM"][0]) else 0.0
     tot_ty = float(ytd_t["sales"].sum()) if len(ytd_t) else 0.0
     tot_ly = float(ytd_l["sales"].sum()) if len(ytd_l) else 0.0
 
@@ -252,6 +259,8 @@ def table_rows(win: dict, stores, groups=None, order=None, overall=True):
             ls = float(l.loc[l.index.isin(idx), "sales"].sum()) if len(l) else 0.0
             r[f"{k}_ty"], r[f"{k}_gd"] = ts, _gd(ts, ls)
             r[f"{k}_ly"], r[f"{k}_gda"] = ls, ts - ls
+            if k == "TTM":
+                r["share_ttm"] = ts / tot_ttm * 100 if tot_ttm > 0 else None
             if k == "YTD":
                 tp = float(t.loc[t.index.isin(idx), "pcs"].sum()) if len(t) else 0.0
                 lp = float(l.loc[l.index.isin(idx), "pcs"].sum()) if len(l) else 0.0
@@ -348,6 +357,7 @@ def _spec(has_fest: bool, mode="category"):
                 ("YTD_ty", "money", "YTD\nTY"), ("YTD_ly", "money", "YTD\nLY"),
                 ("YTD_gda", "gdmoney", "GD\nAMOUNT"), ("YTD_gd", "gd", "GD\n%"),
                 ("share", "pct", "SHARE\nYTD"), ("share_chg", "gd", "SHARE\nCHANGE"),
+                ("TTM_ty", "money", "TTM\nSALES"), ("share_ttm", "pct", "SHARE\nTTM"),
                 ("cat", "rtext", "PRICE")]
     sp = [("cat", "text", "CATEGORY"),
           ("MTD_ty", "money", "MTD\nSALES"), ("MTD_gd", "gd", "MTD\nG/D"),
@@ -405,7 +415,7 @@ def build(df_in: pd.DataFrame, asof, w=None, basis_label="", mode="category"):
     if mode == "price":
         w = None                     # his columns carry no festive run-up
     df = M["cat"](df)
-    win = windows(df, asof, w)
+    win = windows(df, asof, w, ttm=(mode == "price"))
     has_fest = "FEST" in win
 
     lab = L.COL_STORE_LABEL
@@ -432,7 +442,10 @@ def build(df_in: pd.DataFrame, asof, w=None, basis_label="", mode="category"):
                "South": "YTD from the 19 Apr takeover"}.get(reg, f"YTD from {fy0:%d %b}")
         return (f"MTD {month_from:%d %b} to {asof:%d %b}  ·  {ytd}"
                 + (f"  ·  {w.festival} {w.tenure}: {w.basis().replace('→', 'to')}" if has_fest else "")
-                + "  ·  each against the same days last year")
+                + (f"  ·  TTM {asof - pd.DateOffset(years=1) + pd.Timedelta(days=1):%d %b %y} to {asof:%d %b %y}"
+                   if "TTM" in win else "")
+                + ("  ·  MTD and YTD each against the same days last year" if "TTM" in win
+                   else "  ·  each against the same days last year"))
 
     _keep = (A4.MARGIN, A4.CONTENT_W, FADM.PP.PAD_Y)
     A4.MARGIN = A4.PRINT_MARGIN
@@ -460,8 +473,11 @@ def build(df_in: pd.DataFrame, asof, w=None, basis_label="", mode="category"):
                       sub_row=lambda r: r.get("_sub", False), spread_numbers=True)
             if mode == "price":
                 kw.update(shade=[5, 6, 7, 8], head_row=lambda r: r.get("_head", False))
-            for fpx in (30, 29, 28, 27, 26, 25, 24, 23, 22, 21):
-                if FADM.table_image(rows, spec, W, font_px=fpx, fill=False, **kw).width <= W:
+            for fpx in (30, 29, 28, 27, 26, 25, 24, 23, 22, 21, 20, 19, 18):   # 18-20: the price page's TTM columns
+                # ★ MEASURED UNSQUEEZED (9 Oct 2026): given its real width, a table that is too wide squeezes its
+                # name column to fit, so the check always passed at the first size and the price page's
+                # "Womenswear total" ran into its figure. Measure against an unlimited width instead.
+                if FADM.table_image(rows, spec, 10 ** 6, font_px=fpx, fill=False, **kw).width <= W:
                     break
             sh.put(FADM.table_image(rows, spec, W, font_px=fpx, **kw), gap=18)
             sh.put(A4._text_block(W, [(
@@ -469,7 +485,9 @@ def build(df_in: pd.DataFrame, asof, w=None, basis_label="", mode="category"):
                  "so a discounted piece sits in the bracket it was sold at. TY is this year, LY the same days "
                  "last year; GD AMOUNT is TY minus LY and GD % the growth. SHARE is the bracket's part of its "
                  "page's year-to-date sales; SHARE CHANGE is this year's share minus last year's, green when "
-                 "the bracket's share grew and red when it shrank. A row in red is down on the year. Subtotals "
+                 "the bracket's share grew and red when it shrank. TTM is the last 365 days to the report date, with "
+                 "no last-year comparison yet (the data starts 1 Apr 2025); a store open less than a year counts as 0 "
+                 "there, as on the GD sheets. A row in red is down on the year. Subtotals "
                  "and the total are worked from their own sums." if mode == "price" else
                 "G/D is growth against the same days last year. SHARE is the category's part "
                 "of this page's year-to-date sales; SHARE CHANGE is this year's share minus "
