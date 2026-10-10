@@ -36,8 +36,7 @@ def test_festive_keeps_its_own_heading():
 
 def test_a_master_tick_sets_every_report_in_the_pack():
     assert 'key="vrp_all"' in VFL
-    for k in ("vrp_pack", "vrp_morning", "vrp_sp_detail", "vrp_alter",
-              "vrp_books"):
+    for k in ("vrp_pack", "vrp_store_pack", "vrp_alter", "vrp_books"):
         assert k in VFL, k
     assert "_VRP_KEYS" in VFL and "st.session_state[_k] = True" in VFL
 
@@ -84,10 +83,21 @@ def test_the_team_pointer_can_still_be_built():
 
 def test_the_reports_that_stayed_are_all_still_offered():
     for label in ("VFL report", "Women's discount",
-                  "One printable A4 sheet per store",
-                  "Manager detailed team report",
+                  "Store briefing + team detail",
                   "Parking & alteration charges", "Collection books"):
         assert label in VFL, label
+
+
+def test_the_briefing_and_team_detail_are_one_report():
+    """Manav, 10 Oct: *"combine 2 reports into one"* — the morning A4 and the
+    team detail, one PDF per store. ★ He chose REPLACE: the two separate boxes
+    are hidden, not deleted, and their build code stays."""
+    assert 'picked["morning"] = False' in VFL
+    assert 'picked["sp_detail"] = False' in VFL
+    assert 'key="vrp_morning"' not in VFL and 'key="vrp_sp_detail"' not in VFL
+    assert 'if "store_pack" in chosen:' in VFL and "A4.store_packs(" in VFL
+    assert 'if "morning" in chosen:' in VFL           # kept, one flag away
+    assert '"vrp_store_pack"' in VFL[VFL.index("_VRP_KEYS"):][:200]
 
 
 # --------------------------------------------------------------------------- #

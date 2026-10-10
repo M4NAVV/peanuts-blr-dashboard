@@ -1060,7 +1060,7 @@ def _extremes(rows, col, best_high):
     return (hi, lo) if best_high else (lo, hi)
 
 
-def detailed_sheet(L, df, asof, store, code=None, order="mtd"):
+def detailed_sheet(L, df, asof, store, code=None, order="mtd", fmt="pdf"):
     """MANAGER DETAILED TEAM REPORT — ONE page, every employee, every period.
 
     ★ ONE PAGE, EXTENSIVE (Manav, 7 Sep): *"one page with an extensive table
@@ -1314,7 +1314,9 @@ def detailed_sheet(L, df, asof, store, code=None, order="mtd"):
         sheet.put(_chunk(0, n_first), gap=20)
         sheet.put(cap2, gap=8)
         sheet.put(_chunk(n_first, len(block)), gap=20)
-        out = sheet.pdf()
+        # fmt="pages": the PIL pages, for `snapshots_a4.store_packs` to bind
+        # behind the morning sheet. Footed here, inside the margin override.
+        out = sheet.images() if fmt == "pages" else sheet.pdf()
         npages = len(sheet.pages)
     finally:
         _weights.__exit__(None, None, None)

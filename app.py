@@ -3515,7 +3515,7 @@ if nav == "📄 REPORTS PDF":
         # given a default AND has its state written before it is drawn — which
         # is exactly what a master tick must do. The default is set once, on
         # the first render, and the widget then owns it.
-        _VRP_KEYS = ("vrp_pack", "vrp_db", "vrp_morning", "vrp_sp_detail",
+        _VRP_KEYS = ("vrp_pack", "vrp_db", "vrp_store_pack",
                      "vrp_alter", "vrp_books", "vrp_graph", "vrp_cat",
                      "vrp_catb", "vrp_price")
         st.session_state.setdefault("vrp_pack", True)
@@ -3534,24 +3534,22 @@ if nav == "📄 REPORTS PDF":
         # keeps its code and its tests and is simply not offered here.
         # `pointer_sheet` is one line from coming back.
         picked["sp_pointer"] = False
-        picked["morning"] = st.checkbox(
-            "One printable A4 sheet per store  ·  every open store, as a zip",
-            key="vrp_morning",
-            help="The month and the year side by side, the target strip for "
-                 "both, and the six measures — everything the WhatsApp image "
-                 "carries, on one sheet a manager can print and brief from. "
-                 "Always the full estate, never the sidebar filters. "
-                 "Takes a couple of minutes to build.")
-        picked["sp_detail"] = st.checkbox(
-            "Manager detailed team report  ·  one page per store, as a zip",
-            key="vrp_sp_detail",
-            help="Every employee on one sheet, A to Z, with the month rank in "
-                 "the first column. Sales, units, ABV, ABS and single-piece on "
-                 "the day, the month and the year — the three periods in "
-                 "separate colour blocks. A star marks whoever tops a measure "
-                 "and sets their name in gold; anybody whose year is zero or "
-                 "negative is in red. One page whatever the size of the team. "
-                 "Full estate, never the sidebar filters.")
+        # ★ COMBINED (Manav, 10 Oct): the morning A4 and the team detail
+        # are one PDF per store now — page one the briefing, page two the
+        # team. The two separate boxes are HIDDEN, NOT DELETED; their build
+        # code below still runs if either flag comes back.
+        picked["morning"] = False
+        picked["sp_detail"] = False
+        picked["store_pack"] = st.checkbox(
+            "Store briefing + team detail  ·  2 pages per store, as a zip",
+            key="vrp_store_pack",
+            help="One PDF per open store. Page one: the morning A4 — the month "
+                 "and the year side by side, the target strip and the six "
+                 "measures. Page two: the team detail — everybody on the week, "
+                 "the month and the year, still selling first, then those who "
+                 "have stopped. A store where nobody sold gets page one alone, "
+                 "and is named. Full estate, never the sidebar filters. Takes "
+                 "a few minutes to build.")
         picked["alterations"] = st.checkbox(
             "Parking & alteration charges  ·  one page",
             key="vrp_alter",
@@ -3666,6 +3664,24 @@ if nav == "📄 REPORTS PDF":
                     if _failed:
                         st.warning(f"{len(_failed)} store(s) could not be "
                                    f"built: " + "; ".join(_failed[:5]))
+                if "store_pack" in chosen:
+                    _prog.step("Store briefing + team detail")
+                    import snapshots_a4 as A4
+                    _bar = st.progress(0.0, text="Store briefings…")
+                    try:
+                        _ff = A4.SN.footfall_map(_load_portfolio_cached()[0])
+                    except Exception:
+                        _ff = {}          # conversion reads blank, and says so
+                    _sheets, _failed = A4.store_packs(
+                        L, get_data(), p_asof, ff=_ff,
+                        progress=lambda i, n, st_: _bar.progress(
+                            i / max(n, 1), text=f"Store {i} of {n} — {st_}"))
+                    _bar.empty()
+                    built += _sheets
+                    # A missing store or a missing page must be named.
+                    if _failed:
+                        st.warning(f"Store briefing + team: {len(_failed)} "
+                                   f"problem(s): " + "; ".join(_failed[:5]))
                 for _k, _kind, _lab in (("sp_pointer", "pointer",
                                          "Team pointer"),
                                         ("sp_detail", "detailed",

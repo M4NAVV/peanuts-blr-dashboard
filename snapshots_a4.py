@@ -307,13 +307,22 @@ class _Sheet:
         self.pages[page].save(buf, format="PNG", optimize=True)
         return buf.getvalue()
 
-    def pdf(self):
+    def images(self):
+        """The finished pages — footed and cropped exactly as `pdf()` writes
+        them — so two reports can be bound into one PDF (`pages_pdf`)."""
         self._footers()
-        buf = io.BytesIO()
-        self.pages[0].save(buf, "PDF", save_all=True,
-                           append_images=self.pages[1:],
-                           resolution=PAGE_W * 72.0 / PAGE_PT_W)
-        return buf.getvalue()
+        return list(self.pages)
+
+    def pdf(self):
+        return pages_pdf(self.images())
+
+
+def pages_pdf(pages):
+    """PIL pages → one PDF at the A4 resolution every sheet here is drawn at."""
+    buf = io.BytesIO()
+    pages[0].save(buf, "PDF", save_all=True, append_images=pages[1:],
+                  resolution=PAGE_W * 72.0 / PAGE_PT_W)
+    return buf.getvalue()
 
 
 # --------------------------------------------------------------------------- #
@@ -1015,9 +1024,9 @@ def store_sheet(L, df, asof, store, code=None, pf=None, ff=None, targets=None,
     # the type. It is reached through here rather than called directly so that
     # `store_sheets`, the REPORTS PDF tab and `scripts_a4_briefing` all move
     # together and cannot end up on two different sheets.
-    if fmt == "pdf":
+    if fmt in ("pdf", "pages"):
         return store_sheet_print(L, df, asof, store, code, pf=pf, ff=ff,
-                                 targets=targets)
+                                 targets=targets, fmt=fmt)
     if ff is None:
         ff = SN.footfall_map(pf) if pf is not None else {}
     targets = SN._targets_for(asof) if targets is None else targets
@@ -1142,6 +1151,8 @@ def store_sheet(L, df, asof, store, code=None, pf=None, ff=None, targets=None,
         # page one only: with INCLUDE_BRIEFING off that IS the whole sheet, and
         # a morning image is one picture by definition.
         return (f"{stem}.png", sheet.png(0), font_px, data_pages, used_cap)
+    if fmt == "pages":
+        return (f"{stem}.pdf", sheet.images(), font_px, data_pages, used_cap)
     return (f"{stem}.pdf", sheet.pdf(), font_px, data_pages, used_cap)
 
 
@@ -1222,6 +1233,64 @@ def store_sheets(L, df, asof, ff=None, pf=None, targets=None, progress=None,
     return out, failed
 
 
+def store_packs(L, df, asof, ff=None, pf=None, targets=None, progress=None,
+                folder="store-briefing"):
+    """Every open store's morning A4 AND its team detail, bound as ONE PDF.
+
+    ★ Manav, 10 Oct 2026: combine the two into one, page one the morning
+    briefing, page two the team detail (his sample: Grand Kamraj Road, merged
+    by hand). It REPLACES the two separate tick-boxes; `store_sheets` and
+    `salespeople.store_sheets` are untouched and still build them alone.
+
+    ★ HALF A PACK IS STILL SENT, AND SAID. A store where nobody sold has no
+    team page; one whose briefing fails still has its team. Either way the
+    half that built goes in the zip and the missing half is named in the
+    failure list — a manager missing a page must not look like a full pack.
+    """
+    import salespeople as SP
+    asof = pd.Timestamp(asof)
+    if ff is None:
+        ff = SN.footfall_map(pf) if pf is not None else {}
+    targets = SN._targets_for(asof) if targets is None else targets
+    master = L.load_store_master().set_index("tableau_name")
+
+    stores = open_stores(L, df)
+    out, failed, unfiled = [], [], []
+    for i, s in enumerate(stores, 1):
+        code = int(master.loc[s, "code"]) if s in master.index else None
+        pages = []
+        try:
+            pages += store_sheet(L, df, asof, s, code, ff=ff, targets=targets,
+                                 fmt="pages")[1]
+        except Exception as e:                  # one store must not sink the run
+            failed.append(f"{s}: morning briefing — {e}")
+        try:
+            made = SP.detailed_sheet(L, df, asof, s, code, fmt="pages")
+            if made is None:
+                failed.append(f"{s}: no team page — nobody sold")
+            else:
+                pages += made[1]
+        except Exception as e:
+            failed.append(f"{s}: team detail — {e}")
+        if pages:
+            region = ""
+            if s in master.index:
+                r = master.loc[s].get("region")
+                region = "" if r is None or pd.isna(r) else str(r).strip()
+            if not region:
+                unfiled.append(s)
+            tag = f"{code}_" if code is not None else ""
+            name = f"{asof:%Y-%m-%d}_{tag}{SN._slug(s)}_briefing_team.pdf"
+            parts = [p for p in (folder, region) if p]
+            out.append(("/".join(parts + [name]), pages_pdf(pages)))
+        if progress:
+            progress(i, len(stores), s)
+    if unfiled:
+        failed.append(f"{len(unfiled)} store(s) have no region and are at the "
+                      f"top of the folder: " + ", ".join(sorted(unfiled)))
+    return out, failed
+
+
 # --------------------------------------------------------------------------- #
 #  EXPERIMENT (Manav, 29 Aug): the IMAGE's content on ONE A4                   #
 # --------------------------------------------------------------------------- #
@@ -1287,7 +1356,7 @@ PRINT_PADS = (14, 12, 10, 9, 8, 7, 6, 5, 4, 3, 2)
 
 
 def store_sheet_print(L, df, asof, store, code=None, pf=None, ff=None,
-                      targets=None):
+                      targets=None, fmt="pdf"):
     """One store → (filename, PDF bytes) — every data point, ONE A4 page."""
     global MARGIN, CONTENT_W
     asof = pd.Timestamp(asof)
@@ -1410,8 +1479,9 @@ def store_sheet_print(L, df, asof, store, code=None, pf=None, ff=None,
         sheet.put(_beside(cols[0], cols[1] if len(cols) > 1 else None,
                           PRINT_GUT), gap=GAP)
         sheet.put(kpi, gap=GAP)
+        # fmt="pages": the PIL pages, for `store_packs` to bind with the team.
+        out = sheet.images() if fmt == "pages" else sheet.pdf()
         pages = len(sheet.pages)
-        out = sheet.pdf()
     finally:
         MARGIN, CONTENT_W, PP.PAD_Y, SN.CARD_PAD_Y = _keep
 
