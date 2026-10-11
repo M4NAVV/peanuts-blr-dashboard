@@ -217,8 +217,66 @@ def _ppc(sales, pcs):
     return sales / pcs if pcs and pcs > 0 else None
 
 
-def windows(df: pd.DataFrame, asof, w, ttm=False):
+ROLLING = (7, 30, 90)
+
+
+def rolling_frames(df: pd.DataFrame, asof, days: int):
+    """(this year, last year) for the `days` days to `asof`, against the same dates a year back.
+
+    ★ ROLLING, NOT CALENDAR (the admin, via Manav 11 Oct 2026: price brackets "more on a rolling
+    basis"). MTD restarts on the 1st and YTD buries a recent change under six months; a fixed-length
+    window reads the same on any day. The house rules still hold: a store's window never starts
+    before its takeover (South: 19 Apr), and last year stops where a closed store's this year stops."""
+    asof = pd.Timestamp(asof)
+    fy_year = asof.year if asof.month >= 4 else asof.year - 1
+    m, d = L._anchor_md(df)
+    anchor = pd.to_datetime(pd.DataFrame({"year": fy_year, "month": m, "day": d}))
+    anchor.index = df.index
+    roll = asof - pd.Timedelta(days=days - 1)
+    start = anchor.where(anchor > roll, roll)
+    cur = df[(df["date"] >= start) & (df["date"] <= asof)]
+    prior_mask = ((df["date"] >= start - pd.DateOffset(years=1))
+                  & (df["date"] <= asof - pd.DateOffset(years=1)))
+    _shut = L.closure_cutoffs(asof)
+    if _shut:
+        _lim = df[L.COL_STORE_LABEL].map(_shut) - pd.DateOffset(years=1)
+        prior_mask &= ~(_lim.notna() & (df["date"] > _lim))
+    return cur, df[prior_mask]
+
+
+def festival_shifts(asof, days=ROLLING, windows_=None):
+    """[notes] — a festival inside one year's window but not the other's makes that window's
+    growth a festival effect, not a trend (Dasara: 2 Oct 2025, 20 Oct 2026). One note per
+    festival, naming every window it skews."""
+    import festive as F
+    asof = pd.Timestamp(asof)
+    try:
+        ws = windows_ if windows_ is not None else F.festive_windows(asof)
+    except Exception:
+        ws = []
+    days_of = {}
+    for w in ws:                                  # the window ends on the festival day
+        days_of.setdefault(w.festival, (w.ty_end, w.ly_end))
+    lya = asof - pd.DateOffset(years=1)
+    notes = []
+    for fest, (ty, ly) in days_of.items():
+        only_ly, only_ty = [], []
+        for n in days:
+            in_t = asof - pd.Timedelta(days=n - 1) <= ty <= asof
+            in_l = lya - pd.Timedelta(days=n - 1) <= ly <= lya
+            (only_ly if in_l and not in_t else only_ty if in_t and not in_l else []).append(n)
+        for ns, side in ((only_ly, "last year's"), (only_ty, "this year's")):
+            if ns:
+                nn = ", ".join(map(str, ns[:-1])) + (" and " if len(ns) > 1 else "") + str(ns[-1])
+                notes.append(f"{fest} ({ly:%d %b %Y} last year, {ty:%d %b %Y} this year) falls inside "
+                             f"{side} {nn} days only")
+    return notes
+
+
+def windows(df: pd.DataFrame, asof, w, ttm=False, rolling=None):
     """{period: (this-year rows, last-year rows)} on the house windows."""
+    if rolling:
+        return {f"R{n}": rolling_frames(df, asof, n) for n in rolling}
     ym, yp = L.report_frames(df, "YTD", asof=asof)
     mm, mp = L.report_frames(df, "MTD", asof=asof)
     out = {"MTD": (mm, mp), "YTD": (ym, yp)}
@@ -235,7 +293,7 @@ def windows(df: pd.DataFrame, asof, w, ttm=False):
     return out
 
 
-def table_rows(win: dict, stores, groups=None, order=None, overall=True):
+def table_rows(win: dict, stores, groups=None, order=None, overall=True, share_on="YTD"):
     """Rows for one scope (a set of stores), grouped by brand, with subtotals.
 
     ★ RATIOS FROM SUMMED PAIRS: a subtotal's G/D, share and price per piece are taken
@@ -247,7 +305,7 @@ def table_rows(win: dict, stores, groups=None, order=None, overall=True):
     keys = set()
     for t, l in s.values():
         keys |= set(t.index) | set(l.index)
-    ytd_t, ytd_l = s["YTD"]
+    ytd_t, ytd_l = s[share_on]          # the window SHARE is taken on (YTD; R30 when rolling)
     tot_ttm = float(s["TTM"][0]["sales"].sum()) if "TTM" in s and len(s["TTM"][0]) else 0.0
     tot_ty = float(ytd_t["sales"].sum()) if len(ytd_t) else 0.0
     tot_ly = float(ytd_l["sales"].sum()) if len(ytd_l) else 0.0
@@ -261,7 +319,7 @@ def table_rows(win: dict, stores, groups=None, order=None, overall=True):
             r[f"{k}_ly"], r[f"{k}_gda"] = ls, ts - ls
             if k == "TTM":
                 r["share_ttm"] = ts / tot_ttm * 100 if tot_ttm > 0 else None
-            if k == "YTD":
+            if k == share_on:
                 tp = float(t.loc[t.index.isin(idx), "pcs"].sum()) if len(t) else 0.0
                 lp = float(l.loc[l.index.isin(idx), "pcs"].sum()) if len(l) else 0.0
                 r["ppc_ty"], r["ppc_ly"] = _ppc(ts, tp), _ppc(ls, lp)
@@ -329,25 +387,34 @@ def table_rows(win: dict, stores, groups=None, order=None, overall=True):
     return rows, total, s
 
 
-def movers(rows, min_share=1.0, n=3):
+def movers(rows, min_share=1.0, n=3, key="YTD_gd"):
     """The categories that moved most on the year, among those that matter (share
     of at least `min_share`%). Computed from the same rows the table prints."""
     if any(r.get("_ov") for r in rows):          # brackets: name the OVERALL movers, not a group's
         rows = [r for r in rows if r.get("_ov")]
-    c = [r for r in rows if not r.get("_sub") and not r.get("_head") and r.get("YTD_gd") is not None
+    c = [r for r in rows if not r.get("_sub") and not r.get("_head") and r.get(key) is not None
          and (r.get("share") or 0) >= min_share]
     # under half a percent either way is not a move: it would print as "+0%" / "-0%"
-    up = sorted([r for r in c if r["YTD_gd"] >= 0.5], key=lambda r: -r["YTD_gd"])[:n]
-    dn = sorted([r for r in c if r["YTD_gd"] <= -0.5], key=lambda r: r["YTD_gd"])[:n]
+    up = sorted([r for r in c if r[key] >= 0.5], key=lambda r: -r[key])[:n]
+    dn = sorted([r for r in c if r[key] <= -0.5], key=lambda r: r[key])[:n]
     return up, dn
 
 
-def _phrase(rs):
-    return ", ".join(f"{r['_label']} {r['YTD_gd']:+.0f}%" for r in rs) or "none"
+def _phrase(rs, key="YTD_gd"):
+    return ", ".join(f"{r['_label']} {r[key]:+.0f}%" for r in rs) or "none"
 
 
 # --------------------------------------------------------------------------- drawing
 def _spec(has_fest: bool, mode="category"):
+    if mode == "rolling":
+        # ★ HIS PICK (Manav, 11 Oct): "replace MTD and YTD with rolling 7, 30 and 90 days, each
+        # against the same days last year". Share is read on the 30 days — the middle window.
+        sp = [("cat", "text", "PRICE")]
+        for n in ROLLING:
+            sp += [(f"R{n}_ty", "money", f"{n} DAYS\nTY"), (f"R{n}_ly", "money", f"{n} DAYS\nLY"),
+                   (f"R{n}_gda", "gdmoney", "GD\nAMOUNT"), (f"R{n}_gd", "gd", "GD\n%")]
+        return sp + [("share", "pct", "SHARE\n30 DAYS"), ("share_chg", "gd", "SHARE\nCHANGE"),
+                     ("cat", "rtext", "PRICE")]
     if mode == "price":
         # ★ HIS COLUMNS (Manav, 9 Oct): "MTD TY | MTD LY | GD AMOUNT | GD % IIII YTD TY | YTD LY
         # | GD AMOUNT | GD %" … "keep the share ytd and share change". No pieces, no festive.
@@ -373,8 +440,8 @@ def _spec(has_fest: bool, mode="category"):
     return sp
 
 
-def _degrowth(r):
-    v = r.get("YTD_gd")
+def _degrowth(r, key="YTD_gd"):
+    v = r.get(key)
     return isinstance(v, (int, float)) and v < 0
 
 
@@ -383,6 +450,10 @@ MODES = {
                      sheet="Category analysis VFL", file="CATEGORY ANALYSIS VFL"),
     "price": dict(cat=lambda d: categorise_by_price(d), groups=GROUPS, title="Price brackets",
                   sheet="Price bracket analysis VFL", file="PRICE BRACKET ANALYSIS VFL", order=BRACKETS),
+    # ★ SAMPLE, NOT IN THE PICKER (11 Oct): built by scripts_price_rolling.py for the admin to approve.
+    "rolling": dict(cat=lambda d: categorise_by_price(d), groups=GROUPS, title="Price brackets, rolling",
+                    sheet="Price bracket analysis VFL (rolling)", file="PRICE BRACKET ANALYSIS VFL ROLLING",
+                    order=BRACKETS),
     "brand": dict(cat=lambda d: categorise_by_brand(d), groups=BRAND_GROUPS,
                   title="Categories by brand", sheet="Category analysis by brand VFL",
                   file="CATEGORY ANALYSIS BY BRAND VFL"),
@@ -412,15 +483,18 @@ def build(df_in: pd.DataFrame, asof, w=None, basis_label="", mode="category"):
     if w is not None:
         w = F.at(w, asof)
     M = MODES[mode]
-    if mode == "price":
+    rolling = mode == "rolling"
+    if mode in ("price", "rolling"):
         w = None                     # his columns carry no festive run-up
     df = M["cat"](df)
-    win = windows(df, asof, w, ttm=(mode == "price"))
+    win = windows(df, asof, w, ttm=(mode == "price"), rolling=ROLLING if rolling else None)
+    share_on, gd_key = ("R30", "R30_gd") if rolling else ("YTD", "YTD_gd")
+    shifts = festival_shifts(asof) if rolling else []
     has_fest = "FEST" in win
 
     lab = L.COL_STORE_LABEL
     master = L.load_store_master().set_index("tableau_name")
-    ytd_ly = win["YTD"][1]
+    ytd_ly = win[f"R{max(ROLLING)}" if rolling else "YTD"][1]
     has_ly = set(ytd_ly.loc[ytd_ly[L.COL_AMOUNT] > 0, lab].dropna().unique())
     # A store with no sale in 60 days is shut: held out of every page, and named.
     last_sale = df.groupby(lab)["date"].max()
@@ -438,6 +512,11 @@ def build(df_in: pd.DataFrame, asof, w=None, basis_label="", mode="category"):
     month_from = max(asof.replace(day=1), pd.Timestamp(asof.year, asof.month, 1))
     fy0 = pd.Timestamp(asof.year if asof.month >= 4 else asof.year - 1, 4, 1)
     def periods(reg=None):
+        if rolling:
+            return ("  ·  ".join(f"{n} days {asof - pd.Timedelta(days=n - 1):%d %b} to {asof:%d %b}"
+                                 for n in ROLLING)
+                    + "  ·  each against the same dates last year"
+                    + ("  ·  South never before its 19 Apr takeover" if reg in (None, "South") else ""))
         ytd = {None: f"YTD from {fy0:%d %b} (South from its 19 Apr takeover)",
                "South": "YTD from the 19 Apr takeover"}.get(reg, f"YTD from {fy0:%d %b}")
         return (f"MTD {month_from:%d %b} to {asof:%d %b}  ·  {ytd}"
@@ -456,24 +535,33 @@ def build(df_in: pd.DataFrame, asof, w=None, basis_label="", mode="category"):
         pages = []
 
         def page(title, sub, scope, note, overall=True):
-            rows, total, _ = table_rows(win, scope, M["groups"], M.get("order"), overall)
+            rows, total, _ = table_rows(win, scope, M["groups"], M.get("order"), overall, share_on)
             sh = A4._Sheet(M["sheet"], asof, "", bounded=False, footer=True)
             sh.put(A4._heading(W, title, sub), gap=14)
-            up, dn = movers(rows)
+            up, dn = movers(rows, key=gd_key)
+            when = "over the last 30 days" if rolling else "this year"
+            what = "price brackets" if mode in ("price", "rolling") else "categories"
             sh.put(A4._text_block(W, [(
-                f"Growing most this year ({'price brackets' if mode == 'price' else 'categories'} with at least 1% of sales): {_phrase(up)}.  "
-                f"Falling most: {_phrase(dn)}.", A4._ft(26)[1], A4.INK)]), gap=12)
+                f"Growing most {when} ({what} with at least 1% of sales): {_phrase(up, gd_key)}.  "
+                f"Falling most: {_phrase(dn, gd_key)}.", A4._ft(26)[1], A4.INK)]), gap=12)
+            _fest = shifts
+            if _fest:
+                # ★ A FESTIVAL ON ONE SIDE ONLY IS NOT A TREND — said on the page, not left to be known.
+                sh.put(A4._text_block(W, [(
+                    "Festival dates move: " + "; ".join(_fest)
+                    + ". Read those windows' growth as the festival moving, not the brackets.",
+                    A4._ft(22)[1], (180, 90, 0))]), gap=10)
             sh.put(A4._text_block(W, [(note + note_prov, A4._ft(21)[0], A4.SUB)]), gap=16)
             # ★ THE TYPE FILLS THE PAGE, NOT THE NAME COLUMNS (Manav, 6 Oct: "a lot of
             # blank space towards the right"). Stretched to the page, a table hands all
             # its spare width to its text columns, and with the name on both edges the
             # right-hand one became a strip of white. So the largest type whose NATURAL
             # width still fits is used, and only the last few pixels are spread.
-            kw = dict(total_row=total, neg_row=_degrowth, shade=[3, 4], total_first=True,
+            kw = dict(total_row=total, neg_row=lambda r: _degrowth(r, gd_key), shade=[3, 4], total_first=True,
                       sub_row=lambda r: r.get("_sub", False), spread_numbers=True)
-            if mode == "price":
+            if mode in ("price", "rolling"):
                 kw.update(shade=[5, 6, 7, 8], head_row=lambda r: r.get("_head", False))
-            for fpx in (30, 29, 28, 27, 26, 25, 24, 23, 22, 21, 20, 19, 18):   # 18-20: the price page's TTM columns
+            for fpx in (30, 29, 28, 27, 26, 25, 24, 23, 22, 21, 20, 19, 18, 17, 16):   # 18-20: the price page's TTM columns
                 # ★ MEASURED UNSQUEEZED (9 Oct 2026): given its real width, a table that is too wide squeezes its
                 # name column to fit, so the check always passed at the first size and the price page's
                 # "Womenswear total" ran into its figure. Measure against an unlimited width instead.
@@ -482,6 +570,14 @@ def build(df_in: pd.DataFrame, asof, w=None, basis_label="", mode="category"):
             sh.put(FADM.table_image(rows, spec, W, font_px=fpx, **kw), gap=18)
             sh.put(A4._text_block(W, [(
                 ("A piece is placed in a bracket by its selling price on the bill (the feed carries no MRP), "
+                 "so a discounted piece sits in the bracket it was sold at. Each window is the last 7, 30 or 90 "
+                 "days to the report date, against the same dates last year, and moves forward a day every day; "
+                 "a store's window never starts before its takeover. TY is this year, LY last year; GD AMOUNT is "
+                 "TY minus LY and GD % the growth. SHARE is the bracket's part of its page's last-30-day sales; "
+                 "SHARE CHANGE is this year's share minus last year's, green when it grew and red when it shrank. "
+                 "A row in red is down on the 30 days. Subtotals and the total are worked from their own sums."
+                 if rolling else
+                 "A piece is placed in a bracket by its selling price on the bill (the feed carries no MRP), "
                  "so a discounted piece sits in the bracket it was sold at. TY is this year, LY the same days "
                  "last year; GD AMOUNT is TY minus LY and GD % the growth. SHARE is the bracket's part of its "
                  "page's year-to-date sales; SHARE CHANGE is this year's share minus last year's, green when "
@@ -518,7 +614,7 @@ def build(df_in: pd.DataFrame, asof, w=None, basis_label="", mode="category"):
                 pages += page(f"{M['title']} · {s}", f"{city[s]}  ·  {reg}  ·  " + periods(reg), [s],
                               ("New this year: no last year, so no growth to state." if s in new
                                else "One store, against its own last year."),
-                              overall=(mode != "price"))   # the store page: groups only (Manav, 9 Oct)
+                              overall=(mode not in ("price", "rolling")))   # the store page: groups only (Manav, 9 Oct)
 
         buf = io.BytesIO()
         pages[0].save(buf, "PDF", save_all=True, append_images=pages[1:],
