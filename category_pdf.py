@@ -217,7 +217,7 @@ def _ppc(sales, pcs):
     return sales / pcs if pcs and pcs > 0 else None
 
 
-ROLLING = (7, 30, 90)
+ROLLING = (7, 30, 90, 120)            # 120 added 11 Oct (Manav)
 
 
 def rolling_frames(df: pd.DataFrame, asof, days: int):
@@ -413,8 +413,9 @@ def _spec(has_fest: bool, mode="category"):
         for n in ROLLING:
             sp += [(f"R{n}_ty", "money", f"{n} DAYS\nTY"), (f"R{n}_ly", "money", f"{n} DAYS\nLY"),
                    (f"R{n}_gda", "gdmoney", "GD\nAMOUNT"), (f"R{n}_gd", "gd", "GD\n%")]
-        return sp + [("share", "pct", "SHARE\n30 DAYS"), ("share_chg", "gd", "SHARE\nCHANGE"),
-                     ("cat", "rtext", "PRICE")]
+        # ★ NO REPEATED NAME ON THE RIGHT (Manav, 11 Oct: "to make space, remove the repeating
+        # column on the right") — four windows need the width more than the eye needs the echo.
+        return sp + [("share", "pct", "SHARE\n30 DAYS"), ("share_chg", "gd", "SHARE\nCHANGE")]
     if mode == "price":
         # ★ HIS COLUMNS (Manav, 9 Oct): "MTD TY | MTD LY | GD AMOUNT | GD % IIII YTD TY | YTD LY
         # | GD AMOUNT | GD %" … "keep the share ytd and share change". No pieces, no festive.
@@ -570,7 +571,7 @@ def build(df_in: pd.DataFrame, asof, w=None, basis_label="", mode="category"):
             sh.put(FADM.table_image(rows, spec, W, font_px=fpx, **kw), gap=18)
             sh.put(A4._text_block(W, [(
                 ("A piece is placed in a bracket by its selling price on the bill (the feed carries no MRP), "
-                 "so a discounted piece sits in the bracket it was sold at. Each window is the last 7, 30 or 90 "
+                 "so a discounted piece sits in the bracket it was sold at. Each window is the last 7, 30, 90 or 120 "
                  "days to the report date, against the same dates last year, and moves forward a day every day; "
                  "a store's window never starts before its takeover. TY is this year, LY last year; GD AMOUNT is "
                  "TY minus LY and GD % the growth. SHARE is the bracket's part of its page's last-30-day sales; "

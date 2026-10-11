@@ -46,7 +46,7 @@ def test_a_festival_on_one_side_only_is_named_once():
     ws = [_w("Durga Puja", "2026-10-20", "2025-10-02"), _w("Durga Puja", "2026-10-20", "2025-10-02")]
     notes = C.festival_shifts(pd.Timestamp("2026-10-07"), windows_=ws)
     assert notes == ["Durga Puja (02 Oct 2025 last year, 20 Oct 2026 this year) falls inside "
-                     "last year's 7, 30 and 90 days only"]
+                     "last year's 7, 30, 90 and 120 days only"]
 
 
 def test_a_festival_in_both_windows_is_not_a_shift():
@@ -60,6 +60,8 @@ def test_his_columns_replace_mtd_and_ytd():
         assert [f"R{n}_ty", f"R{n}_ly", f"R{n}_gda", f"R{n}_gd"] == keys[keys.index(f"R{n}_ty"):][:4]
     assert not any(k.startswith(("MTD", "YTD", "TTM")) for k in keys)
     assert "share" in keys and "share_chg" in keys
+    assert C.ROLLING == (7, 30, 90, 120)
+    assert keys.count("cat") == 1          # no repeated name on the right (11 Oct)
 
 
 def test_it_is_a_sample_not_in_the_picker():
