@@ -3584,16 +3584,19 @@ if nav == "📄 REPORTS PDF":
             help="The same pages and columns, but each brand's categories on their "
                  "own: Mohey saree and Twamev saree as two lines, with a total per "
                  "brand. Full estate, never the sidebar filters.")
+        # ★ ROLLING REPLACED MTD/YTD (Manav, 11 Oct, the admin's approval): same key, so the
+        # master tick still covers it. The MTD/YTD build (mode "price") is kept, one word away.
         picked["price"] = st.checkbox(
-            "Price bracket analysis VFL  ·  portfolio, regions and every store, ~23 pages",
+            "Price bracket analysis VFL (rolling)  ·  portfolio, regions and every store, ~23 pages",
             key="vrp_price",
             help="Sales by selling price in ₹5,000 brackets (under ₹1,000, ₹1,000–5,000, "
-                 "then every ₹5,000 to ₹50,000, and above) against last year: MTD and "
-                 "YTD this year, last year, the growth in rupees and in %, and each "
-                 "bracket's share of sales, plus TTM sales and share (last 365 days; no "
-                 "last-year TTM until the data covers two years). OVERALL, then Menswear / Womenswear / "
-                 "Kidswear; store pages carry the sections only. Priced on the bill "
-                 "(the feed has no MRP). Full estate, never the sidebar filters.")
+                 "then every ₹5,000 to ₹50,000, and above) over the last 7, 30, 90 and 120 "
+                 "days, each against the same dates last year: this year, last year, the "
+                 "growth in rupees and in %, and each bracket's share of the last 30 days. "
+                 "A festival that falls inside only one year's window is named on the page. "
+                 "OVERALL, then Menswear / Womenswear / Kidswear; store pages carry the "
+                 "sections only. Priced on the bill (the feed has no MRP). Full estate, "
+                 "never the sidebar filters.")
         # ★ ONE FESTIVE RUN-UP ON THE CATEGORY PAGES: several can be open at once
         # (6 Oct: Durga Puja 45 and 30, Diwali 45), and three pairs of columns
         # would not fit a page. The longest open one is the default.
@@ -3752,7 +3755,8 @@ if nav == "📄 REPORTS PDF":
                 for _ck, _cm, _cl in (("category", "category", "Category analysis VFL"),
                                       ("category_brand", "brand",
                                        "Category analysis by brand VFL"),
-                                      ("price", "price", "Price bracket analysis VFL")):
+                                      ("price", "rolling",
+                                       "Price bracket analysis VFL (rolling)")):
                     if _ck not in chosen:
                         continue
                     # ★ The full estate, like the graph pack: its portfolio and

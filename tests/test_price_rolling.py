@@ -1,4 +1,4 @@
-"""Price brackets on a ROLLING basis — the sample for the admin (Manav, 11 Oct 2026).
+"""Price brackets on a ROLLING basis (Manav, 11 Oct 2026) — sampled, approved, LIVE in place of MTD/YTD.
 
 *"Replace MTD and YTD with rolling 7, 30 and 90 days, each against the same days last year …
 build this separately as a sample, will get it approved and then go live."* So: a mode the
@@ -64,10 +64,13 @@ def test_his_columns_replace_mtd_and_ytd():
     assert keys.count("cat") == 1          # no repeated name on the right (11 Oct)
 
 
-def test_it_is_a_sample_not_in_the_picker():
+def test_rolling_replaced_mtd_ytd_in_the_picker():
+    """★ Approved 11 Oct — "Replace current". Same `vrp_price` key, so the master tick still
+    covers it; the MTD/YTD mode stays in category_pdf, unwired."""
     src = Path("app.py").read_text()
-    assert 'mode="rolling"' not in src and "'rolling'" not in src
-    assert 'mode="rolling"' in Path("scripts_price_rolling.py").read_text()
+    assert '("price", "rolling",' in src and '("price", "price",' not in src
+    assert "Price bracket analysis VFL (rolling)" in src and 'key="vrp_price"' in src
+    assert "price" in C.MODES and "rolling" in C.MODES
 
 
 def test_the_live_modes_still_read_mtd_and_ytd():

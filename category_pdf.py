@@ -451,7 +451,7 @@ MODES = {
                      sheet="Category analysis VFL", file="CATEGORY ANALYSIS VFL"),
     "price": dict(cat=lambda d: categorise_by_price(d), groups=GROUPS, title="Price brackets",
                   sheet="Price bracket analysis VFL", file="PRICE BRACKET ANALYSIS VFL", order=BRACKETS),
-    # ★ SAMPLE, NOT IN THE PICKER (11 Oct): built by scripts_price_rolling.py for the admin to approve.
+    # ★ LIVE 11 Oct behind `vrp_price`, in place of "price" (approved). scripts_price_rolling.py still builds it alone.
     "rolling": dict(cat=lambda d: categorise_by_price(d), groups=GROUPS, title="Price brackets, rolling",
                     sheet="Price bracket analysis VFL (rolling)", file="PRICE BRACKET ANALYSIS VFL ROLLING",
                     order=BRACKETS),
