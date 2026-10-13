@@ -908,7 +908,10 @@ def render_portfolio():
 
     # ================= Excel Builder ================= #
     if nav == "🧮 Excel Builder":
-        render_pivot_builder(pf, feed="portfolio", key="pf_pivot", asof=asof)
+        # 13 Oct 2026: a real pivot table (pivot_ui / pivotx). The 22-Sep builder is still here:
+        # render_pivot_builder(pf, feed="portfolio", key="pf_pivot", asof=asof)
+        import pivot_ui
+        pivot_ui.render(pf, feed="portfolio", key="pf_pvx", asof=asof)
         return
 
     # ===================== Executive ===================== #
@@ -3039,8 +3042,10 @@ if nav == "✂️ Alterations":
 # EXCEL BUILDER — the raw feed, pivoted into whatever a division needs
 # =========================================================================== #
 if nav == "🧮 Excel Builder":
-    render_pivot_builder(df_all, feed="vfl", key="vfl_pivot",
-                         asof=pd.Timestamp(end_d))
+    # 13 Oct 2026: a real pivot table (pivot_ui / pivotx). The 22-Sep builder is still here:
+    # render_pivot_builder(df_all, feed="vfl", key="vfl_pivot", asof=pd.Timestamp(end_d))
+    import pivot_ui
+    pivot_ui.render(df_all, feed="vfl", key="vfl_pvx", asof=pd.Timestamp(end_d))
 
 
 # =========================================================================== #
