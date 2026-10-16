@@ -367,7 +367,7 @@ def table_rows(win: dict, stores, groups=None, order=None, overall=True, share_o
         part = [r for r in part if any(abs(r.get(f"{k}_ty", 0) or 0) > 0 for k in s) or r["_ly_ytd"]]
         # brackets read in price order; categories by size
         part.sort(key=(lambda r: order.index(r["cat"]) if r["cat"] in order else 99) if order
-                  else (lambda r: -(r["YTD_ty"] or 0)))
+                  else (lambda r: -(r.get(f"{share_on}_ty") or 0)))   # rolling: largest over 30 days first
         if not part:
             continue
         # ★ A LABEL ON TOP, THE TOTAL AT THE BOTTOM (Manav, 6 Oct: *"do the
@@ -406,10 +406,10 @@ def _phrase(rs, key="YTD_gd"):
 
 # --------------------------------------------------------------------------- drawing
 def _spec(has_fest: bool, mode="category"):
-    if mode == "rolling":
+    if MODES[mode].get("rolling"):
         # ★ HIS PICK (Manav, 11 Oct): "replace MTD and YTD with rolling 7, 30 and 90 days, each
         # against the same days last year". Share is read on the 30 days — the middle window.
-        sp = [("cat", "text", "PRICE")]
+        sp = [("cat", "text", "PRICE" if mode == "rolling" else "CATEGORY")]
         for n in ROLLING:
             sp += [(f"R{n}_ty", "money", f"{n} DAYS\nTY"), (f"R{n}_ly", "money", f"{n} DAYS\nLY"),
                    (f"R{n}_gda", "gdmoney", "GD\nAMOUNT"), (f"R{n}_gd", "gd", "GD\n%")]
@@ -454,7 +454,16 @@ MODES = {
     # ★ LIVE 11 Oct behind `vrp_price`, in place of "price" (approved). scripts_price_rolling.py still builds it alone.
     "rolling": dict(cat=lambda d: categorise_by_price(d), groups=GROUPS, title="Price brackets, rolling",
                     sheet="Price bracket analysis VFL (rolling)", file="PRICE BRACKET ANALYSIS VFL ROLLING",
-                    order=BRACKETS),
+                    order=BRACKETS, rolling=True),
+    # ★ 16 Oct 2026 (Manav: "for this report also, make it the rolling kind, like we did for price bracket"):
+    # the category page on the same 7/30/90/120-day windows. Approved 16 Oct, in place of "category".
+    "category_rolling": dict(cat=lambda d: categorise(d), groups=GROUPS, title="Categories, rolling",
+                             sheet="Category analysis VFL (rolling)", file="CATEGORY ANALYSIS VFL ROLLING",
+                             rolling=True),
+    # ★ 16 Oct 2026 (Manav: "do the same for the category by brand too"), in place of "brand".
+    "brand_rolling": dict(cat=lambda d: categorise_by_brand(d), groups=BRAND_GROUPS,
+                          title="Categories by brand, rolling", sheet="Category analysis by brand VFL (rolling)",
+                          file="CATEGORY ANALYSIS BY BRAND VFL ROLLING", rolling=True),
     "brand": dict(cat=lambda d: categorise_by_brand(d), groups=BRAND_GROUPS,
                   title="Categories by brand", sheet="Category analysis by brand VFL",
                   file="CATEGORY ANALYSIS BY BRAND VFL"),
@@ -484,8 +493,8 @@ def build(df_in: pd.DataFrame, asof, w=None, basis_label="", mode="category"):
     if w is not None:
         w = F.at(w, asof)
     M = MODES[mode]
-    rolling = mode == "rolling"
-    if mode in ("price", "rolling"):
+    rolling = bool(M.get("rolling"))
+    if mode == "price" or rolling:
         w = None                     # his columns carry no festive run-up
     df = M["cat"](df)
     win = windows(df, asof, w, ttm=(mode == "price"), rolling=ROLLING if rolling else None)
@@ -550,7 +559,7 @@ def build(df_in: pd.DataFrame, asof, w=None, basis_label="", mode="category"):
                 # ★ A FESTIVAL ON ONE SIDE ONLY IS NOT A TREND — said on the page, not left to be known.
                 sh.put(A4._text_block(W, [(
                     "Festival dates move: " + "; ".join(_fest)
-                    + ". Read those windows' growth as the festival moving, not the brackets.",
+                    + f". Read those windows' growth as the festival moving, not the {what}.",
                     A4._ft(22)[1], (180, 90, 0))]), gap=10)
             sh.put(A4._text_block(W, [(note + note_prov, A4._ft(21)[0], A4.SUB)]), gap=16)
             # ★ THE TYPE FILLS THE PAGE, NOT THE NAME COLUMNS (Manav, 6 Oct: "a lot of
@@ -560,7 +569,7 @@ def build(df_in: pd.DataFrame, asof, w=None, basis_label="", mode="category"):
             # width still fits is used, and only the last few pixels are spread.
             kw = dict(total_row=total, neg_row=lambda r: _degrowth(r, gd_key), shade=[3, 4], total_first=True,
                       sub_row=lambda r: r.get("_sub", False), spread_numbers=True)
-            if mode in ("price", "rolling"):
+            if mode == "price" or rolling:
                 kw.update(shade=[5, 6, 7, 8], head_row=lambda r: r.get("_head", False))
             for fpx in (30, 29, 28, 27, 26, 25, 24, 23, 22, 21, 20, 19, 18, 17, 16):   # 18-20: the price page's TTM columns
                 # ★ MEASURED UNSQUEEZED (9 Oct 2026): given its real width, a table that is too wide squeezes its
@@ -570,11 +579,12 @@ def build(df_in: pd.DataFrame, asof, w=None, basis_label="", mode="category"):
                     break
             sh.put(FADM.table_image(rows, spec, W, font_px=fpx, **kw), gap=18)
             sh.put(A4._text_block(W, [(
-                ("A piece is placed in a bracket by its selling price on the bill (the feed carries no MRP), "
-                 "so a discounted piece sits in the bracket it was sold at. Each window is the last 7, 30, 90 or 120 "
+                (("A piece is placed in a bracket by its selling price on the bill (the feed carries no MRP), "
+                  "so a discounted piece sits in the bracket it was sold at. " if mode == "rolling" else "")
+                 + "Each window is the last 7, 30, 90 or 120 "
                  "days to the report date, against the same dates last year, and moves forward a day every day; "
                  "a store's window never starts before its takeover. TY is this year, LY last year; GD AMOUNT is "
-                 "TY minus LY and GD % the growth. SHARE is the bracket's part of its page's last-30-day sales; "
+                 "TY minus LY and GD % the growth. SHARE is the row's part of its page's last-30-day sales; "
                  "SHARE CHANGE is this year's share minus last year's, green when it grew and red when it shrank. "
                  "A row in red is down on the 30 days. Subtotals and the total are worked from their own sums."
                  if rolling else

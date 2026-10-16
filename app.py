@@ -3574,17 +3574,20 @@ if nav == "📄 REPORTS PDF":
                  "and three numbers that say whether a gap is the festival "
                  "moving or the store. Page one summarises every store. Full "
                  "estate, never the sidebar filters.")
+        # ★ ROLLING REPLACED MTD/YTD here too (Manav, 16 Oct: approved, "do the same for the category by
+        # brand too"): same keys; the MTD/YTD builds (modes "category" and "brand") are one word away.
         picked["category"] = st.checkbox(
-            "Category analysis VFL  ·  portfolio, regions and every store, ~24 pages",
+            "Category analysis VFL (rolling)  ·  portfolio, regions and every store, ~23 pages",
             key="vrp_cat",
             help="Every category — kurta set, sherwani, jodhpuri, saree, lehenga, "
-                 "Twamev's own lines — against last year: MTD, YTD and a festive "
-                 "run-up, with share of sales and price per piece. The VFL "
-                 "portfolio first, then each region, then one page per store. "
-                 "A store with no last year is left out of the group pages and "
-                 "named. Full estate, never the sidebar filters.")
+                 "Twamev's own lines — over the last 7, 30, 90 and 120 days, each "
+                 "against the same dates last year, with each category's share of the "
+                 "last 30 days. A festival that falls inside only one year's window is "
+                 "named on the page. The VFL portfolio first, then each region, then one "
+                 "page per store. A store with no last year is left out of the group "
+                 "pages and named. Full estate, never the sidebar filters.")
         picked["category_brand"] = st.checkbox(
-            "Category analysis by brand VFL  ·  the same, grouped Manyavar / Mohey / Twamev",
+            "Category analysis by brand VFL (rolling)  ·  the same, grouped Manyavar / Mohey / Twamev",
             key="vrp_catb",
             help="The same pages and columns, but each brand's categories on their "
                  "own: Mohey saree and Twamev saree as two lines, with a total per "
@@ -3607,7 +3610,7 @@ if nav == "📄 REPORTS PDF":
         # would not fit a page. The longest open one is the default.
         _cat_fw = [w for w in (FEST.at(_w, p_asof) for _w in _festive_windows())
                    if w.started]
-        if (picked["category"] or picked["category_brand"]) and _cat_fw:
+        if False and _cat_fw:   # ★ 16 Oct: the category pages went rolling, which carry no festive run-up
             _cat_fw.sort(key=lambda w: (-w.tenure, w.ty_start))
             st.session_state["vrp_cat_w"] = st.selectbox(
                 "Festive run-up on the category pages",
@@ -3757,9 +3760,9 @@ if nav == "📄 REPORTS PDF":
                     _prog.step("Graph analysis VFL")
                     import graph_analysis as GA
                     built.append(GA.build(get_data(), asof=p_asof))
-                for _ck, _cm, _cl in (("category", "category", "Category analysis VFL"),
-                                      ("category_brand", "brand",
-                                       "Category analysis by brand VFL"),
+                for _ck, _cm, _cl in (("category", "category_rolling", "Category analysis VFL (rolling)"),
+                                      ("category_brand", "brand_rolling",
+                                       "Category analysis by brand VFL (rolling)"),
                                       ("price", "rolling",
                                        "Price bracket analysis VFL (rolling)")):
                     if _ck not in chosen:
