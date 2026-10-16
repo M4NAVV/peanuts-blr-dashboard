@@ -2157,8 +2157,19 @@ def _tva_exec_cols():
             for h, a in TVA_EXEC_COLS]
 
 
-def tva_exec_rows(sheet):
-    """The snapshot above the sheet: what is left, in how long, at what rate.
+# ★ VFL = the Vedant Fashions brands: Manyavar, Mohey, Twamev (Manav, 16 Oct 2026: "i want to specifically see
+# how VFL is doing, like north east, south and total. both MTD and YTD").
+_VFL_BRANDS = ("MANYAVAR", "MOHEY", "TWAMEV")
+
+
+def is_vfl(r) -> bool:
+    return any(b in str(r.get("brand") or "").upper() for b in _VFL_BRANDS)
+
+
+def tva_exec_rows(sheet, keep=None):
+    """`keep` narrows the stores (e.g. `is_vfl`); the period arithmetic is unchanged.
+
+    The snapshot above the sheet: what is left, in how long, at what rate.
 
     Manav, 19 Aug: *"Total Target / Ach % / Balance Target / Balance % … Main
     ref points will be Balance No of Days, Target Shortfall, Per day Avg
@@ -2174,7 +2185,7 @@ def tva_exec_rows(sheet):
     Balance days EXCLUDE today: the day's takings are already in the achieved
     figure, so asking the estate to earn them again would overstate the rate.
     """
-    rows = sheet["rows"]
+    rows = [r for r in sheet["rows"] if keep is None or keep(r)]
     # ★ YEAR END TRIAL — off unless YEAR_END_VIEW=1. See yearend.py.
     import yearend as _YE
     _ye_on = _YE.enabled()
@@ -2242,14 +2253,14 @@ def tva_exec_rows(sheet):
     return out
 
 
-def render_tva_exec(sheet) -> "Image":
+def render_tva_exec(sheet, keep=None, title="EXECUTIVE SNAPSHOT") -> "Image":
     """The snapshot table — one grid, both periods, three scopes each."""
     asof = sheet["asof"]
     _cols = _tva_exec_cols()
     header = [h for h, _ in _cols]
     aligns = [a for _, a in _cols]
     grid = []
-    for kind, r in tva_exec_rows(sheet):
+    for kind, r in tva_exec_rows(sheet, keep):
         if kind == "head":
             note = ("against the month's target" if "MONTH" in r["label"]
                     else "against the year's target")
@@ -2273,7 +2284,7 @@ def render_tva_exec(sheet) -> "Image":
         ], aligns, TOTAL_BG if kind == "total" else None,
             kind == "total", ink=ink), ROW_H))
     return _draw_grid(header, grid, landscape=False,
-                      title=f"EXECUTIVE SNAPSHOT  ·  {asof:%d %b %Y}")
+                      title=f"{title}  ·  {asof:%d %b %Y}")
 
 
 def render_target_vs_ach(sheet, region=None) -> "Image":
@@ -2384,7 +2395,9 @@ def build_target_vs_ach(pf_df, asof=None, basis_label="") -> tuple[str, bytes]:
     with _LOCK, desk():
         # The snapshot leads, then the store sheet it summarises — one page, so
         # the estate figure and the stores that make it are read together.
-        img = _stack([render_tva_exec(sheet), render_target_vs_ach(sheet)], 34)
+        img = _stack([render_tva_exec(sheet),
+                      render_tva_exec(sheet, is_vfl, "VFL SNAPSHOT  ·  Manyavar, Mohey, Twamev stores only"),
+                      render_target_vs_ach(sheet)], 34)
         pdf = _pdf_from([("Target vs achievement", img)],
                         f"As of {asof:%d %b %Y}"
                         + (f" · {basis_label}" if basis_label else ""))
