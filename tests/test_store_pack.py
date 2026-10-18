@@ -27,13 +27,15 @@ class _Master:
                              "region": ["South", "East & NE"]})
 
 
-def _run(monkeypatch, team):
+def _run(monkeypatch, team, cats=None):
     monkeypatch.setattr(A4, "open_stores", lambda L, df: ["Grand Kamraj Road",
                                                           "Dibrugarh"])
     monkeypatch.setattr(A4, "store_sheet",
                         lambda *a, fmt="pdf", **k: ("x.pdf", [_page("white")],
                                                     0, 1, None))
     monkeypatch.setattr(SP, "detailed_sheet", team)
+    # ★ 18 Oct 2026: page two is the category page
+    monkeypatch.setattr(A4, "category_sheet_print", cats or (lambda *a, **k: [_page("blue")]))
     return A4.store_packs(_Master, pd.DataFrame(), "2026-10-09", ff={},
                           targets={})
 
@@ -52,14 +54,14 @@ def test_briefing_then_team_in_one_pdf_per_store(monkeypatch):
         "store-briefing/East & NE/2026-10-09_120_"
         f"{A4.SN._slug('Dibrugarh')}_briefing_team.pdf"]
     assert set(seen) == {"pages"}
-    assert [_pdf_pages(b) for _, b in out] == [2, 2]   # briefing + team
+    assert [_pdf_pages(b) for _, b in out] == [3, 3]   # briefing + categories + team
 
 
 def test_a_store_where_nobody_sold_keeps_its_briefing_and_is_named(monkeypatch):
     def team(L, df, asof, s, code=None, fmt="pdf", **k):
         return None if s == "Dibrugarh" else ("t.pdf", [_page("red")], 0, 1, 1)
     out, failed = _run(monkeypatch, team)
-    assert [_pdf_pages(b) for _, b in out] == [2, 1]   # Dibrugarh: page one
+    assert [_pdf_pages(b) for _, b in out] == [3, 2]   # Dibrugarh: pages one and two
     assert failed == ["Dibrugarh: no team page — nobody sold"]
 
 
@@ -90,3 +92,14 @@ def test_the_briefing_page_is_the_one_page_print_layout():
     src = inspect.getsource(A4.store_sheet)
     assert 'if fmt in ("pdf", "pages"):' in src
     assert "fmt=fmt" in src
+
+
+def test_a_failed_category_page_keeps_the_rest_and_is_named(monkeypatch):
+    def team(L, df, asof, s, code=None, fmt="pdf", **k):
+        return ("t.pdf", [_page("red")], 0, 1, 1)
+
+    def cats(*a, **k):
+        raise ValueError("no rows")
+    out, failed = _run(monkeypatch, team, cats)
+    assert [_pdf_pages(b) for _, b in out] == [2, 2]   # briefing + team still go
+    assert all("categories page — no rows" in f for f in failed)

@@ -1237,6 +1237,9 @@ def store_packs(L, df, asof, ff=None, pf=None, targets=None, progress=None,
                 folder="store-briefing"):
     """Every open store's morning A4 AND its team detail, bound as ONE PDF.
 
+    ★ 18 Oct 2026: page two is now the same falling / growing BY CATEGORY
+    (`category_sheet_print`); the team detail moves to page three.
+
     ★ Manav, 10 Oct 2026: combine the two into one, page one the morning
     briefing, page two the team detail (his sample: Grand Kamraj Road, merged
     by hand). It REPLACES the two separate tick-boxes; `store_sheets` and
@@ -1264,6 +1267,10 @@ def store_packs(L, df, asof, ff=None, pf=None, targets=None, progress=None,
                                  fmt="pages")[1]
         except Exception as e:                  # one store must not sink the run
             failed.append(f"{s}: morning briefing — {e}")
+        try:                                    # ★ page two since 18 Oct 2026: by category
+            pages += category_sheet_print(L, df, asof, s, code) or []
+        except Exception as e:
+            failed.append(f"{s}: categories page — {e}")
         try:
             made = SP.detailed_sheet(L, df, asof, s, code, fmt="pages")
             if made is None:
@@ -1289,6 +1296,130 @@ def store_packs(L, df, asof, ff=None, pf=None, targets=None, progress=None,
         failed.append(f"{len(unfiled)} store(s) have no region and are at the "
                       f"top of the folder: " + ", ".join(sorted(unfiled)))
     return out, failed
+
+
+# --------------------------------------------------------------------------- #
+#  Page 2: the same falling / growing, by CATEGORY across brands               #
+# --------------------------------------------------------------------------- #
+# Manav, 18 Oct 2026: *"just like we made the first page, where we see what is
+# growing and what is falling, i want to add another page which shows me this
+# category wise, so twamev kurta sets and manyavar kurta sets are one category of
+# kurta sets … in that format, mtd ytd, what is falling, what is growing."*
+#
+# ★ THE SAME NUMBERS AS PAGE ONE, REGROUPED. The rows come from the very call page
+# one makes (`degrowth_drivers`, same store, windows, like-to-like and takeover
+# anchor), taken down to SECTION and with page one's exclusions, then each
+# division + section is given its category by `category_pdf._one` — the map the
+# Category analysis VFL report uses. So the two pages' totals are the same
+# figure, and a category here is the same category on that report.
+
+def _by_category(L, df, asof, kind, store):
+    import category_pdf as C
+    ly, ty = f"{kind} LY", f"{kind} TY"
+    sec, st = L.degrowth_drivers(df, asof=asof, kind=kind, only_declining=False,
+                                 stores_only=[store], products_under="every",
+                                 top_products=10_000, level="section")
+    sec, st = _drop_noise(sec, st)
+    det = sec.assign(_t=list(st))
+    det = det[det["_t"] == "store"].copy()
+    if det.empty:
+        return None
+    div = det["Division"].astype(str).str.strip().str.upper()
+    stem = (det["Section"].astype(str).str.strip().str.upper()
+            .str.replace(C._CODE, "", regex=True))
+    got = [C._one(a, b) for a, b in zip(div, stem)]
+    det["Brand"], det["Division"] = [g[0] for g in got], [g[1] for g in got]
+    a = det.groupby(["Brand", "Division"], sort=False)[[ly, ty]].sum().reset_index()
+    a["Shortfall"] = a[ty] - a[ly]
+    a["Degrowth %"] = [((t - l) / l * 100) if l > 0 else None for l, t in zip(a[ly], a[ty])]
+    return a, ["store"] * len(a)
+
+
+def category_sheet_print(L, df, asof, store, code=None):
+    """One store → [PIL page]: MTD and YTD, what is falling and what is growing,
+    by category (Menswear / Womenswear / Kidswear), in page one's print style."""
+    global MARGIN, CONTENT_W
+    asof = pd.Timestamp(asof)
+    GAP = 22
+    _keep = (MARGIN, CONTENT_W, PP.PAD_Y)
+    MARGIN = PRINT_MARGIN
+    CONTENT_W = PAGE_W - 2 * MARGIN
+    try:
+        half = (CONTENT_W - PRINT_GUT) // 2
+        usable = PAGE_H - 2 * MARGIN
+        built = []
+        for kind in ("MTD", "YTD"):
+            got = _by_category(L, df, asof, kind, store)
+            if got is None:
+                continue
+            (down, dt), (up, ut) = _split_drivers(*got, kind)
+            ren = {"Brand": "Group", "Division": "Category"}
+            built.append(dict(kind=kind, down=(down.rename(columns=ren), dt),
+                              up=(up.rename(columns=ren), ut)))
+        if not built:
+            return None
+        head = _heading(CONTENT_W, f"{store} — categories",
+                        f"as of {asof:%d %b %Y}  ·  every brand's line in one category "
+                        f"(Manyavar and Twamev kurta sets are one Kurta set)  ·  "
+                        f"same months and stores as page one")
+        tcap_h = _caption(half, "MTD — what is falling").height
+        _money_of = lambda k: list(L.drivers_money(k)) + ["Gain"]
+        _pct_all = list(L.DRIVERS_PCT) + ["Growth %"]
+        _sign = ["Shortfall", "Gain"] + _pct_all
+        budget = usable - (head.height + GAP + 2 * (tcap_h + 8) + 24 + GAP)
+
+        def measure(px):
+            ms = {(b["kind"], k): _measure(b[k][0], _money_of(b["kind"]),
+                                           _pct_all, _sign, px)
+                  for b in built for k in ("down", "up")}
+            col = max(sum(ms[(b["kind"], k)]["head_h"]
+                          + ms[(b["kind"], k)]["row_h"] * len(b[k][0])
+                          for k in ("down", "up")) for b in built)
+            return ms, col, max(m["W"] for m in ms.values())
+
+        # the same two passes as page one: largest type that fits, then open the rows
+        PP.PAD_Y = PP._px(PRINT_PADS[-1])
+        lo, hi, font_px, ms = FONT_MIN, FONT_MAX, None, None
+        while lo <= hi:
+            mid = (lo + hi) // 2
+            m_, h, w = measure(mid)
+            if w <= half and h <= budget:
+                font_px, ms, lo = mid, m_, mid + 1
+            else:
+                hi = mid - 1
+        if font_px is None:
+            font_px, ms = FONT_MIN, measure(FONT_MIN)[0]
+        pad_used = PRINT_PADS[-1]
+        for pad in PRINT_PADS:
+            PP.PAD_Y = PP._px(pad)
+            m_, h, w = measure(font_px)
+            if w <= half and h <= budget:
+                pad_used, ms = pad, m_
+                break
+        PP.PAD_Y = PP._px(pad_used)
+
+        sheet = _Sheet(store, asof, "", bounded=True, footer=False)
+        sheet.put(head, gap=GAP)
+        cols = []
+        for b in built:
+            parts = []
+            for key, word in (("down", "is falling"), ("up", "is growing")):
+                frame, rt = b[key]
+                cap = _caption(half, f"{b['kind']} — what {word}")
+                if len(frame) <= 1:
+                    parts.append(_stack([cap, _text_block(
+                        half, [(f"Nothing {word.replace('is ', '')} this "
+                                f"{'month' if b['kind'] == 'MTD' else 'year'}.",
+                                _ft(24)[0], SUB)])], gap=8))
+                    continue
+                m = _widen(ms[(b["kind"], key)], half)
+                parts.append(_stack(
+                    [cap, PP._render_chunk(m, rt, list(range(len(frame))))], gap=8))
+            cols.append(_stack(parts, gap=24))
+        sheet.put(_beside(cols[0], cols[1] if len(cols) > 1 else None, PRINT_GUT), gap=GAP)
+        return sheet.images()
+    finally:
+        MARGIN, CONTENT_W, PP.PAD_Y = _keep
 
 
 # --------------------------------------------------------------------------- #
