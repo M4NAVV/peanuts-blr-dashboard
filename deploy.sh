@@ -37,7 +37,9 @@ elif [ -f "$GOLDEN" ]; then
     OUT=$("$PY" -m pytest tests/test_reconciliation.py -q -rs -p no:cacheprovider 2>&1) && RC=0 || RC=$?
     LAST=$(echo "$OUT" | tail -1)
     if [ "$RC" -ne 0 ] || echo "$LAST" | grep -q "skipped"; then
-        echo "$OUT" | grep -E "^E +AssertionError|^FAILED|SKIPPED" | sed 's/^/    /' | head -20
+        # ★ 18 Oct 2026: `|| true` — with pipefail, a failure whose lines match none of these (a PermissionError
+        # reading the golden file) made grep exit 1 and the script die SILENTLY after "reconciling…".
+        { echo "$OUT" | grep -E "^E +|^FAILED|SKIPPED" || true; } | sed 's/^/    /' | head -20
         echo "    $LAST"
         echo
         echo "✗ NOT DEPLOYED — a signed-off figure no longer ties (or could not be checked)."
