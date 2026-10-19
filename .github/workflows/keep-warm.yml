@@ -211,7 +211,6 @@ jobs:
         env:
           SHEET_CSV_URL:     ${{ secrets.SHEET_CSV_URL }}
           PORTFOLIO_CSV_URL: ${{ secrets.PORTFOLIO_CSV_URL }}
-          NIGHT_FILL_URL:    ${{ secrets.NIGHT_FILL_URL }}
           TARGETS_URL:       ${{ secrets.TARGETS_URL }}
           FESTIVE_DATES_URL: ${{ secrets.FESTIVE_DATES_URL }}
           CITY_GROWTH_URL:   ${{ secrets.CITY_GROWTH_URL }}

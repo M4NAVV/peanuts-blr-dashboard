@@ -60,7 +60,9 @@ import pandas as pd
 DIRECT = {                      # source -> its own secret
     "vfl":        "SHEET_CSV_URL",
     "portfolio":  "PORTFOLIO_CSV_URL",
-    "night_fill": "NIGHT_FILL_URL",
+    # night_fill RETIRED 19 Oct 2026: its tab was deleted 27 Sep (the night SMS reads the bill feed now),
+    # but the Actions secret still pointed at it, so every weekly run read "partial" on a Google 400.
+    # Snapshots up to 12 Oct still hold it, and scripts_restore still restores it from them.
 }
 TABS = {                        # source -> tab name in the portfolio workbook
     "targets":       "Targets New",

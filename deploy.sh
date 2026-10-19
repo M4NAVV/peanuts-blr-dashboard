@@ -9,6 +9,26 @@
 #   Usage:  ./deploy.sh          (pushes main to both, then PROVES both match)
 set -euo pipefail
 BRANCH="${1:-main}"
+
+# ★ 19 Oct 2026: the reviews collector commits `review_snapshots.csv` to origin every day, so a deploy made
+# after it was REJECTED ("fetch first"). Its commits are taken in automatically — but ONLY those: anything
+# else new on origin is somebody's work and stops the deploy for a person to look at.
+git fetch -q origin "$BRANCH"
+NEW=$(git rev-list "$BRANCH..origin/$BRANCH")
+if [ -n "$NEW" ]; then
+    OTHER=$(git diff --name-only "$BRANCH...origin/$BRANCH" | grep -vx 'review_snapshots.csv' || true)
+    if [ -n "$OTHER" ]; then
+        echo "✗ NOT DEPLOYED — origin has commits that are not the daily review counts:"
+        git log --oneline "$BRANCH..origin/$BRANCH" | sed 's/^/    /'
+        echo "  Look at them, then: git pull --rebase origin $BRANCH"
+        exit 1
+    fi
+    echo "→ taking in $(echo "$NEW" | wc -l | tr -d ' ') review-count commit(s) from origin"
+    git rebase -q --autostash "origin/$BRANCH" || {
+        git rebase --abort 2>/dev/null || true
+        echo "✗ NOT DEPLOYED — the rebase onto origin's review counts did not apply cleanly."; exit 1; }
+    echo
+fi
 LOCAL=$(git rev-parse "$BRANCH")
 
 # A warning, not a gate. Only committed work is pushed, so uncommitted files
