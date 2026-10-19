@@ -1247,9 +1247,9 @@ def render_portfolio():
     elif nav == "📈 MW Data":
         st.caption(
             "Monthly contribution by fiscal year (whole portfolio, all brands — "
-            "ignores the sidebar filters). **FY25-26 & FY26-27 live** from the "
-            "sales data (current FY updates daily); **FY24-25 and earlier** from "
-            "the workbook. The current FY shows the East & NE / South split.")
+            "ignores the sidebar filters). Years the **sales data** reaches back "
+            "to are live (the current FY updates daily); **earlier years** come "
+            "from the workbook. The current FY shows the East & NE / South split.")
         st.markdown(PL.mw_data_html(PL.mw_data(pf_all)), unsafe_allow_html=True)
 
     elif nav == "📄 REPORTS PDF":
@@ -1368,9 +1368,9 @@ def render_portfolio():
                        "many stores it covers.")
         if "tva" in chosen:
             st.caption("ℹ️ Target vs achievement: the year-to-date target is the "
-                       "**sum of the months elapsed**, not the full year — South "
-                       "starts at its 19 April takeover, which is where its "
-                       "targets start too.")
+                       "**sum of the months elapsed**, not the full year — a store "
+                       "taken over this year (South: 19 April 2026) starts at "
+                       "its takeover, which is where its targets start too.")
 
         if st.button("🧾 Generate", key="rp_gen", type="primary",
                      use_container_width=True, disabled=not chosen):
@@ -4040,10 +4040,12 @@ if nav == "⚖️ Gender Mix":
 # =========================================================================== #
 if nav == "📊 Executive":
     asof = pd.Timestamp(end_d)
+    _tk = L.takeovers_in_fy(asof.year if asof.month >= 4 else asof.year - 1)
+    _tk_note = (f"a store taken over this year counted from its **takeover date** "
+                f"(South: {min(_tk.values()):%d %b %Y}). " if _tk else "every store from 1 April. ")
     st.caption(
         f"**As of {asof:%d %b %Y}** (follows the date picker). Fiscal year "
-        f"**Apr–Mar**, each store counted from its **takeover date** "
-        f"(South: 19 Apr 2026). All figures **year-on-year** vs the same period "
+        f"**Apr–Mar**, {_tk_note}All figures **year-on-year** vs the same period "
         f"last year. Respects the Store / filters."
     )
     wins = L.standard_windows(df_exec, asof=asof)

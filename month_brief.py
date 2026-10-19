@@ -81,8 +81,10 @@ def _pct(v):
     return "—" if v is None or pd.isna(v) else f"{v:,.2f}"
 
 
-def _gd_from_sheet(disp, types, region, group="2526FY"):
+def _gd_from_sheet(disp, types, region, group=None):
     """The GD sheet's own subtotal for a region — the workbook's basis."""
+    import portfolio_loader as PL
+    group = group or PL._newold_order(pd.Timestamp.today())[0]      # was the literal "2526FY"
     for i, t in enumerate(types):
         r = disp.iloc[i]
         if t == "subtotal" and str(r.get("Region", "")) == region \

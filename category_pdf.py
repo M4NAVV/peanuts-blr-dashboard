@@ -228,10 +228,10 @@ def rolling_frames(df: pd.DataFrame, asof, days: int):
     window reads the same on any day. The house rules still hold: a store's window never starts
     before its takeover (South: 19 Apr), and last year stops where a closed store's this year stops."""
     asof = pd.Timestamp(asof)
-    fy_year = asof.year if asof.month >= 4 else asof.year - 1
-    m, d = L._anchor_md(df)
-    anchor = pd.to_datetime(pd.DataFrame({"year": fy_year, "month": m, "day": d}))
-    anchor.index = df.index
+    # ★ The takeover DATE itself, not its day in this fiscal year (19 Oct 2026): anchored to the
+    # fiscal year, every window stopped at 1 April — on 5 Apr 2027 the "30 days" would have held 5,
+    # for every store. A rolling window runs across the year end; only a real takeover stops it.
+    anchor = pd.to_datetime(df[L.COL_STORE_LABEL].map(L.takeover_map()), errors="coerce")
     roll = asof - pd.Timedelta(days=days - 1)
     start = anchor.where(anchor > roll, roll)
     cur = df[(df["date"] >= start) & (df["date"] <= asof)]
@@ -521,14 +521,17 @@ def build(df_in: pd.DataFrame, asof, w=None, basis_label="", mode="category"):
 
     month_from = max(asof.replace(day=1), pd.Timestamp(asof.year, asof.month, 1))
     fy0 = pd.Timestamp(asof.year if asof.month >= 4 else asof.year - 1, 4, 1)
+    # Named only in the year of the takeover — from FY27-28 South counts from 1 April too.
+    tk = min((d for s, d in L.takeovers_in_fy(fy0.year).items() if region.get(s) == "South"), default=None)
+
     def periods(reg=None):
         if rolling:
             return ("  ·  ".join(f"{n} days {asof - pd.Timedelta(days=n - 1):%d %b} to {asof:%d %b}"
                                  for n in ROLLING)
                     + "  ·  each against the same dates last year"
-                    + ("  ·  South never before its 19 Apr takeover" if reg in (None, "South") else ""))
-        ytd = {None: f"YTD from {fy0:%d %b} (South from its 19 Apr takeover)",
-               "South": "YTD from the 19 Apr takeover"}.get(reg, f"YTD from {fy0:%d %b}")
+                    + (f"  ·  South never before its {tk:%d %b} takeover" if tk and reg in (None, "South") else ""))
+        ytd = ({None: f"YTD from {fy0:%d %b} (South from its {tk:%d %b} takeover)",
+                "South": f"YTD from the {tk:%d %b} takeover"} if tk else {}).get(reg, f"YTD from {fy0:%d %b}")
         return (f"MTD {month_from:%d %b} to {asof:%d %b}  ·  {ytd}"
                 + (f"  ·  {w.festival} {w.tenure}: {w.basis().replace('→', 'to')}" if has_fest else "")
                 + (f"  ·  TTM {asof - pd.DateOffset(years=1) + pd.Timedelta(days=1):%d %b %y} to {asof:%d %b %y}"

@@ -1217,14 +1217,30 @@ def _doo_series(codes, fallback):
         pd.to_datetime(fallback, errors="coerce")).dt.strftime("%d-%m-%Y")
 
 
-def _anchor_md(df: pd.DataFrame, anchor_takeover: bool = True):
-    """Per-row (month, day) of each store's window start. With `anchor_takeover`
-    (default) that's the store's takeover date; otherwise it's a plain fiscal-year
-    start (1 Apr) for every store — which is how the monthly source sheet counts."""
+def takeovers_in_fy(fy_year: int) -> dict:
+    """store label -> takeover date, for the stores taken over INSIDE fiscal year
+    `fy_year` (after its 1 April). Only these start their year late.
+
+    ★ 1 APRIL 2027 (found 19 Oct 2026). The anchor used to be the takeover's
+    month and day in EVERY year, so from FY27-28 South's year would have begun on
+    19 April 2027 — 18 days of our own trading dropped every year, and South
+    blank in every YTD and rolling report from 1 to 18 April. The takeover is a
+    one-off: the year after it, the store counts from 1 April like any other —
+    the rule graph_analysis and snapshots already used (max(FY start, takeover))."""
+    fy0, fy1 = pd.Timestamp(fy_year, 4, 1), pd.Timestamp(fy_year + 1, 3, 31)
+    return {s: pd.Timestamp(d) for s, d in takeover_map().items()
+            if pd.notna(d) and fy0 < pd.Timestamp(d) <= fy1}
+
+
+def _anchor_md(df: pd.DataFrame, fy_year: int, anchor_takeover: bool = True):
+    """Per-row (month, day) of each store's window start in fiscal year `fy_year`.
+    With `anchor_takeover` (default) that's the takeover date for a store taken
+    over during that year, else 1 Apr; without it, 1 Apr for every store — which
+    is how the monthly source sheet counts."""
     if not anchor_takeover:
         return (pd.Series(4, index=df.index), pd.Series(1, index=df.index))
-    tk = takeover_map()
-    md = {s: ((d.month, d.day) if pd.notna(d) else (4, 1)) for s, d in tk.items()}
+    tk = takeovers_in_fy(fy_year)
+    md = {s: (d.month, d.day) for s, d in tk.items()}
     m = df[COL_STORE_LABEL].map(lambda s: md.get(s, (4, 1))[0]).astype(int)
     d = df[COL_STORE_LABEL].map(lambda s: md.get(s, (4, 1))[1]).astype(int)
     return m, d
@@ -1241,7 +1257,7 @@ def report_frames(df: pd.DataFrame, kind: str, asof=None, anchor_takeover: bool 
     `asof` (the to-date reference) defaults to latest data."""
     asof = as_of(df) if asof is None else pd.Timestamp(asof)
     fy_year = asof.year if asof.month >= 4 else asof.year - 1
-    m, d = _anchor_md(df, anchor_takeover=anchor_takeover)
+    m, d = _anchor_md(df, fy_year, anchor_takeover=anchor_takeover)
 
     if kind == "YTD":
         cur_start = pd.to_datetime(pd.DataFrame({"year": fy_year, "month": m, "day": d}))

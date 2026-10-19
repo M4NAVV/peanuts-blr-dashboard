@@ -327,9 +327,12 @@ def render_store_days(rows, store, asof) -> "Image":
 def _south_note(y, asof) -> str:
     """What the 1 April start folds in for South, in its own words."""
     import loader as L
-    tk = pd.Timestamp(asof.year if asof.month >= 4 else asof.year - 1, 4, 19)
     stores = mohey_stores(asof)
     south = [k for k, (c, r) in stores.items() if r == "South"]
+    # The takeover's own year only — after it, South's 1 April is ours (was a literal 19 Apr every year).
+    tk = min((d for s, d in L.takeovers_in_fy(_fy_start(asof).year).items() if s in south), default=None)
+    if tk is None:
+        return ""
     pre = y[y[L.COL_STORE_LABEL].astype(str).isin(south) & (y["date"] < tk)]
     if pre.empty:
         return ""

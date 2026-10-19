@@ -351,7 +351,7 @@ def store_page(pdf, m, region, city, lane_region=None, note=None):
     fests = lane_fests(lane_region or REGION_OF.get(region, region))
     lane = fig.add_axes([.055, .755, .89, .08])
     lane.set_xlim(m["start"], FY1); lane.set_ylim(-1.3, 2.3); lane.axis("off")
-    for yv, lab, col in ((1.0, "2025", LY_C), (0, "2026", TY_C)):
+    for yv, lab, col in ((1.0, str(FY0.year - 1), LY_C), (0, str(FY0.year), TY_C)):
         lane.text(m["start"] - pd.Timedelta(days=3), yv, lab, fontsize=8, color=col, ha="right", va="center")
         lane.plot([m["start"], FY1], [yv, yv], color=RULE, lw=.6, zorder=0)
     last = {1.0: [], 0: []}                                  # stagger labels that would touch
