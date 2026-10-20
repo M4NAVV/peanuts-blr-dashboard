@@ -103,8 +103,11 @@ def _parse_cell(cell):
 
 
 def _tenures(row) -> list[int]:
+    # ★ EVERY "Tenure…" COLUMN, NOT JUST TWO (Manav, 20 Oct 2026: an 18-day
+    # Diwali tracker, 22 Oct–8 Nov against 3–20 Oct 2025, beside the 45 and the
+    # 30). A third run-up is a third column on the tab, not a code change.
     out = []
-    for key in ("Tenure1", "Tenure2"):
+    for key in [k for k in row.index if str(k).strip().lower().startswith("tenure")]:
         v = row.get(key)
         if isinstance(v, str):
             m = re.search(r"\d+", v)

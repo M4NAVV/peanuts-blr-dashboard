@@ -68,3 +68,22 @@ def test_re_dating_does_not_change_the_festival():
     a, b = _today_window(), F.at(_today_window(), "2026-09-20")
     for k in ("festival", "tenure", "ty_start", "ty_end", "ly_start", "ly_end"):
         assert getattr(a, k) == getattr(b, k)
+
+
+def test_a_third_tenure_column_is_a_third_window(tmp_path):
+    """Manav, 20 Oct 2026: Diwali 18 days (22 Oct–8 Nov 2026 against
+    3–20 Oct 2025) beside the 45 and the 30 — added on the tab as Tenure3."""
+    csv = tmp_path / "fest.csv"
+    pd.DataFrame({
+        "FY 2026-2027": ["Diwali (Deepavali): Sunday, November 8, 2026"],
+        "x": [None],
+        "FY 2025-2026": ["Diwali (Deepavali): Monday, October 20, 2025"],
+        "y": [None],
+        "Tenure1": ["45 days"], "Tenure2": ["30 Days"], "Tenure3": ["18 days"],
+    }).to_csv(csv, index=False)
+    ws = F.festive_windows(asof="2026-10-23", url=str(csv))
+    assert sorted(w.tenure for w in ws) == [18, 30, 45]
+    w = next(w for w in ws if w.tenure == 18)
+    assert (w.ty_start, w.ty_end) == (pd.Timestamp("2026-10-22"), pd.Timestamp("2026-11-08"))
+    assert (w.ly_start, w.ly_end) == (pd.Timestamp("2025-10-03"), pd.Timestamp("2025-10-20"))
+    assert w.elapsed == 2 and w.ly_cut == pd.Timestamp("2025-10-04")
