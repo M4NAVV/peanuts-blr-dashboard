@@ -87,3 +87,30 @@ def test_a_third_tenure_column_is_a_third_window(tmp_path):
     assert (w.ty_start, w.ty_end) == (pd.Timestamp("2026-10-22"), pd.Timestamp("2026-11-08"))
     assert (w.ly_start, w.ly_end) == (pd.Timestamp("2025-10-03"), pd.Timestamp("2025-10-20"))
     assert w.elapsed == 2 and w.ly_cut == pd.Timestamp("2025-10-04")
+
+
+def test_a_vfl_target_rides_on_its_own_tenure(tmp_path):
+    """Manav, 21 Oct 2026: Diwali 18 has a 10 Cr target for the VFL stores. It is typed on the tab beside
+    Tenure3 and belongs to the 18-day window only."""
+    csv = tmp_path / "fest.csv"
+    pd.DataFrame({
+        "FY 2026-2027": ["Diwali (Deepavali): Sunday, November 8, 2026"], "x": [None],
+        "FY 2025-2026": ["Diwali (Deepavali): Monday, October 20, 2025"], "y": [None],
+        "Tenure1": ["45 days"], "Tenure2": ["30 Days"], "Tenure3": ["18 days"], "VFL Target3": ["10 Cr"],
+    }).to_csv(csv, index=False)
+    got = {w.tenure: w.vfl_target for w in F.festive_windows(asof="2026-10-23", url=str(csv))}
+    assert got == {45: None, 30: None, 18: 1e8}
+
+
+@pytest.mark.parametrize("raw,rupees", [("10 Cr", 1e8), ("10cr", 1e8), ("9.5 crore", 9.5e7),
+                                        ("95 L", 9.5e6), ("1,00,00,000", 1e7), ("ten", None), ("", None)])
+def test_target_amounts_read_the_way_they_are_typed(raw, rupees):
+    assert F.parse_money(raw) == rupees
+
+
+def test_the_target_path_ends_on_the_target_and_follows_last_years_shape():
+    w = F.Window(festival="Diwali", tenure=4, ty_start=pd.Timestamp("2026-11-05"), ty_end=pd.Timestamp("2026-11-08"),
+                 ly_start=pd.Timestamp("2025-10-17"), ly_end=pd.Timestamp("2025-10-20"), elapsed=0,
+                 asof=pd.Timestamp("2026-11-01"))
+    ly = pd.Series([1.0, 1.0, 2.0, 6.0], index=pd.date_range("2025-10-17", periods=4))
+    assert FADM.target_path(w, ly, 100.0) == pytest.approx([10, 20, 40, 100])

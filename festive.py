@@ -116,6 +116,38 @@ def _tenures(row) -> list[int]:
     return sorted(set(out), reverse=True)
 
 
+def parse_money(v):
+    """'10 Cr', '10cr', '9.5 crore', '95 L', '95 lakh', '1,00,00,000' -> rupees, or None."""
+    if not isinstance(v, str) or not v.strip():
+        return None
+    t = v.strip().lower().replace(",", "").replace("rs", "").replace("₹", "").strip()
+    m = re.match(r"^([\d.]+)\s*(cr|crore|crores|l|lakh|lakhs|lac|lacs)?\.?$", t)
+    if not m:
+        return None
+    n = float(m.group(1))
+    unit = m.group(2) or ""
+    return n * (1e7 if unit.startswith("cr") else 1e5 if unit.startswith("l") else 1)
+
+
+def _targets(row) -> dict[int, float]:
+    """tenure -> VFL target, from a `VFL Target<k>` column beside `Tenure<k>`.
+
+    ★ Manav, 21 Oct 2026: "the target for these 18 days is 10cr, so can we plot that somewhere in the sheet" — on
+    the VFL Diwali 18 pack. A target belongs to one tenure of one festival, so it sits on the festival's row in the
+    column paired with that tenure's, and the next festival's target is typed in, not coded."""
+    out = {}
+    for key in row.index:
+        m = re.match(r"(?i)^\s*vfl\s*target\s*(\d+)\s*$", str(key))
+        if not m:
+            continue
+        ten = row.get(f"Tenure{m.group(1)}")
+        tm = re.search(r"\d+", ten) if isinstance(ten, str) else None
+        amt = parse_money(row.get(key))
+        if tm and amt:
+            out[int(tm.group())] = amt
+    return out
+
+
 @dataclass
 class Window:
     festival: str
@@ -126,6 +158,7 @@ class Window:
     ly_end: pd.Timestamp          # last year's FULL window
     elapsed: int                  # days of this year's window already traded
     asof: pd.Timestamp
+    vfl_target: float | None = None   # rupees, all VFL stores, the whole tenure (21 Oct 2026)
 
     @property
     def ly_cut(self) -> pd.Timestamp:
@@ -201,6 +234,7 @@ def festive_windows(asof=None, url=None) -> list[Window]:
         if ty is None or ly is None:
             refused.append(f"{short}: {why_ty or why_ly}")
             continue
+        tgt = _targets(row)
         for n in tens:
             ty_start = ty - pd.Timedelta(days=n - 1)
             elapsed = 0
@@ -208,7 +242,7 @@ def festive_windows(asof=None, url=None) -> list[Window]:
                 elapsed = int((min(asof, ty) - ty_start).days) + 1
             out.append(Window(festival=short, tenure=n, ty_start=ty_start, ty_end=ty,
                               ly_start=ly - pd.Timedelta(days=n - 1), ly_end=ly,
-                              elapsed=elapsed, asof=asof))
+                              elapsed=elapsed, asof=asof, vfl_target=tgt.get(n)))
 
     # ★★ A WINDOW FROM A FINISHED YEAR IS NOT A WINDOW (19 Aug 2026).
     # The tab holds one season's dates. Read on 19 Aug 2027 it returned the 2026

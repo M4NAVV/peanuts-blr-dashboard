@@ -179,6 +179,62 @@ def cumulative_chart(width, height, w, ty_days, ly_days):
     return img
 
 
+def target_path(w, ly_days, target):
+    """The target as a running total, paced like last year's days (a straight line if last year is empty)."""
+    n = int(w.tenure)
+    ly = [float(ly_days.get(w.ly_start + pd.Timedelta(days=i), 0.0)) for i in range(n)]
+    tot = sum(ly)
+    share = [v / tot for v in ly] if tot else [1 / n] * n
+    out, acc = [], 0.0
+    for v in share:
+        acc += v * target
+        out.append(acc)
+    return out
+
+
+def target_chart(width, height, w, ty_days, ly_days, target):
+    """All stores' running total against the target, the target paced like last year's run-up."""
+    img = Image.new("RGB", (width, height), (255, 255, 255))
+    d = ImageDraw.Draw(img)
+    lab, labb = PP._ft(24)
+    tick, _ = PP._ft(19)
+    n = int(w.tenure)
+    elapsed = int(w.elapsed)
+    plan = target_path(w, ly_days, target)
+    ty = [float(ty_days.get(w.ty_start + pd.Timedelta(days=i), 0.0)) for i in range(n)]
+    run, acc = [], 0.0
+    for i in range(elapsed):
+        acc += ty[i]
+        run.append(acc)
+    peak = max(max(plan), max(run or [0]), 1.0) * 1.04
+    pad_l, pad_r, pad_t, pad_b = PP._px(112), PP._px(20), PP._px(16), PP._px(52)
+    x0, x1, y0, y1 = pad_l, width - pad_r, pad_t, height - pad_b
+    X = lambda i: x0 + (x1 - x0) * (i / max(n - 1, 1))
+    Y = lambda v: y1 - (y1 - y0) * (v / peak)
+    for k in range(5):
+        v = peak * k / 4
+        d.line([(x0, Y(v)), (x1, Y(v))], fill=RULE, width=1)
+        _text(d, (0, Y(v) - _hh(tick) / 2), money(v, 1), tick, (140, 140, 140), right=x0 - PP._px(10))
+    # the target: an amber line to the full figure on the last day, with the figure marked there
+    d.line([(X(i), Y(v)) for i, v in enumerate(plan)], fill=(232, 163, 61), width=PP._px(4))
+    r = PP._px(6)
+    d.ellipse([X(n - 1) - r, Y(target) - r, X(n - 1) + r, Y(target) + r], fill=(232, 163, 61))
+    if len(run) > 1:
+        d.line([(X(i), Y(v)) for i, v in enumerate(run)], fill=PP.GRID, width=PP._px(5))
+    elif run:
+        r = PP._px(6)
+        d.ellipse([X(0) - r, Y(run[0]) - r, X(0) + r, Y(run[0]) + r], fill=PP.GRID)
+    for i in range(0, n, 7):
+        dt = w.ty_start + pd.Timedelta(days=i)
+        d.line([(X(i), y1), (X(i), y1 + PP._px(6))], fill=RULE, width=1)
+        _text(d, (X(i) - PP._px(26), y1 + PP._px(10)), f"{dt:%d %b}", tick, (140, 140, 140))
+    d.line([(x0, y1), (x1, y1)], fill=PP.GRID, width=2)
+    _text(d, (x0 + PP._px(8), y0), f"target  Rs {money(target)}", labb, (196, 128, 30))
+    if run:
+        _text(d, (x0 + PP._px(8), y0 + _hh(labb)), "sold so far, all stores", lab, PP.INK)
+    return img
+
+
 def daily_chart(width, height, w, ty_days, ly_days):
     """Each day of the run-up, both years, side by side."""
     img = Image.new("RGB", (width, height), (255, 255, 255))
@@ -893,6 +949,43 @@ def build(pf, w, basis_label="", vfl=False):
             f"{w.ty_start:%d %b} to {w.ty_end:%d %b %Y}  against  "
             f"{w.ly_start:%d %b} to {w.ly_end:%d %b %Y}  ·  "
             f"{basis_label or f'live to {asof:%d %b %Y}'}"), gap=20)
+        # ★ THE TARGET (Manav, 21 Oct 2026: "the target for these 18 days is 10cr, so can we plot that somewhere in
+        # the sheet"). It is a figure for ALL the VFL stores, so it is measured against all of them — `sales`, the
+        # raw feed's daily total — and never against the comparable set below, which is a different estate. It
+        # leads the page because it is the number the season is run to; it comes from the tab's `VFL Target<k>`.
+        tgt = getattr(w, "vfl_target", None) if vfl else None
+        if tgt:
+            ty_all = sales[(sales.index >= w.ty_start) & (sales.index <= w.ty_cut)]
+            ly_all = sales[(sales.index >= w.ly_start) & (sales.index <= w.ly_end)]
+            sold = float(ty_all.sum()) if started else 0.0
+            left_d = max(int(w.tenure) - int(w.elapsed), 0)
+            plan = target_path(w, ly_all, tgt)
+            plan_now = plan[int(w.elapsed) - 1] if started else 0.0
+            gap_now = sold - plan_now
+            n_st = int(pf["code"].nunique())
+            one.put(A4._caption(W, f"Target  ·  Rs {money(tgt)} in {w.tenure} days",
+                                f"all {n_st} VFL stores, new ones included  ·  the amber line is the target "
+                                f"paced like last year's {w.tenure} days, so a slow first week is expected"), gap=10)
+            one.put(SN._cards_image([
+                (f"Target · {w.tenure} days", "Rs " + money(tgt)),
+                ("Sold so far · all stores",
+                 (f"Rs {money(sold)}  ·  {sold / tgt * 100:,.0f}%" if started else "not open yet")),
+                ("Ahead / behind the plan",
+                 (("+" if gap_now >= 0 else "−") + f"Rs {money(abs(gap_now))}") if started else "—"),
+                (f"Needed a day · {left_d} days left" if started else "Needed a day",
+                 ("Rs " + money((tgt - sold) / left_d) if left_d and sold < tgt
+                  else ("target reached" if sold >= tgt else "—"))),
+            ], W, label_px=25, value_px=42), gap=12)
+            one.put(target_chart(W, PP._px(430), w, ty_all, ly_all, tgt), gap=12)
+            ly_tot = float(ly_all.sum())
+            one.put(A4._text_block(W, [(
+                (f"Last year these {w.tenure} days took Rs {money(ly_tot)} across all stores, so the target asks for "
+                 f"{(tgt / ly_tot - 1) * 100:+,.0f}% on last year. " if ly_tot else "")
+                + (f"By today the plan was Rs {money(plan_now)}; all stores have sold Rs {money(sold)}, running at "
+                   f"Rs {money(sold / max(int(w.elapsed), 1))} a day." if started else
+                   f"The run-up has not opened: that is Rs {money(tgt / int(w.tenure))} a day on average."),
+                A4._ft(23)[0], A4.SUB)]), gap=22)
+
         g = fig["growth"]
         # ★★ THE HEADLINE IS THE LIKE-FOR-LIKE SET, and it says so. Comparing
         # this year's whole estate against last year's would put eight South
