@@ -36,6 +36,15 @@ so the old cut is one column list away, but nothing prints them. The
 Fri-Sun ÷ Mon-Thu ratio is likewise computed but not printed (his call, same
 day: "not needed").
 
+★ THE LONG VIEW IS THE LAST 12 MONTHS, NOT THE YEAR TO DATE (Manav, 22 Oct).
+The Fri-Sun share swings with the season — East & NE ran 39% in Oct 2025
+(Puja and Diwali on weekdays) and 59% in Aug 2026 — and a year to date holds
+whichever months the year has reached: in October it is summer weddings and
+Puja, with no Diwali, winter weddings or Bihu, so it read 54.5% Fri-Sun where
+the full year read 52.1%. 52 full weeks hold every season once, whenever the
+report is opened, so it is the store's normal week and the fair baseline for
+the 4-week page. "FY to date" stays on the tab only.
+
 ★ SOUTH'S YEAR STARTS ON 19 APRIL 2026, its takeover. The loader already drops
 everything before a store's takeover, and each store counts days from its own
 first sale, so South's year to date is 19 April onwards without any rule here.
@@ -57,7 +66,7 @@ import portfolio_loader as PL
 EVEN_WEEKEND = 2 / 7 * 100           # the share an evenly-spread week would give
 EVEN_FRI_SUN = 3 / 7 * 100
 
-PERIODS = ["Last 4 weeks", "Last 13 weeks", "FY to date"]
+PERIODS = ["Last 4 weeks", "Last 13 weeks", "Last 12 months", "FY to date"]
 
 
 def last_sunday(asof) -> pd.Timestamp:
@@ -71,7 +80,8 @@ def window(period: str, asof) -> tuple[pd.Timestamp, pd.Timestamp]:
     asof = pd.Timestamp(asof).normalize()
     if period == "FY to date":
         return PL._fy_start(asof), asof
-    weeks = {"Last 4 weeks": 4, "Last 13 weeks": 13}[period]
+    weeks = {"Last 4 weeks": 4, "Last 13 weeks": 13,
+             "Last 12 months": 52}[period]
     end = last_sunday(asof)
     return end - pd.Timedelta(days=7 * weeks - 1), end
 
@@ -233,13 +243,13 @@ def render(rows, title):
 
 
 def build_pdf(pf: pd.DataFrame, asof, basis_label="") -> tuple[str, bytes]:
-    """Two pages: the last four full weeks, then the financial year to date."""
+    """Two pages: the last four full weeks, then the last 52 full weeks."""
     import report_td as RTD
     from imaging import _LOCK
     asof = pd.Timestamp(asof).normalize()
     contents = []
     with _LOCK, RTD.desk():
-        for period in ("Last 4 weeks", "FY to date"):
+        for period in ("Last 4 weeks", "Last 12 months"):
             start, end = window(period, asof)
             rows = report(pf, start, end)
             if not rows:

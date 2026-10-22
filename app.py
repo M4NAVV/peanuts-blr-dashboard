@@ -1048,7 +1048,7 @@ def render_portfolio():
             _late = WK.late_starts(rows, wk_start)
             if _late:
                 st.caption(f"**{_late}** — counted from its takeover, "
-                           f"not from {wk_start:%d %b}.")
+                           f"not from {wk_start:%d %b %Y}.")
             k1, k2, k3 = st.columns(3)
             k1.metric("Mon–Thu share", f"{g['mt_pct']:.1f}%",
                       help=_cr(g["mt"]))
@@ -1400,7 +1400,7 @@ def render_portfolio():
                 "quarter / year", key="rp_rv")
             picked["weekend"] = st.checkbox(
                 "Weekday vs weekend  ·  every store, Mon–Thu against Fri–Sun, "
-                "last 4 weeks and year to date", key="rp_wk")
+                "last 4 weeks and last 12 months", key="rp_wk")
         with c2:
             st.markdown("**Festive run-ups**")
             # ★ Re-dated to the picked day, so a back-dated pack stops there.
