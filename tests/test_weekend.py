@@ -169,3 +169,15 @@ def test_snap_ranks_by_mon_thu_and_shows_only_the_split(monkeypatch):
     assert snap[-1][1]["total"] == sum(r["total"] for r in stores)
     assert [h for h, _ in W.SNAP_COLS] == ["CITY", "STORE", "BRAND",
                                            "MON–THU %", "FRI–SUN %"]
+
+
+def test_vfl_snap_keeps_only_vfl_stores(monkeypatch):
+    """Manav, 22 Oct: East twice — every store, and VFL on its own."""
+    monkeypatch.setattr(W.PL, "closed_map", lambda: {})
+    df = _frame(_week(1, "SILIGURI", "East & NE", "2026-10-12", 100, 300)
+                + _week(2, "SILIGURI", "East & NE", "2026-10-12", 50, 60))
+    df["is_vfl"] = df["code"] == 1
+    name, png = W.snap_png(df, "East & NE", "2026-10-20", vfl=True)
+    assert name.startswith("EAST & NE VFL ") and png[:4] == b"\x89PNG"
+    name, _ = W.snap_png(df, "East & NE", "2026-10-20")
+    assert name.startswith("EAST & NE MON-THU")

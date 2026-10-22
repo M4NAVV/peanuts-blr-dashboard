@@ -309,18 +309,26 @@ def snap_rows(pf: pd.DataFrame, region: str, start, end, asof=None):
     return stores + [x for x in rows if x[0] == "subtotal"]
 
 
-def snap_png(pf: pd.DataFrame, region: str, asof) -> tuple[str, bytes]:
-    """One region, the last 12 months, as a PNG for the managers' group."""
+def snap_png(pf: pd.DataFrame, region: str, asof,
+             vfl: bool = False) -> tuple[str, bytes]:
+    """One region, the last 12 months, as a PNG for the managers' group.
+
+    `vfl=True` keeps the Manyavar / Mohey stores only (Manav, 22 Oct: *"for
+    east, make 2. give me VFL separately, and one like u did right now"*). The
+    total is then the VFL total, and is labelled so."""
     import io
     import report_td as RTD
     import portfolio_pdf as PP
     from imaging import _LOCK
     asof = pd.Timestamp(asof).normalize()
     start, end = window("Last 12 months", asof)
-    rows = snap_rows(pf, region, start, end, asof=asof)
+    tag = region.upper() + (" VFL" if vfl else "")
+    rows = snap_rows(pf[pf["is_vfl"]] if vfl else pf, region, start, end,
+                     asof=asof)
     if not rows:
-        raise ValueError(f"no {region} store sold anything in the window")
-    tag = region.upper()
+        raise ValueError(f"no {tag} store sold anything in the window")
+    rows = [(k, {**r, "name": f"{tag} TOTAL"} if k == "subtotal" else r)
+            for k, r in rows]
     header = [h for h, _ in SNAP_COLS]
     aligns = [a for _, a in SNAP_COLS]
     grid = []
@@ -350,7 +358,8 @@ def snap_png(pf: pd.DataFrame, region: str, asof) -> tuple[str, bytes]:
             title=f"{tag}  ·  LAST 12 MONTHS  ·  "
                   f"{start:%d %b %Y} – {end:%d %b %Y}")
         page_w = img.width + 2 * (PP.MARGIN + PP.FRAME + PP.PAD)
-        page = PP._compose(img, f"{region} · Mon–Thu vs Fri–Sun", 
+        page = PP._compose(img, f"{region}{' VFL' if vfl else ''} · "
+                                f"Mon–Thu vs Fri–Sun",
                            f"Last 12 months to {end:%d %b %Y}", 1, 1, page_w,
                            footer_right="Peanuts Retail")
     buf = io.BytesIO()
