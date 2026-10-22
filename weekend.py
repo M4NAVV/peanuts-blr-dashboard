@@ -283,13 +283,14 @@ def build_pdf(pf: pd.DataFrame, asof, basis_label="") -> tuple[str, bytes]:
 SNAP_COLS = [
     ("CITY", "l"), ("STORE", "l"), ("BRAND", "l"),
     ("MON–THU %", "r"), ("FRI–SUN %", "r"),
-    ("SHARE OF {R} MON–THU %", "r"), ("SHARE OF {R} FRI–SUN %", "r"),
 ]
 
 
 def snap_rows(pf: pd.DataFrame, region: str, start, end, asof=None):
-    """The region's rows from `report`, stores ordered by Fri-Sun % within
-    their city, with shares re-based on the region.
+    """Every store in the region RANKED by Mon-Thu %, highest first, then the
+    region total (Manav, 22 Oct: *"remove the share of columns, and sort it
+    from Mon-Thu % highest to lowest"*). A ranking has no place for city totals
+    between its rows, so they are left out; the city is a column.
 
     Stores shut by `asof` (the master's closure date) are left out before
     anything is summed: a managers' group has no use for Nh31A or Galaxy Mall,
@@ -300,32 +301,12 @@ def snap_rows(pf: pd.DataFrame, region: str, start, end, asof=None):
         shut = {c for c, when in PL.closed_map().items()
                 if pd.Timestamp(when) <= pd.Timestamp(asof)}
         d = d[~d["code"].isin(shut)]
-    rows = [(k, r) for k, r in report(d, start, end) if k != "grand"]
+    rows = report(d, start, end)
     if not rows:
         return []
-    reg = rows[-1][1]
-
-    def rebased(r):
-        return {**r,
-                "mt_share": r["mt"] / reg["mt"] * 100 if reg["mt"] else None,
-                "fs_share": r["fs"] / reg["fs"] * 100 if reg["fs"] else None}
-
-    # City by city in `report`'s order; one-store cities have no total line,
-    # so the grouping is on the city itself, never on the total that ends it.
-    cities, stores, totals = [], {}, {}
-    for k, r in rows:
-        if k == "store":
-            if r["city"] not in stores:
-                cities.append(r["city"])
-            stores.setdefault(r["city"], []).append((k, rebased(r)))
-        elif k == "citytotal":
-            totals[r["city"]] = (k, rebased(r))
-    out = []
-    for c in cities:
-        out += sorted(stores[c], key=lambda x: -(x[1]["fs_pct"] or 0))
-        if c in totals:
-            out.append(totals[c])
-    return out + [("subtotal", rebased(reg))]
+    stores = sorted((x for x in rows if x[0] == "store"),
+                    key=lambda x: -(x[1]["mt_pct"] or 0))
+    return stores + [x for x in rows if x[0] == "subtotal"]
 
 
 def snap_png(pf: pd.DataFrame, region: str, asof) -> tuple[str, bytes]:
@@ -340,7 +321,7 @@ def snap_png(pf: pd.DataFrame, region: str, asof) -> tuple[str, bytes]:
     if not rows:
         raise ValueError(f"no {region} store sold anything in the window")
     tag = region.upper()
-    header = [h.replace("{R}", tag) for h, _ in SNAP_COLS]
+    header = [h for h, _ in SNAP_COLS]
     aligns = [a for _, a in SNAP_COLS]
     grid = []
     for kind, r in rows:
@@ -350,17 +331,15 @@ def snap_png(pf: pd.DataFrame, region: str, asof) -> tuple[str, bytes]:
             head = [r["city"], (f"{r['name']}  ·  {r['stores']} stores", 2)]
         else:
             head = [(f"{r['name']}  ·  {r['stores']} stores", 3)]
-        vals = head + [_pct(r["mt_pct"]), _pct(r["fs_pct"]),
-                       _pct(r["mt_share"]), _pct(r["fs_share"])]
+        vals = head + [_pct(r["mt_pct"]), _pct(r["fs_pct"])]
         fill = {"citytotal": RTD.LOC_BG, "subtotal": RTD.TOTAL_BG}.get(kind)
         grid.append((RTD._cells(vals, aligns, fill, kind != "store"),
                      RTD.ROW_H))
     late = late_starts(rows, start)
     note = (f"Mon–Thu is 4 days of the week and Fri–Sun is 3, so an even week "
             f"would put {EVEN_FRI_SUN:.1f}% on Fri–Sun — above that, the store "
-            f"leans on its Friday-to-Sunday. Share = the store's part of all "
-            f"{region} sales on those days. Stores within a city are ordered by "
-            f"Fri–Sun %. Stores that have shut are not shown.")
+            f"leans on its Friday-to-Sunday. Stores are ranked by Mon–Thu %, "
+            f"highest first. Stores that have shut are not shown.")
     if late:
         note += f" {late}, its takeover, so less than 12 months."
     grid.append(([RTD.cell(note, align="l", wrap=True, span=len(SNAP_COLS))],
@@ -368,7 +347,7 @@ def snap_png(pf: pd.DataFrame, region: str, asof) -> tuple[str, bytes]:
     with _LOCK:
         img = RTD._draw_grid(
             header, grid, landscape=False,
-            title=f"{tag}  ·  HOW THE WEEK SELLS  ·  LAST 12 MONTHS  ·  "
+            title=f"{tag}  ·  LAST 12 MONTHS  ·  "
                   f"{start:%d %b %Y} – {end:%d %b %Y}")
         page_w = img.width + 2 * (PP.MARGIN + PP.FRAME + PP.PAD)
         page = PP._compose(img, f"{region} · Mon–Thu vs Fri–Sun", 

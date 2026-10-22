@@ -151,10 +151,9 @@ def test_a_region_taken_over_midyear_is_named_with_its_start():
     assert W.late_starts(rep, "2026-04-19") == ""
 
 
-def test_snap_keeps_each_city_together_and_shows_no_rupees(monkeypatch):
-    """Manav, 22 Oct: a snap per region for the managers' groups —
-    percentages only. One-store cities have no total line and must not be
-    sorted into each other."""
+def test_snap_ranks_by_mon_thu_and_shows_only_the_split(monkeypatch):
+    """Manav, 22 Oct: a snap per region for the managers' groups — Mon–Thu %
+    and Fri–Sun % only, ranked by Mon–Thu % highest first; shut stores out."""
     monkeypatch.setattr(W.PL, "closed_map", lambda: {9: pd.Timestamp("2026-01-01")})
     rows = (_week(1, "GANGTOK", "East & NE", "2026-10-12", 100, 100)
             + _week(2, "SILCHAR", "East & NE", "2026-10-12", 100, 900)
@@ -162,11 +161,11 @@ def test_snap_keeps_each_city_together_and_shows_no_rupees(monkeypatch):
             + _week(9, "GANGTOK", "East & NE", "2026-10-12", 100, 100))
     snap = W.snap_rows(_frame(rows), "East & NE", "2026-10-12", "2026-10-18",
                        asof="2026-10-18")
-    cities = [r["city"] for k, r in snap if k == "store"]
-    assert cities.index("SILCHAR") not in (1,)          # Gangtok's two together
-    assert [r["code"] for k, r in snap if k == "store" and r["city"] == "GANGTOK"] == [3, 1]
-    assert 9 not in [r.get("code") for k, r in snap]    # shut, so not shown
-    assert sum(r["fs_share"] for k, r in snap if k == "store") == pytest.approx(100)
-    assert snap[-1][0] == "subtotal" and snap[-1][1]["fs_share"] == pytest.approx(100)
-    heads = " ".join(h for h, _ in W.SNAP_COLS)
-    assert "SALE" not in heads and "AVG" not in heads
+    stores = [r for k, r in snap if k == "store"]
+    assert [r["code"] for r in stores] == [1, 3, 2]     # Mon–Thu %, high → low
+    assert 9 not in [r["code"] for r in stores]         # shut, so not shown
+    assert [k for k, _ in snap].count("citytotal") == 0
+    assert snap[-1][0] == "subtotal"
+    assert snap[-1][1]["total"] == sum(r["total"] for r in stores)
+    assert [h for h, _ in W.SNAP_COLS] == ["CITY", "STORE", "BRAND",
+                                           "MON–THU %", "FRI–SUN %"]
