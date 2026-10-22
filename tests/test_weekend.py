@@ -182,3 +182,13 @@ def test_vfl_snap_keeps_only_vfl_stores(monkeypatch):
     assert name.startswith("EAST & NE VFL ") and png[:4] == b"\x89PNG"
     name, _ = W.snap_png(df, "East & NE", "2026-10-20")
     assert name.startswith("EAST & NE MON-THU")
+
+
+def test_snaps_are_the_three_images_and_skip_an_empty_region(monkeypatch):
+    monkeypatch.setattr(W.PL, "closed_map", lambda: {})
+    df = _frame(_week(1, "SILIGURI", "East & NE", "2026-10-12", 100, 300)
+                + _week(2, "SILIGURI", "East & NE", "2026-10-12", 50, 60))
+    df["is_vfl"] = df["code"] == 1
+    out = W.snaps(df, "2026-10-20")              # no South rows at all
+    assert [label for label, _, _ in out] == ["East & NE", "East & NE VFL"]
+    assert all(png[:4] == b"\x89PNG" for _, _, png in out)

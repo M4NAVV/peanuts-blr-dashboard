@@ -375,3 +375,20 @@ def snap_png(pf: pd.DataFrame, region: str, asof,
     buf = io.BytesIO()
     page.save(buf, format="PNG", optimize=True)
     return (f"{tag} MON-THU vs FRI-SUN {end:%d-%m-%Y}.png", buf.getvalue())
+
+
+# The images the managers' groups get, in the order the tab offers them
+# (Manav, 22 Oct: East twice — every store, and VFL alone — then South).
+SNAPS = [("East & NE", False), ("East & NE", True), ("South", False)]
+
+
+def snaps(pf: pd.DataFrame, asof) -> list[tuple[str, str, bytes]]:
+    """(label, file name, PNG) for each of `SNAPS` that has stores to show."""
+    out = []
+    for region, vfl in SNAPS:
+        try:
+            name, png = snap_png(pf, region, asof, vfl=vfl)
+        except ValueError:          # no store sold in the window: nothing to send
+            continue
+        out.append((f"{region}{' VFL' if vfl else ''}", name, png))
+    return out

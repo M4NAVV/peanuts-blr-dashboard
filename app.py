@@ -1107,6 +1107,43 @@ def render_portfolio():
                 row_types=[_lbl[k] for k, _ in rows]),
                 unsafe_allow_html=True)
 
+        # ---- Manager images: one PNG per region, for the WhatsApp groups ----
+        # Manav, 22 Oct: East (every store), East VFL, South — last 12 months,
+        # percentages only, ranked by Mon–Thu %. Whole estate whatever the
+        # sidebar says: a group's image must not depend on someone's filters.
+        st.markdown("---")
+        st.markdown("**📲 Manager images** · last 12 months to "
+                    f"{asof:%d %b %Y} · percentages only, no sales figures")
+        st.caption("One image each for East & NE, East & NE VFL and South, "
+                   "stores ranked by Mon–Thu %, shut stores left out. Ignores "
+                   "the sidebar filters; the date is the sidebar's To date.")
+        if st.button("Build the images", key="pf_wk_snap_go"):
+            with st.spinner("Drawing…"):
+                try:
+                    st.session_state["pf_wk_snaps"] = (asof,
+                                                       WK.snaps(pf_all, asof))
+                except Exception as e:            # surface, don't crash tab
+                    st.session_state["pf_wk_snaps"] = None
+                    st.error(f"Could not build the images: {e}")
+        _built = st.session_state.get("pf_wk_snaps")
+        if _built and _built[0] == asof:
+            _imgs = _built[1]
+            for _c, (_label, _name, _png) in zip(st.columns(len(_imgs) + 1),
+                                                 _imgs):
+                _c.download_button(f"⬇ {_label}", _png, file_name=_name,
+                                   mime="image/png", use_container_width=True,
+                                   key=f"pf_wk_snap_{_label}")
+            import report_td as _RTD
+            _zn, _zb, _zm = _RTD.bundle(
+                [(n, b) for _, n, b in _imgs],
+                zip_name=f"MANAGER IMAGES MON-THU vs FRI-SUN {asof:%d-%m-%Y}.zip")
+            st.columns(len(_imgs) + 1)[-1].download_button(
+                "⬇ All three (zip)", _zb, file_name=_zn, mime=_zm,
+                use_container_width=True, key="pf_wk_snap_zip")
+            with st.expander("Preview"):
+                for _label, _, _png in _imgs:
+                    st.image(_png, caption=_label, use_container_width=True)
+
     # ===================== City-wise G/D ===================== #
     elif nav == "🏙️ City-wise G/D":
         kind = st.radio("Period", ["YTD", "MTD"], horizontal=True, key="pf_city_kind")
