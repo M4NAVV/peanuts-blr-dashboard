@@ -629,7 +629,8 @@ def _cr(x) -> str:
 
 _PF_TABS = ["📈 MW Data", "🧾 GD Sheet", "🏷️ Brand-wise GD", "🗺️ Loc-wise GD",
             "📐 Average", "📊 Executive", "📋 MTD / YTD Report", "📉 Degrowth",
-            "🎯 Day Targets", "🥧 Contribution", "🏙️ City-wise G/D", "🏬 Stores",
+            "🎯 Day Targets", "🥧 Contribution", "📆 Weekday vs Weekend",
+            "🏙️ City-wise G/D", "🏬 Stores",
             "📅 Monthly", "🗓️ Day calendar", "🧾 Samir Report",
             "🧮 Excel Builder", "📄 REPORTS PDF"]
 
@@ -1020,6 +1021,87 @@ def render_portfolio():
         html = styled_report_html(disp, money_cols=["Sales"], pct_cols=["Share %"])
         st.markdown(html, unsafe_allow_html=True)
 
+    # ===================== Weekday vs Weekend ===================== #
+    # Manav, 22 Oct: how much each store does Mon–Fri against Sat–Sun. See
+    # `weekend` for why the default windows end on a Sunday.
+    elif nav == "📆 Weekday vs Weekend":
+        import weekend as WK
+        _per = st.radio("Period", WK.PERIODS + ["Sidebar dates"],
+                        horizontal=True, key="pf_wk_period")
+        if _per == "Sidebar dates":
+            wk_start, wk_end = pd.Timestamp(start_d), asof
+        else:
+            wk_start, wk_end = WK.window(_per, asof)
+        rows = WK.report(pf, wk_start, wk_end)
+        if not rows:
+            st.info("No store in the current filters sold anything in this "
+                    "window.")
+        else:
+            g = rows[-1][1]
+            st.caption(
+                f"**{wk_start:%d %b %Y} – {wk_end:%d %b %Y}** · {g['wd_days']} "
+                f"weekdays, {g['we_days']} weekend days · {g['stores']} stores "
+                f"that sold in the window. Weeks run Monday to Sunday and end on "
+                f"the last complete Sunday. A festival on a weekday still counts "
+                f"as a weekday.")
+            k1, k2, k3, k4 = st.columns(4)
+            k1.metric("Mon–Fri share", f"{g['wd_pct']:.1f}%",
+                      help=_cr(g["wd"]))
+            k2.metric("Sat–Sun share", f"{g['we_pct']:.1f}%",
+                      help=f"{_cr(g['we'])} · an even week would put "
+                           f"{WK.EVEN_WEEKEND:.1f}% here")
+            k3.metric("Avg weekday / weekend day",
+                      f"₹{g['avg_wd'] / 1e5:,.1f} L / "
+                      f"₹{g['avg_we'] / 1e5:,.1f} L")
+            k4.metric("A weekend day takes", f"{g['ratio']:.2f}× a weekday")
+
+            stores = pd.DataFrame([r for k, r in rows if k == "store"])
+            stores["label"] = stores["name"] + " · " + stores["brand"].str.title()
+            stores = stores.sort_values("we_pct")
+            fig = px.bar(
+                stores.melt(id_vars="label", value_vars=["wd_pct", "we_pct"],
+                            var_name="part", value_name="share"),
+                x="share", y="label", orientation="h", color="part",
+                color_discrete_map={"wd_pct": GOLD, "we_pct": MAROON},
+                labels={"share": "% of the store's sales", "label": ""})
+            fig.for_each_trace(lambda t: t.update(
+                name={"wd_pct": "Mon–Fri", "we_pct": "Sat–Sun"}[t.name]))
+            fig.add_vline(x=100 - WK.EVEN_WEEKEND, line_dash="dot",
+                          line_color="#555",
+                          annotation_text="even week", annotation_position="top")
+            fig.update_layout(barmode="stack",
+                              height=max(360, 18 * len(stores) + 80),
+                              margin=dict(l=8, r=8, t=24, b=8),
+                              legend=dict(orientation="h", y=1.02, x=0,
+                                          title=None),
+                              plot_bgcolor="#fff", paper_bgcolor="#fff")
+            st.plotly_chart(fig, use_container_width=True)
+
+            _lbl = {"store": None, "citytotal": "subtotal",
+                    "subtotal": "subtotal", "grand": "grand"}
+            disp = pd.DataFrame([{
+                "City": r["city"],
+                "Store": (r["name"] if k == "store"
+                          else f"{r['name']} · {r['stores']} stores"),
+                "Brand": r["brand"],
+                "Mon–Fri sale": r["wd"], "Sat–Sun sale": r["we"],
+                "Total sale": r["total"],
+                "Mon–Fri %": r["wd_pct"], "Sat–Sun %": r["we_pct"],
+                "Avg weekday": r["avg_wd"], "Avg weekend day": r["avg_we"],
+                "Weekend day ÷ weekday": (f"{r['ratio']:.2f}×"
+                                          if r["ratio"] is not None else ""),
+                "Share of all Mon–Fri %": r["wd_share"],
+                "Share of all Sat–Sun %": r["we_share"],
+            } for k, r in rows])
+            st.markdown(styled_report_html(
+                disp,
+                money_cols=["Mon–Fri sale", "Sat–Sun sale", "Total sale",
+                            "Avg weekday", "Avg weekend day"],
+                pct_cols=["Mon–Fri %", "Sat–Sun %", "Share of all Mon–Fri %",
+                          "Share of all Sat–Sun %"],
+                row_types=[_lbl[k] for k, _ in rows]),
+                unsafe_allow_html=True)
+
     # ===================== City-wise G/D ===================== #
     elif nav == "🏙️ City-wise G/D":
         kind = st.radio("Period", ["YTD", "MTD"], horizontal=True, key="pf_city_kind")
@@ -1280,7 +1362,7 @@ def render_portfolio():
             # built — a master that silently overrode them would make the page
             # lie about its own state.
             _RP_KEYS = ("rp_pack", "rp_sl", "rp_el", "rp_mw", "rp_ns",
-                        "rp_tva", "rp_rv")
+                        "rp_tva", "rp_rv", "rp_wk")
             _rp_all = st.checkbox(
                 "**Everything in the pack**", key="rp_all",
                 help="Ticks every report below. The festive run-ups are "
@@ -1314,6 +1396,9 @@ def render_portfolio():
             picked["reviews"] = st.checkbox(
                 "Google reviews  ·  reviews against bills, day / month / "
                 "quarter / year", key="rp_rv")
+            picked["weekend"] = st.checkbox(
+                "Weekday vs weekend  ·  every store, Mon–Fri against Sat–Sun, "
+                "last 4 weeks and year to date", key="rp_wk")
         with c2:
             st.markdown("**Festive run-ups**")
             # ★ Re-dated to the picked day, so a back-dated pack stops there.
@@ -1455,6 +1540,10 @@ def render_portfolio():
                         _prog.step("Target vs achievement")
                         built.append(RTD.build_target_vs_ach(pf_all, pdf_asof,
                                                              basis))
+                    if "weekend" in chosen:
+                        _prog.step("Weekday vs weekend")
+                        import weekend as WK
+                        built.append(WK.build_pdf(pf_all, pdf_asof, basis))
                     for _i, _w in enumerate(_fw):
                         if f"festive_{_i}" in chosen:
                             _prog.step(f"Festive — {_w.label}"
