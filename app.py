@@ -1042,9 +1042,12 @@ def render_portfolio():
             st.caption(
                 f"**{wk_start:%d %b %Y} – {wk_end:%d %b %Y}** · {g['mt_days']} "
                 f"Mon–Thu days, {g['fs_days']} Fri–Sun days · {g['stores']} "
-                f"stores that sold in the window. Weeks run Monday to Sunday "
-                f"and end on the last complete Sunday. A festival on a Mon–Thu "
-                f"day still counts as Mon–Thu.")
+                f"stores that sold in the window. "
+                + ("The 4- and 13-week views run Monday to Sunday and end on "
+                   "the last complete Sunday. " if "weeks" in _per else
+                   "Last 12 months is the dashboard's TTM: 365 days to the "
+                   "latest day. " if _per == "Last 12 months" else "")
+                + "A festival on a Mon–Thu day still counts as Mon–Thu.")
             _late = WK.late_starts(rows, wk_start)
             if _late:
                 st.caption(f"**{_late}** — counted from its takeover, "

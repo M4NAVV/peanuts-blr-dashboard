@@ -32,10 +32,11 @@ def test_window_ends_on_the_last_complete_sunday():
     assert s == pd.Timestamp("2026-09-21") and s.dayofweek == 0
     # On a Sunday, that Sunday is complete.
     assert W.window("Last 4 weeks", "2026-10-18")[1] == pd.Timestamp("2026-10-18")
-    # Last 12 months = 52 full weeks, Monday to Sunday (Manav, 22 Oct).
-    s12, e12 = W.window("Last 12 months", "2026-10-22")
-    assert (s12, e12) == (pd.Timestamp("2025-10-20"), pd.Timestamp("2026-10-18"))
-    assert s12.dayofweek == 0 and (e12 - s12).days + 1 == 364
+    # Last 12 months = the dashboard's TTM: 365 days to the latest day, not
+    # whole weeks (Manav, 22 Oct: "to yesterday, across the dash").
+    s12, e12 = W.window("Last 12 months", "2026-10-21")
+    assert (s12, e12) == (pd.Timestamp("2025-10-22"), pd.Timestamp("2026-10-21"))
+    assert (e12 - s12).days + 1 == 365
     assert W.window("FY to date", "2026-10-22") == (
         pd.Timestamp("2026-04-01"), pd.Timestamp("2026-10-22"))
 
