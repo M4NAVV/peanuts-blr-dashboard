@@ -86,3 +86,28 @@ def test_a_store_that_sold_nothing_is_left_out():
 def test_empty_window_returns_nothing():
     df = _frame(_week(1, "KOLKATA", "East & NE", "2026-10-12", 100, 300))
     assert W.report(df, "2025-01-01", "2025-01-31") == []
+
+
+def test_mon_thu_against_fri_sun():
+    """Manav, 22 Oct: the 4+3 cut beside the 5+2 one. Friday moves sides."""
+    rows = [(1, "KOLKATA", "East & NE", pd.Timestamp("2026-10-12")
+             + pd.Timedelta(days=i), v)
+            for i, v in enumerate([100, 100, 100, 100, 200, 300, 300])]
+    s = W.report(_frame(rows), "2026-10-12", "2026-10-18")[0][1]
+    assert (s["mt"], s["fs"]) == (400, 800)
+    assert (s["mt_days"], s["fs_days"]) == (4, 3)
+    assert s["mt"] + s["fs"] == s["wd"] + s["we"] == s["total"]
+    assert s["fs_pct"] == pytest.approx(800 / 1200 * 100)
+    assert (s["avg_mt"], s["avg_fs"]) == (100, pytest.approx(800 / 3))
+    assert s["ratio_fs"] == pytest.approx(8 / 3)
+
+
+def test_the_4_3_cut_adds_up_at_every_total():
+    rows = (_week(1, "KOLKATA", "East & NE", "2026-10-12", 100, 300)
+            + _week(2, "SILIGURI", "East & NE", "2026-10-12", 50, 60))
+    rep = W.report(_frame(rows), "2026-10-12", "2026-10-18")
+    stores = [r for k, r in rep if k == "store"]
+    g = rep[-1][1]
+    assert g["mt"] == sum(r["mt"] for r in stores)
+    assert g["fs"] == sum(r["fs"] for r in stores)
+    assert g["mt_days"] == 4 and g["fs_days"] == 3

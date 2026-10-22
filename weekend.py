@@ -27,6 +27,12 @@ its earliest member's first sale to its latest member's last, never the sum of
 its stores' days (five stores do not give a city five days in a day — the same
 rule as `report_td._avg_day`).
 
+★ AND A SECOND CUT, MON-THU vs FRI-SUN (Manav, 22 Oct: *"do for mon to
+thursday also, and then fri, sat and sun … in the same sheet"*). Friday
+evening already shops like a weekend in most malls, so the 4+3 cut shows
+whether Friday belongs with the weekend at a store. Same rules: 3 of 7 days,
+so 42.9% is what an even week would put on Fri-Sun.
+
 ⚠️ A festival on a weekday is still a weekday. Puja and Diwali fall mostly on
 weekdays in October-November, so a window holding them reads more weekday-led
 than an ordinary month. The report says so rather than moving the days.
@@ -39,6 +45,7 @@ import pandas as pd
 import portfolio_loader as PL
 
 EVEN_WEEKEND = 2 / 7 * 100           # the share an evenly-spread week would give
+EVEN_FRI_SUN = 3 / 7 * 100
 
 PERIODS = ["Last 4 weeks", "Last 13 weeks", "FY to date"]
 
@@ -59,13 +66,13 @@ def window(period: str, asof) -> tuple[pd.Timestamp, pd.Timestamp]:
     return end - pd.Timedelta(days=7 * weeks - 1), end
 
 
-def _days(start, end) -> tuple[int, int]:
-    """(weekdays, weekend days) from `start` to `end` inclusive."""
+def _days(start, end) -> tuple[int, int, int]:
+    """(weekdays, weekend days, Fridays) from `start` to `end` inclusive."""
     if pd.isna(start) or pd.isna(end) or end < start:
-        return 0, 0
+        return 0, 0, 0
     dow = pd.date_range(start, end, freq="D").dayofweek
     we = int((dow >= 5).sum())
-    return len(dow) - we, we
+    return len(dow) - we, we, int((dow == 4).sum())
 
 
 def by_store(pf: pd.DataFrame, start, end) -> pd.DataFrame:
@@ -74,11 +81,14 @@ def by_store(pf: pd.DataFrame, start, end) -> pd.DataFrame:
     d = pf[(pf["date"] >= start) & (pf["date"] <= end)]
     if d.empty:
         return pd.DataFrame()
-    d = d.assign(weekend=d["date"].dt.dayofweek >= 5)
+    dow = d["date"].dt.dayofweek
+    d = d.assign(part=dow.map(lambda x: "we" if x >= 5 else
+                              "fri" if x == 4 else "mt"))
     keys = ["code", "region", "city", "location", "brand"]
-    money = (d.groupby(keys + ["weekend"], dropna=False)["sales"].sum()
-             .unstack("weekend").reindex(columns=[False, True]).fillna(0.0))
-    money.columns = ["wd", "we"]
+    money = (d.groupby(keys + ["part"], dropna=False)["sales"].sum()
+             .unstack("part").reindex(columns=["mt", "fri", "we"]).fillna(0.0))
+    # Mon-Fri and Sat-Sun as before; Friday kept apart for the 4+3 cut.
+    money["wd"] = money["mt"] + money["fri"]
     sold = d[d["sales"] > 0].groupby("code")["date"].agg(["min", "max"])
     out = money.reset_index()
     out = out[out["code"].isin(sold.index)]       # traded in the window
@@ -87,13 +97,25 @@ def by_store(pf: pd.DataFrame, start, end) -> pd.DataFrame:
     return out.reset_index(drop=True)
 
 
-def measures(wd, we, start, end, estate_wd=None, estate_we=None) -> dict:
-    """Every figure the report prints, for one store or one total."""
-    wdn, wen = _days(start, end)
+def measures(wd, we, start, end, estate_wd=None, estate_we=None,
+             fri=0.0) -> dict:
+    """Every figure the report prints, for one store or one total. `fri` is
+    the Friday part of `wd`, for the Mon-Thu / Fri-Sun cut."""
+    wdn, wen, frin = _days(start, end)
     tot = wd + we
     avg_wd = wd / wdn if wdn else None
     avg_we = we / wen if wen else None
+    mt, fs = wd - fri, we + fri
+    mtn, fsn = wdn - frin, wen + frin
+    avg_mt = mt / mtn if mtn else None
+    avg_fs = fs / fsn if fsn else None
     return {
+        "mt": mt, "fs": fs, "mt_days": mtn, "fs_days": fsn,
+        "mt_pct": mt / tot * 100 if tot else None,
+        "fs_pct": fs / tot * 100 if tot else None,
+        "avg_mt": avg_mt, "avg_fs": avg_fs,
+        "ratio_fs": (avg_fs / avg_mt) if (avg_mt and avg_fs is not None)
+        else None,
         "wd": wd, "we": we, "total": tot,
         "wd_pct": wd / tot * 100 if tot else None,
         "we_pct": we / tot * 100 if tot else None,
@@ -115,7 +137,8 @@ def report(pf: pd.DataFrame, start, end) -> list[tuple[str, dict]]:
 
     def tot(part, label, city=""):
         r = measures(part["wd"].sum(), part["we"].sum(),
-                     part["from"].min(), part["to"].max(), est_wd, est_we)
+                     part["from"].min(), part["to"].max(), est_wd, est_we,
+                     fri=part["fri"].sum())
         return {"name": label, "city": city, "brand": "", "stores": len(part),
                 **r}
 
@@ -135,7 +158,7 @@ def report(pf: pd.DataFrame, start, end) -> list[tuple[str, dict]]:
                     "name": x["location"], "city": city, "brand": x["brand"],
                     "code": int(x["code"]), "region": reg, "stores": 1,
                     **measures(x["wd"], x["we"], x["from"], x["to"],
-                               est_wd, est_we)}))
+                               est_wd, est_we, fri=x["fri"])}))
             # A region of one city would print the same total twice.
             if len(cs) > 1 and len(cities) > 1:
                 out.append(("citytotal", tot(cs, f"{city} TOTAL", city)))
@@ -154,6 +177,10 @@ COLS = [
     ("AVG WEEKDAY", "r"), ("AVG WEEKEND DAY", "r"),
     ("WEEKEND DAY ÷ WEEKDAY", "r"),
     ("SHARE OF ALL MON–FRI %", "r"), ("SHARE OF ALL SAT–SUN %", "r"),
+    ("MON–THU SALE", "r"), ("FRI–SUN SALE", "r"),
+    ("MON–THU %", "r"), ("FRI–SUN %", "r"),
+    ("AVG MON–THU DAY", "r"), ("AVG FRI–SUN DAY", "r"),
+    ("FRI–SUN DAY ÷ MON–THU DAY", "r"),
 ]
 
 
@@ -181,7 +208,11 @@ def render(rows, title):
             RTD._money(r["wd"]), RTD._money(r["we"]), RTD._money(r["total"]),
             _pct(r["wd_pct"]), _pct(r["we_pct"]),
             RTD._money(r["avg_wd"]), RTD._money(r["avg_we"]), _x(r["ratio"]),
-            _pct(r["wd_share"]), _pct(r["we_share"])]
+            _pct(r["wd_share"]), _pct(r["we_share"]),
+            RTD._money(r["mt"]), RTD._money(r["fs"]),
+            _pct(r["mt_pct"]), _pct(r["fs_pct"]),
+            RTD._money(r["avg_mt"]), RTD._money(r["avg_fs"]),
+            _x(r["ratio_fs"])]
         fill = {"citytotal": RTD.LOC_BG, "subtotal": RTD.HDR_BG,
                 "grand": RTD.TOTAL_BG}.get(kind)
         grid.append((RTD._cells(vals, aligns, fill, kind != "store"),
@@ -201,11 +232,12 @@ def build_pdf(pf: pd.DataFrame, asof, basis_label="") -> tuple[str, bytes]:
             rows = report(pf, start, end)
             if not rows:
                 continue
-            wdn, wen = _days(start, end)
+            wdn, wen, _ = _days(start, end)
             title = (f"WEEKDAY vs WEEKEND  ·  {period.upper()}  ·  "
                      f"{start:%d %b %Y} – {end:%d %b %Y}  ·  {wdn} weekdays, "
                      f"{wen} weekend days  ·  an even week puts "
-                     f"{EVEN_WEEKEND:.1f}% on the weekend")
+                     f"{EVEN_WEEKEND:.1f}% on Sat–Sun, {EVEN_FRI_SUN:.1f}% on "
+                     f"Fri–Sun")
             contents.append((f"Weekday vs weekend · {period}",
                              render(rows, title)))
         if not contents:
