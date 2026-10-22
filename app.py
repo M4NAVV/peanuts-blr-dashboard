@@ -1045,7 +1045,11 @@ def render_portfolio():
                 f"stores that sold in the window. Weeks run Monday to Sunday "
                 f"and end on the last complete Sunday. A festival on a Mon–Thu "
                 f"day still counts as Mon–Thu.")
-            k1, k2, k3, k4 = st.columns(4)
+            _late = WK.late_starts(rows, wk_start)
+            if _late:
+                st.caption(f"**{_late}** — counted from its takeover, "
+                           f"not from {wk_start:%d %b}.")
+            k1, k2, k3 = st.columns(3)
             k1.metric("Mon–Thu share", f"{g['mt_pct']:.1f}%",
                       help=_cr(g["mt"]))
             k2.metric("Fri–Sun share", f"{g['fs_pct']:.1f}%",
@@ -1054,8 +1058,6 @@ def render_portfolio():
             k3.metric("Avg Mon–Thu / Fri–Sun day",
                       f"₹{g['avg_mt'] / 1e5:,.1f} L / "
                       f"₹{g['avg_fs'] / 1e5:,.1f} L")
-            k4.metric("A Fri–Sun day takes",
-                      f"{g['ratio_fs']:.2f}× a Mon–Thu day")
 
             stores = pd.DataFrame([r for k, r in rows if k == "store"])
             stores["label"] = stores["name"] + " · " + stores["brand"].str.title()
@@ -1090,9 +1092,6 @@ def render_portfolio():
                 "Total sale": r["total"],
                 "Mon–Thu %": r["mt_pct"], "Fri–Sun %": r["fs_pct"],
                 "Avg Mon–Thu day": r["avg_mt"], "Avg Fri–Sun day": r["avg_fs"],
-                "Fri–Sun day ÷ Mon–Thu day": (f"{r['ratio_fs']:.2f}×"
-                                              if r["ratio_fs"] is not None
-                                              else ""),
                 "Share of all Mon–Thu %": r["mt_share"],
                 "Share of all Fri–Sun %": r["fs_share"],
             } for k, r in rows])

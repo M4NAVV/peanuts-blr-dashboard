@@ -32,7 +32,16 @@ monday to thursday and fri, sat, sun, not the mon to fri and sat sun"*). It
 was first built as Mon-Fri / Sat-Sun, then both side by side; he chose the
 4+3 cut. Fri-Sun is 3 of 7 days, so 42.9% is what an even week would put
 there. The Mon-Fri / Sat-Sun figures are still computed (`wd`/`we`, `ratio`)
-so the old cut is one column list away, but nothing prints them.
+so the old cut is one column list away, but nothing prints them. The
+Fri-Sun ÷ Mon-Thu ratio is likewise computed but not printed (his call, same
+day: "not needed").
+
+★ SOUTH'S YEAR STARTS ON 19 APRIL 2026, its takeover. The loader already drops
+everything before a store's takeover, and each store counts days from its own
+first sale, so South's year to date is 19 April onwards without any rule here.
+What this module adds is SAYING it: `late_starts` names every region whose
+first sale is after the window opens, and the page prints it beside the
+dates — otherwise "1 Apr – 21 Oct" sits above figures that do not cover it.
 
 ⚠️ A festival on a weekday is still a weekday. Puja and Diwali fall mostly on
 weekdays in October-November, so a window holding them reads more weekday-led
@@ -144,6 +153,7 @@ def report(pf: pd.DataFrame, start, end) -> list[tuple[str, dict]]:
                      part["from"].min(), part["to"].max(), est_wd, est_we,
                      fri=part["fri"].sum(), **est)
         return {"name": label, "city": city, "brand": "", "stores": len(part),
+                "from": part["from"].min(),
                 **r}
 
     out = []
@@ -161,14 +171,25 @@ def report(pf: pd.DataFrame, start, end) -> list[tuple[str, dict]]:
                 out.append(("store", {
                     "name": x["location"], "city": city, "brand": x["brand"],
                     "code": int(x["code"]), "region": reg, "stores": 1,
+                    "from": x["from"],
                     **measures(x["wd"], x["we"], x["from"], x["to"],
                                est_wd, est_we, fri=x["fri"], **est)}))
             # A region of one city would print the same total twice.
             if len(cs) > 1 and len(cities) > 1:
                 out.append(("citytotal", tot(cs, f"{city} TOTAL", city)))
-        out.append(("subtotal", tot(rs, f"{reg.upper()} TOTAL")))
+        out.append(("subtotal", {**tot(rs, f"{reg.upper()} TOTAL"),
+                                 "region": reg}))
     out.append(("grand", tot(s, "OVERALL")))
     return out
+
+
+def late_starts(rows, start) -> str:
+    """"South from 19 Apr 2026" for each region that starts after the window
+    does, or "" — see the module note."""
+    start = pd.Timestamp(start)
+    late = [f"{r['region']} from {r['from']:%d %b %Y}" for k, r in rows
+            if k == "subtotal" and pd.Timestamp(r["from"]) > start]
+    return ", ".join(late)
 
 
 # --------------------------------------------------------------------------- #
@@ -179,17 +200,12 @@ COLS = [
     ("MON–THU SALE", "r"), ("FRI–SUN SALE", "r"), ("TOTAL SALE", "r"),
     ("MON–THU %", "r"), ("FRI–SUN %", "r"),
     ("AVG MON–THU DAY", "r"), ("AVG FRI–SUN DAY", "r"),
-    ("FRI–SUN DAY ÷ MON–THU DAY", "r"),
     ("SHARE OF ALL MON–THU %", "r"), ("SHARE OF ALL FRI–SUN %", "r"),
 ]
 
 
 def _pct(v):
     return "" if v is None else f"{v:,.1f}"
-
-
-def _x(v):
-    return "" if v is None else f"{v:,.2f}×"
 
 
 def render(rows, title):
@@ -208,7 +224,6 @@ def render(rows, title):
             RTD._money(r["mt"]), RTD._money(r["fs"]), RTD._money(r["total"]),
             _pct(r["mt_pct"]), _pct(r["fs_pct"]),
             RTD._money(r["avg_mt"]), RTD._money(r["avg_fs"]),
-            _x(r["ratio_fs"]),
             _pct(r["mt_share"]), _pct(r["fs_share"])]
         fill = {"citytotal": RTD.LOC_BG, "subtotal": RTD.HDR_BG,
                 "grand": RTD.TOTAL_BG}.get(kind)
@@ -234,6 +249,8 @@ def build_pdf(pf: pd.DataFrame, asof, basis_label="") -> tuple[str, bytes]:
                      f"{start:%d %b %Y} – {end:%d %b %Y}  ·  {wdn - frin} "
                      f"Mon–Thu days, {wen + frin} Fri–Sun days  ·  an even "
                      f"week puts {EVEN_FRI_SUN:.1f}% on Fri–Sun")
+            if late_starts(rows, start):
+                title += f"  ·  {late_starts(rows, start)}"
             contents.append((f"Weekday vs weekend · {period}",
                              render(rows, title)))
         if not contents:

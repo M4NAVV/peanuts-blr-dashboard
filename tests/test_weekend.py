@@ -128,3 +128,20 @@ def test_the_sheet_prints_only_the_4_3_cut():
     heads = " ".join(h for h, _ in W.COLS)
     assert "MON–FRI" not in heads and "SAT–SUN" not in heads
     assert "MON–THU" in heads and "FRI–SUN" in heads
+
+
+def test_no_ratio_column():
+    """Manav, 22 Oct: the Fri–Sun ÷ Mon–Thu column is "not needed"."""
+    assert not any("÷" in h for h, _ in W.COLS)
+
+
+def test_a_region_taken_over_midyear_is_named_with_its_start():
+    """South's year starts at its takeover, 19 Apr 2026 — and the page says so."""
+    rows = (_week(1, "KOLKATA", "East & NE", "2026-04-13", 100, 300)
+            + [r for r in _week(2, "BENGALURU", "South", "2026-04-13", 80, 400)
+               if r[3] >= pd.Timestamp("2026-04-19")])
+    rep = W.report(_frame(rows), "2026-04-13", "2026-04-19")
+    south = [r for k, r in rep if k == "store" and r["region"] == "South"][0]
+    assert (south["mt_days"], south["fs_days"]) == (0, 1)   # Sunday only
+    assert W.late_starts(rep, "2026-04-13") == "South from 19 Apr 2026"
+    assert W.late_starts(rep, "2026-04-19") == ""
