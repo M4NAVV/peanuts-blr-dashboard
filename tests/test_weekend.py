@@ -111,3 +111,20 @@ def test_the_4_3_cut_adds_up_at_every_total():
     assert g["mt"] == sum(r["mt"] for r in stores)
     assert g["fs"] == sum(r["fs"] for r in stores)
     assert g["mt_days"] == 4 and g["fs_days"] == 3
+
+
+def test_shares_are_of_the_mon_thu_and_fri_sun_totals():
+    rows = (_week(1, "KOLKATA", "East & NE", "2026-10-12", 100, 300)
+            + _week(2, "SILIGURI", "East & NE", "2026-10-12", 50, 60))
+    stores = [r for k, r in W.report(_frame(rows), "2026-10-12", "2026-10-18")
+              if k == "store"]
+    assert sum(r["mt_share"] for r in stores) == pytest.approx(100)
+    assert sum(r["fs_share"] for r in stores) == pytest.approx(100)
+    assert stores[0]["mt_share"] == pytest.approx(400 / 600 * 100)
+
+
+def test_the_sheet_prints_only_the_4_3_cut():
+    """Manav, 22 Oct: "not the mon to fri and sat sun"."""
+    heads = " ".join(h for h, _ in W.COLS)
+    assert "MON–FRI" not in heads and "SAT–SUN" not in heads
+    assert "MON–THU" in heads and "FRI–SUN" in heads

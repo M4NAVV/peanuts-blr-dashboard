@@ -1022,8 +1022,9 @@ def render_portfolio():
         st.markdown(html, unsafe_allow_html=True)
 
     # ===================== Weekday vs Weekend ===================== #
-    # Manav, 22 Oct: how much each store does Mon–Fri against Sat–Sun. See
-    # `weekend` for why the default windows end on a Sunday.
+    # Manav, 22 Oct: how much each store does Mon–Thu against Fri–Sun (he
+    # dropped the Mon–Fri / Sat–Sun cut). See `weekend` for why the default
+    # windows end on a Sunday.
     elif nav == "📆 Weekday vs Weekend":
         import weekend as WK
         _per = st.radio("Period", WK.PERIODS + ["Sidebar dates"],
@@ -1039,21 +1040,11 @@ def render_portfolio():
         else:
             g = rows[-1][1]
             st.caption(
-                f"**{wk_start:%d %b %Y} – {wk_end:%d %b %Y}** · {g['wd_days']} "
-                f"weekdays, {g['we_days']} weekend days · {g['stores']} stores "
-                f"that sold in the window. Weeks run Monday to Sunday and end on "
-                f"the last complete Sunday. A festival on a weekday still counts "
-                f"as a weekday.")
-            k1, k2, k3, k4 = st.columns(4)
-            k1.metric("Mon–Fri share", f"{g['wd_pct']:.1f}%",
-                      help=_cr(g["wd"]))
-            k2.metric("Sat–Sun share", f"{g['we_pct']:.1f}%",
-                      help=f"{_cr(g['we'])} · an even week would put "
-                           f"{WK.EVEN_WEEKEND:.1f}% here")
-            k3.metric("Avg weekday / weekend day",
-                      f"₹{g['avg_wd'] / 1e5:,.1f} L / "
-                      f"₹{g['avg_we'] / 1e5:,.1f} L")
-            k4.metric("A weekend day takes", f"{g['ratio']:.2f}× a weekday")
+                f"**{wk_start:%d %b %Y} – {wk_end:%d %b %Y}** · {g['mt_days']} "
+                f"Mon–Thu days, {g['fs_days']} Fri–Sun days · {g['stores']} "
+                f"stores that sold in the window. Weeks run Monday to Sunday "
+                f"and end on the last complete Sunday. A festival on a Mon–Thu "
+                f"day still counts as Mon–Thu.")
             k1, k2, k3, k4 = st.columns(4)
             k1.metric("Mon–Thu share", f"{g['mt_pct']:.1f}%",
                       help=_cr(g["mt"]))
@@ -1066,24 +1057,18 @@ def render_portfolio():
             k4.metric("A Fri–Sun day takes",
                       f"{g['ratio_fs']:.2f}× a Mon–Thu day")
 
-            _cut = st.radio("Chart", ["Mon–Fri vs Sat–Sun",
-                                      "Mon–Thu vs Fri–Sun"],
-                            horizontal=True, key="pf_wk_cut")
-            _a, _b = (("wd_pct", "we_pct") if _cut.startswith("Mon–Fri")
-                      else ("mt_pct", "fs_pct"))
-            _names = dict(zip((_a, _b), _cut.split(" vs ")))
-            _even = (WK.EVEN_WEEKEND if _a == "wd_pct" else WK.EVEN_FRI_SUN)
             stores = pd.DataFrame([r for k, r in rows if k == "store"])
             stores["label"] = stores["name"] + " · " + stores["brand"].str.title()
-            stores = stores.sort_values(_b)
+            stores = stores.sort_values("fs_pct")
             fig = px.bar(
-                stores.melt(id_vars="label", value_vars=[_a, _b],
+                stores.melt(id_vars="label", value_vars=["mt_pct", "fs_pct"],
                             var_name="part", value_name="share"),
                 x="share", y="label", orientation="h", color="part",
-                color_discrete_map={_a: GOLD, _b: MAROON},
+                color_discrete_map={"mt_pct": GOLD, "fs_pct": MAROON},
                 labels={"share": "% of the store's sales", "label": ""})
-            fig.for_each_trace(lambda t: t.update(name=_names[t.name]))
-            fig.add_vline(x=100 - _even, line_dash="dot",
+            fig.for_each_trace(lambda t: t.update(
+                name={"mt_pct": "Mon–Thu", "fs_pct": "Fri–Sun"}[t.name]))
+            fig.add_vline(x=100 - WK.EVEN_FRI_SUN, line_dash="dot",
                           line_color="#555",
                           annotation_text="even week", annotation_position="top")
             fig.update_layout(barmode="stack",
@@ -1101,29 +1086,22 @@ def render_portfolio():
                 "Store": (r["name"] if k == "store"
                           else f"{r['name']} · {r['stores']} stores"),
                 "Brand": r["brand"],
-                "Mon–Fri sale": r["wd"], "Sat–Sun sale": r["we"],
-                "Total sale": r["total"],
-                "Mon–Fri %": r["wd_pct"], "Sat–Sun %": r["we_pct"],
-                "Avg weekday": r["avg_wd"], "Avg weekend day": r["avg_we"],
-                "Weekend day ÷ weekday": (f"{r['ratio']:.2f}×"
-                                          if r["ratio"] is not None else ""),
-                "Share of all Mon–Fri %": r["wd_share"],
-                "Share of all Sat–Sun %": r["we_share"],
                 "Mon–Thu sale": r["mt"], "Fri–Sun sale": r["fs"],
+                "Total sale": r["total"],
                 "Mon–Thu %": r["mt_pct"], "Fri–Sun %": r["fs_pct"],
                 "Avg Mon–Thu day": r["avg_mt"], "Avg Fri–Sun day": r["avg_fs"],
                 "Fri–Sun day ÷ Mon–Thu day": (f"{r['ratio_fs']:.2f}×"
                                               if r["ratio_fs"] is not None
                                               else ""),
+                "Share of all Mon–Thu %": r["mt_share"],
+                "Share of all Fri–Sun %": r["fs_share"],
             } for k, r in rows])
             st.markdown(styled_report_html(
                 disp,
-                money_cols=["Mon–Fri sale", "Sat–Sun sale", "Total sale",
-                            "Avg weekday", "Avg weekend day",
-                            "Mon–Thu sale", "Fri–Sun sale",
+                money_cols=["Mon–Thu sale", "Fri–Sun sale", "Total sale",
                             "Avg Mon–Thu day", "Avg Fri–Sun day"],
-                pct_cols=["Mon–Fri %", "Sat–Sun %", "Share of all Mon–Fri %",
-                          "Share of all Sat–Sun %", "Mon–Thu %", "Fri–Sun %"],
+                pct_cols=["Mon–Thu %", "Fri–Sun %", "Share of all Mon–Thu %",
+                          "Share of all Fri–Sun %"],
                 row_types=[_lbl[k] for k, _ in rows]),
                 unsafe_allow_html=True)
 
@@ -1422,8 +1400,7 @@ def render_portfolio():
                 "Google reviews  ·  reviews against bills, day / month / "
                 "quarter / year", key="rp_rv")
             picked["weekend"] = st.checkbox(
-                "Weekday vs weekend  ·  every store, Mon–Fri against Sat–Sun "
-                "and Mon–Thu against Fri–Sun, "
+                "Weekday vs weekend  ·  every store, Mon–Thu against Fri–Sun, "
                 "last 4 weeks and year to date", key="rp_wk")
         with c2:
             st.markdown("**Festive run-ups**")
