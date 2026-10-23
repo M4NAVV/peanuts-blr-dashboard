@@ -84,6 +84,16 @@ def _appends_with_guards():
             for n in node.orelse:
                 self.visit(n)
 
+        def visit_For(self, node):
+            # ★ 23 Oct 2026: a report that yields several files (the Google reviews, one per region) appends inside a
+            # loop over its builder, so the loop's iterator is part of what guards the append.
+            self.stack.append("for " + ast.unparse(node.iter))
+            for n in node.body:
+                self.visit(n)
+            self.stack.pop()
+            for n in node.orelse:
+                self.visit(n)
+
         def visit_Call(self, node):
             if ast.unparse(node.func).endswith("built.append"):
                 found.append((ast.unparse(node)[:90], list(self.stack)))
@@ -96,7 +106,8 @@ def _appends_with_guards():
 def test_the_google_review_pdf_is_built_when_there_IS_a_day():
     """★★ The test was inverted: appended only when `_asof is None`, the one
     case where it must be skipped."""
-    got = [(c, g) for c, g in _appends_with_guards() if "google_reviews" in c]
+    got = [(c, g) for c, g in _appends_with_guards()
+           if "google_reviews" in c or any("RV.region_pdfs" in x for x in g)]      # one per region since 23 Oct
     assert got, "the review PDF is never appended"
     for _call, guards in got:
         assert any("'reviews' in chosen" in g or '"reviews" in chosen' in g
@@ -111,6 +122,7 @@ def test_every_report_append_sits_under_a_chosen_check():
     the zip still looks plausible."""
     for call, guards in _appends_with_guards():
         if "RTD." not in call and "FADM." not in call and "RV." not in call \
-                and "vfl_pdf" not in call and "DISC." not in call:
+                and "vfl_pdf" not in call and "DISC." not in call \
+                and not any(g.startswith("for ") and "RV." in g for g in guards):
             continue                      # not a report builder
         assert any("chosen" in g for g in guards), (call, guards)

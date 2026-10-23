@@ -351,6 +351,43 @@ def build(reviews: pd.DataFrame, bills: pd.DataFrame, asof) -> dict:
 # --------------------------------------------------------------------------- #
 #  PDF report
 # --------------------------------------------------------------------------- #
+REGIONS = (("East & NE", "east-ne"), ("South", "south"))
+
+
+def by_region(reviews: pd.DataFrame, bills: pd.DataFrame, vdf) -> list:
+    """[(region, tag, reviews, bills)] — the report split East & NE, then South (Manav, 23 Oct 2026: "split it in the
+    2 regions. becomes the updated report"; the dashboard tab, the REPORTS PDF zip and the WhatsApp sender all use this).
+
+    ★ BOTH HALVES CUT TO THE SAME STORES, or a region's rate pairs its reviews with the whole estate's bills. A store's
+    region is the one the feed gives it most often. The two regions add back to the whole estate exactly (checked
+    23 Oct: Day / MTD / QTD / YTD all tie). A region with no bills is left out.
+    """
+    import loader as L
+    b = vdf[vdf[L.COL_BILL_UID].notna()]
+    region_of = b.groupby(L.COL_STORE_LABEL)[L.COL_REGION].agg(lambda x: x.value_counts().index[0])
+    out = []
+    for region, tag in REGIONS:
+        stores = set(region_of[region_of == region].index)
+        rv_r, bills_r = reviews[reviews["store"].isin(stores)], bills[bills["store"].isin(stores)]
+        if not bills_r.empty:
+            out.append((region, tag, rv_r, bills_r))
+    return out
+
+
+def region_pdfs(reviews: pd.DataFrame, bills: pd.DataFrame, vdf, asof, src: str = "") -> list:
+    """[(file name, PDF bytes, tag)], one per region — the same build as the whole-estate report, per region."""
+    out = []
+    for region, tag, rv_r, bills_r in by_region(reviews, bills, vdf):
+        out.append((f"google_reviews_{tag}_{pd.Timestamp(asof):%Y%m%d}.pdf",
+                    build_pdf(build(rv_r, bills_r, asof),
+                              {"measured": int(rv_r["store"].nunique()), "total": int(bills_r["store"].nunique()),
+                               "source": src},
+                              asof, basis_label=f"As of {pd.Timestamp(asof):%d %b %Y}", names=store_display(vdf),
+                              region=region),
+                    tag))
+    return out
+
+
 def store_display(vdf) -> dict:
     """store label -> "MANYAVAR & MOHEY · Jayanagar", from the VFL feed.
 
@@ -543,8 +580,8 @@ def build_pdf(report: dict, coverage: dict, asof, basis_label="",
         usable = A4.PAGE_H - 2 * A4.MARGIN
         W = A4.CONTENT_W
 
-        # ★ `region` (23 Oct 2026): the WhatsApp sender sends one report per region ("split it in the 2 regions"),
-        # so a forwarded copy must say which. Empty = the whole estate, as the dashboard draws it.
+        # ★ `region` (23 Oct 2026): the report goes one per region ("split it in the 2 regions" — see `region_pdfs`),
+        # so a forwarded copy must say which. Empty = the whole estate.
         title = A4._heading(
             W, f"Google reviews · {region}" if region else "Google reviews",
             f"Peanuts Retail  ·  as of {asof:%d %b %Y}  ·  "

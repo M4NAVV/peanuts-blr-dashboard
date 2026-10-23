@@ -1568,16 +1568,9 @@ def render_portfolio():
                                        "has both a review reading and bills "
                                        "yet.")
                         elif rv is not None and not rv.empty:
-                            built.append((
-                                f"google_reviews_{_asof:%Y%m%d}.pdf",
-                                RV.build_pdf(
-                                    RV.build(rv, _bills, _asof),
-                                    {"measured": int(rv["store"].nunique()),
-                                     "total": int(_bills["store"].nunique()),
-                                     "source": src},
-                                    _asof,
-                                    basis_label=f"As of {_asof:%d %b %Y}",
-                                    names=RV.store_display(vdf))))
+                            # ★ ONE PER REGION (Manav, 23 Oct 2026: "split it in the 2 regions").
+                            for _n, _pdf, _tag in RV.region_pdfs(rv, _bills, vdf, _asof, src):
+                                built.append((_n, _pdf))
                     if "tva" in chosen:
                         _prog.step("Target vs achievement")
                         built.append(RTD.build_target_vs_ach(pf_all, pdf_asof,
@@ -3940,8 +3933,11 @@ if nav == "⭐ Google Reviews":
         if _asof is None:
             st.warning("No day has both a review reading and bills yet.")
         else:
-            _rep = RV.build(_rv, _bills, _asof)
-            _cov = _rep.get("_cover", {})
+            # ★ BY REGION (Manav, 23 Oct 2026: "split it in the 2 regions. becomes the updated report" — and "this
+            # google review thing should happen in the dash too"). East & NE, then South; the same split the
+            # WhatsApp sender and the REPORTS PDF zip use (`reviews.by_region`).
+            _parts = [(_reg, RV.build(_r, _bl, _asof))
+                      for _reg, _tag, _r, _bl in RV.by_region(_rv, _bills, _b)]
 
             # ★ THE PAGE SAYS WHAT IT IS BEFORE IT SAYS A NUMBER. This feed
             # measures the MOVEMENT in a store's public rating count, not a list
@@ -3957,52 +3953,55 @@ if nav == "⭐ Google Reviews":
 
             _period = st.radio("Period", ["Day", "MTD", "QTD", "YTD"],
                                index=1, horizontal=True, key="rv_period")
-            _t = _rep[_period]
-            _c = _cov.get(_period, {})
-            _gain, _gone = _t["Reviews"].sum(), _t["Removed"].sum()
-            _bil = _t["Bills"].sum()
 
-            m = st.columns(4)
-            m[0].metric("Ratings gained", f"{_gain:,.0f}")
-            m[1].metric("Removed by Google",
-                        f"-{_gone:,.0f}" if _gone else "0")
-            m[2].metric("Rate", f"{_gain / _bil * 100:,.2f}%" if _bil else "—",
-                        help="Ratings over the bills of THE SAME DAYS.")
-            m[3].metric("Days measured",
-                        f"{_c.get('measured', 0)} of {_c.get('traded', 0)}",
-                        help="Bills are counted only on days that store has a "
-                             "reading, so both halves cover the same calendar.")
+            for _reg, _rep in _parts:
+                st.markdown(f"#### {_reg}")
+                _t = _rep[_period]
+                _c = _rep.get("_cover", {}).get(_period, {})
+                _gain, _gone = _t["Reviews"].sum(), _t["Removed"].sum()
+                _bil = _t["Bills"].sum()
 
-            if _c.get("measured", 0) < _c.get("traded", 0):
-                st.caption(
-                    f"⚠️ Collection began on **23 Aug 2026**, so this period is "
-                    f"measured over {_c.get('measured', 0)} of its "
-                    f"{_c.get('traded', 0)} trading days. The rate is over the "
-                    f"days actually read — it is not a whole-period figure.")
+                m = st.columns(4)
+                m[0].metric("Ratings gained", f"{_gain:,.0f}")
+                m[1].metric("Removed by Google",
+                            f"-{_gone:,.0f}" if _gone else "0")
+                m[2].metric("Rate", f"{_gain / _bil * 100:,.2f}%" if _bil else "—",
+                            help="Ratings over the bills of THE SAME DAYS.")
+                m[3].metric("Days measured",
+                            f"{_c.get('measured', 0)} of {_c.get('traded', 0)}",
+                            help="Bills are counted only on days that store has a "
+                                 "reading, so both halves cover the same calendar.")
 
-            _disp = _t.reset_index().rename(columns={
-                "store": "STORE", "Reviews": "GAINED", "Removed": "REMOVED",
-                "Bills": "BILLS", "Rate %": "RATE %", "Days": "DAYS"})
-            _disp = _disp[["STORE", "GAINED", "REMOVED", "BILLS", "RATE %",
-                           "DAYS"]]
-            _safe_dataframe(
-                _disp, use_container_width=True, hide_index=True,
-                column_config={
-                    "RATE %": st.column_config.NumberColumn(format="%.2f%%"),
-                    "GAINED": st.column_config.NumberColumn(format="%.1f"),
-                    "REMOVED": st.column_config.NumberColumn(format="%.1f"),
-                })
+                if _c.get("measured", 0) < _c.get("traded", 0):
+                    st.caption(
+                        f"⚠️ Collection began on **23 Aug 2026**, so this period is "
+                        f"measured over {_c.get('measured', 0)} of its "
+                        f"{_c.get('traded', 0)} trading days. The rate is over the "
+                        f"days actually read — it is not a whole-period figure.")
 
-            # ★ A STORE LOSING REVIEWS IS A DIFFERENT PROBLEM FROM ONE NEVER
-            # ASKING, and the fix is not the same. Named rather than left for
-            # someone to spot in a column.
-            _losing = _t[_t["Removed"] > _t["Reviews"]]
-            if len(_losing):
-                st.warning(
-                    "**Losing more than they gain:** "
-                    + " · ".join(f"{i} ({r['Reviews']:.0f} in, "
-                                 f"{r['Removed']:.0f} out)"
-                                 for i, r in _losing.iterrows()))
+                _disp = _t.reset_index().rename(columns={
+                    "store": "STORE", "Reviews": "GAINED", "Removed": "REMOVED",
+                    "Bills": "BILLS", "Rate %": "RATE %", "Days": "DAYS"})
+                _disp = _disp[["STORE", "GAINED", "REMOVED", "BILLS", "RATE %",
+                               "DAYS"]]
+                _safe_dataframe(
+                    _disp, use_container_width=True, hide_index=True,
+                    column_config={
+                        "RATE %": st.column_config.NumberColumn(format="%.2f%%"),
+                        "GAINED": st.column_config.NumberColumn(format="%.1f"),
+                        "REMOVED": st.column_config.NumberColumn(format="%.1f"),
+                    })
+
+                # ★ A STORE LOSING REVIEWS IS A DIFFERENT PROBLEM FROM ONE NEVER
+                # ASKING, and the fix is not the same. Named rather than left for
+                # someone to spot in a column.
+                _losing = _t[_t["Removed"] > _t["Reviews"]]
+                if len(_losing):
+                    st.warning(
+                        "**Losing more than they gain:** "
+                        + " · ".join(f"{i} ({r['Reviews']:.0f} in, "
+                                     f"{r['Removed']:.0f} out)"
+                                     for i, r in _losing.iterrows()))
 
             st.caption(
                 "GAINED and REMOVED can be fractional: when the collector "
@@ -4036,27 +4035,20 @@ if nav == "⭐ Google Reviews":
                                           for i, v in _short.items()))
 
             st.divider()
-            if st.button("📄 Build the PDF report", key="rv_pdf",
+            if st.button("📄 Build the PDF reports (East & NE, South)", key="rv_pdf",
                          type="primary"):
                 with st.spinner("Building…"):
                     try:
-                        st.session_state["rv_out"] = (
-                            f"google_reviews_{_asof:%Y%m%d}.pdf",
-                            RV.build_pdf(
-                                _rep,
-                                {"measured": int(_rv["store"].nunique()),
-                                 "total": int(_bills["store"].nunique()),
-                                 "source": _src},
-                                _asof,
-                                names=RV.store_display(_b)))
+                        st.session_state["rv_out"] = RV.region_pdfs(_rv, _bills, _b, _asof, _src)
                     except Exception as e:            # surface, don't crash
                         st.session_state["rv_out"] = None
                         st.error(f"Could not build: {e}")
-            if st.session_state.get("rv_out"):
-                _n, _p = st.session_state["rv_out"]
-                st.success(f"Ready — {_n}")
-                st.download_button("⬇️ Download", _p, file_name=_n,
-                                   mime="application/pdf", key="rv_dl")
+            if isinstance(st.session_state.get("rv_out"), list):   # (a pre-23 Oct session held one tuple)
+                _cols = st.columns(len(st.session_state["rv_out"]))
+                for _col, (_n, _p, _tag) in zip(_cols, st.session_state["rv_out"]):
+                    _col.download_button(f"⬇️ {dict((g, r) for r, g in RV.REGIONS).get(_tag, _tag)}", _p,
+                                         file_name=_n, mime="application/pdf", key=f"rv_dl_{_tag}",
+                                         use_container_width=True)
 
 
 if nav == "💸 DB REPORTS":
