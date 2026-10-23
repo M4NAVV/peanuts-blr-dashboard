@@ -519,7 +519,7 @@ def _bars(t, width, title, sub, names=None):
 
 
 def build_pdf(report: dict, coverage: dict, asof, basis_label="",
-              names: dict | None = None) -> bytes:
+              names: dict | None = None, region: str = "") -> bytes:
     """The review report, built for a phone.
 
     ★ IT USED TO BE A COVER PAGE AND ONE WIDE GRID. The cover carried six lines
@@ -543,8 +543,10 @@ def build_pdf(report: dict, coverage: dict, asof, basis_label="",
         usable = A4.PAGE_H - 2 * A4.MARGIN
         W = A4.CONTENT_W
 
+        # ★ `region` (23 Oct 2026): the WhatsApp sender sends one report per region ("split it in the 2 regions"),
+        # so a forwarded copy must say which. Empty = the whole estate, as the dashboard draws it.
         title = A4._heading(
-            W, "Google reviews",
+            W, f"Google reviews · {region}" if region else "Google reviews",
             f"Peanuts Retail  ·  as of {asof:%d %b %Y}  ·  "
             f"{coverage.get('measured', 0)} of {coverage.get('total', 0)} stores "
             f"measured  ·  the movement in each store's public Google rating "
