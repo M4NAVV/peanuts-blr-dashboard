@@ -3986,7 +3986,7 @@ if nav == "⭐ Google Reviews":
                                "DAYS"]]
                 # ★ Under 10 % is red (`reviews.LOW_RATE`, Manav 24 Oct); a blank rate is not measured, not low.
                 _sty = _disp.style.map(
-                    lambda v: "color: #FF0000; font-weight: 600"
+                    lambda v: "color: #B22222"
                     if pd.notna(v) and v < RV.LOW_RATE else "", subset=["RATE %"]).format(
                     {"RATE %": "{:.2f}%", "GAINED": "{:.1f}", "REMOVED": "{:.1f}"}, na_rep="")
                 _safe_dataframe(

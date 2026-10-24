@@ -46,6 +46,10 @@ TARGET_PPI = 327.0
 # and rate on the leaderboard, and its rate cells in the full table; the dashboard tab reads the same constant. Stores
 # only — a TOTAL under 10 % is not a store. A blank (not measured) rate is never red.
 LOW_RATE = 10.0
+# ★ SOFTENED THE SAME DAY ("the red is too jarring"): a solid #FF0000 bar shouted louder than the leaderboard itself.
+# Now a pale red bar, the rate in a deep brick red, the store name left in ink, and table cells tinted without bolding.
+LOW_INK = (178, 34, 34)
+LOW_BAR = (244, 199, 195)
 
 _BAND = {"Day": (238, 245, 251),      # blue
          "MTD": (238, 248, 241),      # green
@@ -530,8 +534,8 @@ def _bars(t, width, title, sub, names=None):
     for name, rate, rev, bills, gone in rows:
         cy = y + (row_h - _hh(name_b)) // 2
         low = rate < LOW_RATE
-        ink = PP.NEG_INK if low else PP.INK
-        d.text((0, cy), name, font=name_b, fill=ink)
+        ink = LOW_INK if low else PP.INK
+        d.text((0, cy), name, font=name_b, fill=PP.INK)
         # the bar
         bx = name_w
         bh = int(row_h * 0.52)
@@ -540,7 +544,7 @@ def _bars(t, width, title, sub, names=None):
         w = int(bar_w * (rate / top))
         if w > 0:
             d.rectangle([bx, by, bx + w, by + bh],
-                        fill=PP.NEG_INK if low else PP.HDR_BG, outline=PP.GRID)
+                        fill=LOW_BAR if low else PP.HDR_BG, outline=PP.GRID)
         # the figure, then what it is made of
         vx = name_w + bar_w + PP._px(12)
         txt = f"{rate:,.1f}%"
@@ -700,7 +704,7 @@ def build_pdf(report: dict, coverage: dict, asof, basis_label="",
             band = {j: _BAND[str(c).split()[0]]
                     for j, c in enumerate(disp.columns)
                     if str(c).split()[0] in _BAND}
-            low = [(c2, (lambda v: v < LOW_RATE), PP.NEG_INK, {"data"}) for c2 in pct]
+            low = [(c2, (lambda v: v < LOW_RATE), LOW_INK, {"data"}, False) for c2 in pct]
             two.put(PP._render_chunk(A4._widen(best_fit[2], W), rt,
                                      list(range(len(disp))), col_bg=band,
                                      cell_rules=low),
