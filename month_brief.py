@@ -211,8 +211,21 @@ def _draw(panels, asof, title=None, subtitle=None):
             break
     lw = int(min(pw * 0.56, scratch.textlength(longest, font=lab) + 30))
 
+    # ★ THE SUBTITLE WRAPS AT ITS "·" BREAKS (24 Oct 2026). On a one-region card (Samir's Diwali 18, East and South
+    # sent apart) the page is half as wide and "as of 22 Oct 2026" ran off the right edge.
+    sub = subtitle or (f"as of {asof:%d %b %Y}  ·  yesterday = {asof:%d %b}  ·  updates every day")
+    sub_lines, cur = [], ""
+    for part in sub.split("  ·  "):
+        trial = f"{cur}  ·  {part}" if cur else part
+        if cur and scratch.textlength(trial, font=sml) > page_w - PAD * 2:
+            sub_lines.append(cur)
+            cur = part
+        else:
+            cur = trial
+    sub_lines.append(cur)
+
     row_h = A4._h(lab) + 24
-    head_h = A4._h(ttb) + A4._h(sml) + 26
+    head_h = A4._h(ttb) + len(sub_lines) * (A4._h(sml) + 8) + 18
     title_h = A4._h(hdb) + 20
     panel_h = title_h + rows * row_h
     H = head_h + panel_h + PAD * 2 + 4
@@ -220,9 +233,8 @@ def _draw(panels, asof, title=None, subtitle=None):
     img = Image.new("RGB", (page_w, H), (255, 255, 255))
     d = ImageDraw.Draw(img)
     d.text((PAD, PAD), title or f"Month brief  ·  {asof:%B %Y}", font=ttb, fill=BAND)
-    d.text((PAD, PAD + A4._h(ttb) + 6),
-           subtitle or (f"as of {asof:%d %b %Y}  ·  yesterday = {asof:%d %b}  ·  "
-                        f"updates every day"), font=sml, fill=SUB)
+    for k, line in enumerate(sub_lines):
+        d.text((PAD, PAD + A4._h(ttb) + 6 + k * (A4._h(sml) + 8)), line, font=sml, fill=SUB)
 
     def centre(x0, x1, y, h, text, font, ink):
         w = d.textlength(text, font=font)
