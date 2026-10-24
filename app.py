@@ -3984,8 +3984,13 @@ if nav == "⭐ Google Reviews":
                     "Bills": "BILLS", "Rate %": "RATE %", "Days": "DAYS"})
                 _disp = _disp[["STORE", "GAINED", "REMOVED", "BILLS", "RATE %",
                                "DAYS"]]
+                # ★ Under 10 % is red (`reviews.LOW_RATE`, Manav 24 Oct); a blank rate is not measured, not low.
+                _sty = _disp.style.map(
+                    lambda v: "color: #FF0000; font-weight: 600"
+                    if pd.notna(v) and v < RV.LOW_RATE else "", subset=["RATE %"]).format(
+                    {"RATE %": "{:.2f}%", "GAINED": "{:.1f}", "REMOVED": "{:.1f}"}, na_rep="")
                 _safe_dataframe(
-                    _disp, use_container_width=True, hide_index=True,
+                    _sty, use_container_width=True, hide_index=True,
                     column_config={
                         "RATE %": st.column_config.NumberColumn(format="%.2f%%"),
                         "GAINED": st.column_config.NumberColumn(format="%.1f"),

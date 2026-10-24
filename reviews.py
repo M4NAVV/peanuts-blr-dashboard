@@ -42,6 +42,11 @@ URL_ENV = "REVIEWS_URL"
 TARGET_PPI = 327.0
 
 # ★ ONE WASH PER PERIOD, pale enough that the figures stay the content.
+# ★ A STORE UNDER 10 % IS RED (Manav, 24 Oct 2026): "if any store is below 10%, then highlight it red". Its name, bar
+# and rate on the leaderboard, and its rate cells in the full table; the dashboard tab reads the same constant. Stores
+# only — a TOTAL under 10 % is not a store. A blank (not measured) rate is never red.
+LOW_RATE = 10.0
+
 _BAND = {"Day": (238, 245, 251),      # blue
          "MTD": (238, 248, 241),      # green
          "QTD": (252, 247, 236),      # amber
@@ -524,7 +529,9 @@ def _bars(t, width, title, sub, names=None):
     y = head
     for name, rate, rev, bills, gone in rows:
         cy = y + (row_h - _hh(name_b)) // 2
-        d.text((0, cy), name, font=name_b, fill=PP.INK)
+        low = rate < LOW_RATE
+        ink = PP.NEG_INK if low else PP.INK
+        d.text((0, cy), name, font=name_b, fill=ink)
         # the bar
         bx = name_w
         bh = int(row_h * 0.52)
@@ -532,13 +539,13 @@ def _bars(t, width, title, sub, names=None):
         d.rectangle([bx, by, bx + bar_w, by + bh], fill=(240, 240, 240))
         w = int(bar_w * (rate / top))
         if w > 0:
-            d.rectangle([bx, by, bx + w, by + bh], fill=PP.HDR_BG,
-                        outline=PP.GRID)
+            d.rectangle([bx, by, bx + w, by + bh],
+                        fill=PP.NEG_INK if low else PP.HDR_BG, outline=PP.GRID)
         # the figure, then what it is made of
         vx = name_w + bar_w + PP._px(12)
         txt = f"{rate:,.1f}%"
         d.text((vx + val_w - d.textlength(txt, font=val_b), cy), txt,
-               font=val_b, fill=PP.INK)
+               font=val_b, fill=ink)
         made = f"{rev:,.0f} of {bills:,.0f} bills"
         d.text((vx + val_w + PP._px(12), cy + PP._px(2)), made, font=small_f,
                fill=(90, 90, 90))
@@ -693,8 +700,10 @@ def build_pdf(report: dict, coverage: dict, asof, basis_label="",
             band = {j: _BAND[str(c).split()[0]]
                     for j, c in enumerate(disp.columns)
                     if str(c).split()[0] in _BAND}
+            low = [(c2, (lambda v: v < LOW_RATE), PP.NEG_INK, {"data"}) for c2 in pct]
             two.put(PP._render_chunk(A4._widen(best_fit[2], W), rt,
-                                     list(range(len(disp))), col_bg=band),
+                                     list(range(len(disp))), col_bg=band,
+                                     cell_rules=low),
                     gap=22)
 
         # ★★ EACH SHEET IS CROPPED BY ITS OWN CONTENT. `_footers` crops every
