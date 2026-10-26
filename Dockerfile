@@ -3,6 +3,11 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
+# ★ Chromium draws the 🕒 Afternoon Sales pictures (afternoon_sale.py, 26 Oct 2026); Noto covers ₹ and anything the
+# brand font (fetched from Google Fonts at draw time) does not.
+RUN apt-get update && apt-get install -y --no-install-recommends chromium fonts-noto-core \
+    && rm -rf /var/lib/apt/lists/*
+
 # Python deps first (better layer caching).
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt

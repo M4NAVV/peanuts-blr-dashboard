@@ -632,7 +632,78 @@ _PF_TABS = ["📈 MW Data", "🧾 GD Sheet", "🏷️ Brand-wise GD", "🗺️ L
             "🎯 Day Targets", "🥧 Contribution", "📆 Weekday vs Weekend",
             "🏙️ City-wise G/D", "🏬 Stores",
             "📅 Monthly", "🗓️ Day calendar", "🧾 Samir Report",
-            "🧮 Excel Builder", "📄 REPORTS PDF"]
+            "🧮 Excel Builder", "🕒 Afternoon Sales", "📄 REPORTS PDF"]
+
+
+# ================= Afternoon sales (26 Oct 2026) ================= #
+# The 3:30 figures the back office types into the `afternoonsales` tab, drawn as the same seven pictures that go
+# to the directors on WhatsApp when SEND is ticked — one drawing module (`afternoon_sale.py`) serves both.
+@st.cache_data(ttl=120, show_spinner=False)
+def _afternoon_read():
+    import afternoon_sale as AS
+    return AS._fetch(AS.AFTERNOON_GID), AS._fetch(AS.STOREMASTER_GID)
+
+
+@st.cache_data(show_spinner=False, max_entries=4)
+def _afternoon_pngs(tab, master):
+    import tempfile
+    from pathlib import Path as _P
+    import afternoon_sale as AS
+    d = AS.parse(tab, master)
+    with tempfile.TemporaryDirectory() as t:
+        files = AS.build(d, _P(t))
+        return [(AS.shown_name(n, words, d.date), words, p.read_bytes())
+                for n, (_, words, p) in enumerate(files, 1)]
+
+
+def _afternoon_tab():
+    import datetime as _dt
+    import afternoon_sale as AS
+    st.subheader("Afternoon sales")
+    st.caption("The 3:30 figures from the `afternoonsales` tab, drawn as the seven pictures the directors get on "
+               "WhatsApp when SEND is ticked. Download all seven as one zip below.")
+    if st.button("🔄 Read the sheet again", key="aft_refresh"):
+        _afternoon_read.clear()
+    try:
+        tab, master = _afternoon_read()
+        d = AS.parse(tab, master)
+    except Exception as e:                      # a bad sheet must say why, never show an empty page
+        st.error(f"**The afternoon tab could not be read.** {e}")
+        return
+    today = _dt.datetime.now(AS.IST).date()
+    open_codes = [c for c in d.sale if c not in d.closed]
+    filled = [c for c in open_codes if d.sale.get(c) is not None]
+    vfl = [c for v in AS.VFL.values() for c, _, _ in v if c not in d.closed]
+    tgts = [c for c in vfl if d.target.get(c)]
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Date in the sheet", f"{d.date:%d %b %Y}")
+    c2.metric("Time taken", d.taken or "—")
+    c3.metric("Stores filled", f"{len(filled)} of {len(open_codes)}")
+    c4.metric("VFL targets", f"{len(tgts)} of {len(vfl)}")
+    if d.date != today:
+        st.warning(f"These are the figures for **{d.date:%d %b %Y}** — today's ({today:%d %b %Y}) have not been "
+                   "entered yet.")
+    missing = [c for c in open_codes if d.sale.get(c) is None]
+    if missing and filled:
+        st.info("Not received yet (shown as — and left out of the totals): " + ", ".join(map(str, missing)))
+    if not filled:
+        st.info("No sales typed in the tab yet — nothing to draw.")
+        return
+    with st.spinner("Drawing the seven pictures (about half a minute the first time)…"):
+        try:
+            pngs = _afternoon_pngs(tab, master)
+        except Exception as e:
+            st.error(f"**The pictures could not be drawn.** {type(e).__name__}: {e}")
+            return
+    st.download_button("⬇️ Download all 7 as a zip", AS.zip_bytes([(n, b) for n, _, b in pngs]),
+                       file_name=f"Afternoon sale {d.date:%d-%m-%Y}.zip", mime="application/zip",
+                       type="primary", key="aft_zip")
+    tabs = st.tabs([f"AFT {i}" for i in range(1, len(pngs) + 1)])
+    for t, (name, words, png) in zip(tabs, pngs):
+        with t:
+            st.caption(words)
+            st.image(png, width=760)
+            st.download_button("⬇️ This picture", png, file_name=name, mime="image/png", key=f"aft_{name}")
 
 
 def render_portfolio():
@@ -774,6 +845,11 @@ def render_portfolio():
     nav = st.segmented_control(
         "Section", _PF_TABS, key="pf_active_nav", label_visibility="collapsed")
     nav = nav or st.session_state["pf_active_nav"] or _PF_TABS[0]
+
+    # ★ before the empty-filter check: the afternoon tab reads its own sheet, not the portfolio filters
+    if nav == "🕒 Afternoon Sales":
+        _afternoon_tab()
+        return
 
     if pf.empty:
         st.info("No stores match the current filters.")
