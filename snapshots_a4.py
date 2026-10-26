@@ -964,6 +964,21 @@ def _period_block(L, df, asof, store, code, kind, targets, drv, types,
     """
     if drv is None or drv.empty:
         return None
+    (down, dt), (up, ut) = _split_drivers(drv, types, kind)
+    lean, lifted = _lift_constants(drv)
+    d_lean, _ = _lift_constants(down)
+    u_lean, _ = _lift_constants(up)
+    return dict(kind=kind, drv=lean, types=types, lifted=lifted,
+                down=(d_lean, dt), up=(u_lean, ut),
+                **_period_cards(L, df, asof, store, code, kind, targets,
+                                label_px, value_px))
+
+
+def _period_cards(L, df, asof, store, code, kind, targets, label_px=23,
+                  value_px=42):
+    """The period's caption and its ten target / trading cards — page one's
+    strip, drawn alone so page two can repeat it (Manav, 26 Oct 2026: the
+    categories page carries the same MTD / YTD cards and the seven measures)."""
     k = SN.store_kpis(L, df, asof, kind, store)
     tp = SN.target_progress(L, asof, kind, store, code,
                             achieved=k["ty"]["sale"], targets=targets)
@@ -984,14 +999,8 @@ def _period_block(L, df, asof, store, code, kind, targets, drv, types,
           else (PP.NEG_INK if k["ty"]["bills"] < k["ly"]["bills"] else None)),
          SN._single_bill_card(sb)],
     ]
-    (down, dt), (up, ut) = _split_drivers(drv, types, kind)
-    lean, lifted = _lift_constants(drv)
-    d_lean, _ = _lift_constants(down)
-    u_lean, _ = _lift_constants(up)
     label = "the month so far" if kind == "MTD" else "the year to date"
-    return dict(kind=kind, drv=lean, types=types, lifted=lifted,
-                down=(d_lean, dt), up=(u_lean, ut),
-                cap=_caption(CONTENT_W, f"{kind} — {label}",
+    return dict(cap=_caption(CONTENT_W, f"{kind} — {label}",
                              "target, achievement and how the trading is going"),
                 cards=SN._cards_image(rows, CONTENT_W, label_px=label_px,
                                       value_px=value_px))
@@ -1268,7 +1277,8 @@ def store_packs(L, df, asof, ff=None, pf=None, targets=None, progress=None,
         except Exception as e:                  # one store must not sink the run
             failed.append(f"{s}: morning briefing — {e}")
         try:                                    # ★ page two since 18 Oct 2026: by category
-            pages += category_sheet_print(L, df, asof, s, code) or []
+            pages += category_sheet_print(L, df, asof, s, code, ff=ff,
+                                          targets=targets) or []
         except Exception as e:
             failed.append(f"{s}: categories page — {e}")
         try:
@@ -1335,15 +1345,26 @@ def _by_category(L, df, asof, kind, store):
     return a, ["store"] * len(a)
 
 
-def category_sheet_print(L, df, asof, store, code=None):
+LAST_CATEGORY_FONT_PX = None
+
+
+def category_sheet_print(L, df, asof, store, code=None, ff=None, targets=None):
     """One store → [PIL page]: MTD and YTD, what is falling and what is growing,
-    by category (Menswear / Womenswear / Kidswear), in page one's print style."""
+    by category (Menswear / Womenswear / Kidswear), in page one's print style.
+
+    ★ Manav, 26 Oct 2026: page two repeats page one's MTD and YTD card strips at
+    the top and the seven measures at the bottom, so either page can be handed
+    over alone. They are drawn by the same calls page one makes
+    (`_period_cards`, `SN.period_kpis`, `_kpi_grid_a4`) at the same print
+    sizes, so the two pages cannot show different figures."""
     global MARGIN, CONTENT_W
     asof = pd.Timestamp(asof)
     GAP = 22
-    _keep = (MARGIN, CONTENT_W, PP.PAD_Y)
+    targets = SN._targets_for(asof) if targets is None else targets
+    _keep = (MARGIN, CONTENT_W, PP.PAD_Y, SN.CARD_PAD_Y)
     MARGIN = PRINT_MARGIN
     CONTENT_W = PAGE_W - 2 * MARGIN
+    SN.CARD_PAD_Y = PRINT_CARD_PAD_Y
     try:
         half = (CONTENT_W - PRINT_GUT) // 2
         usable = PAGE_H - 2 * MARGIN
@@ -1358,6 +1379,13 @@ def category_sheet_print(L, df, asof, store, code=None):
                               up=(up.rename(columns=ren), ut)))
         if not built:
             return None
+        strips = [_period_cards(L, df, asof, store, code, b["kind"], targets,
+                                label_px=PRINT_CARD_LABEL_PX,
+                                value_px=PRINT_CARD_VALUE_PX) for b in built]
+        kpi = _stack([_caption(CONTENT_W, "The seven measures",
+                               "the same seven on the day, the month and the year"),
+                      _kpi_grid_a4(SN.period_kpis(L, df, asof, store, ff or {}, code),
+                                   CONTENT_W, **PRINT_KPI)], gap=10)
         head = _heading(CONTENT_W, f"{store} — categories",
                         f"as of {asof:%d %b %Y}  ·  every brand's line in one category "
                         f"(Manyavar and Twamev kurta sets are one Kurta set)  ·  "
@@ -1366,7 +1394,9 @@ def category_sheet_print(L, df, asof, store, code=None):
         _money_of = lambda k: list(L.drivers_money(k)) + ["Gain"]
         _pct_all = list(L.DRIVERS_PCT) + ["Growth %"]
         _sign = ["Shortfall", "Gain"] + _pct_all
-        budget = usable - (head.height + GAP + 2 * (tcap_h + 8) + 24 + GAP)
+        budget = usable - (head.height + GAP
+                           + sum(c["cap"].height + 8 + c["cards"].height + GAP for c in strips)
+                           + 2 * (tcap_h + 8) + 24 + GAP + kpi.height + GAP)
 
         def measure(px):
             ms = {(b["kind"], k): _measure(b[k][0], _money_of(b["kind"]),
@@ -1400,6 +1430,9 @@ def category_sheet_print(L, df, asof, store, code=None):
 
         sheet = _Sheet(store, asof, "", bounded=True, footer=False)
         sheet.put(head, gap=GAP)
+        for c in strips:
+            sheet.put(c["cap"], gap=8)
+            sheet.put(c["cards"], gap=GAP)
         cols = []
         for b in built:
             parts = []
@@ -1417,9 +1450,12 @@ def category_sheet_print(L, df, asof, store, code=None):
                     [cap, PP._render_chunk(m, rt, list(range(len(frame))))], gap=8))
             cols.append(_stack(parts, gap=24))
         sheet.put(_beside(cols[0], cols[1] if len(cols) > 1 else None, PRINT_GUT), gap=GAP)
+        sheet.put(kpi, gap=GAP)
+        global LAST_CATEGORY_FONT_PX
+        LAST_CATEGORY_FONT_PX = font_px            # read by the sample script / tests
         return sheet.images()
     finally:
-        MARGIN, CONTENT_W, PP.PAD_Y = _keep
+        MARGIN, CONTENT_W, PP.PAD_Y, SN.CARD_PAD_Y = _keep
 
 
 # --------------------------------------------------------------------------- #
