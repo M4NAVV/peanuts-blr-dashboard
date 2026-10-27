@@ -129,14 +129,42 @@ def _gd_l2l(PL, pf, region, asof):
                            opened=PL.opened_map(pf, asof))
 
     def rate(kind):
-        cur, pri = PL._window_frames(pf, kind, asof)
-        if cur.empty and pri.empty:
-            return None
-        c, p = ES.l2l_frames(cur, pri, bounds, "code")
-        ty, ly = c["sales"].sum(), p["sales"].sum()
+        ty, ly = _l2l_pair(PL, pf, bounds, kind, asof)
         return ((ty - ly) / ly * 100) if ly else None
 
     return (rate("MTD"), rate("YTD"))
+
+
+def _l2l_pair(PL, pf, bounds, kind, asof):
+    """(this year, last year) in rupees behind one `_gd_l2l` rate — the director card adds the regions' pairs
+    to state an OVERALL growth, which two rates cannot give."""
+    import exec_snapshot as ES
+    cur, pri = PL._window_frames(pf, kind, asof)
+    if cur.empty and pri.empty:
+        return (0.0, 0.0)
+    c, p = ES.l2l_frames(cur, pri, bounds, "code")
+    return (float(c["sales"].sum()), float(p["sales"].sum()))
+
+
+def east_pairs(PL, pf, asof):
+    """{"MTD": (ty, ly), "YTD": (ty, ly)} for East & NE — the same spans and windows as `_gd_l2l`."""
+    import exec_snapshot as ES
+    pf = pf[pf["region"] == "East & NE"]
+    bounds = ES.l2l_bounds(pf, "code", "sales", PL.closed_map(), asof, opened=PL.opened_map(pf, asof))
+    return {k: _l2l_pair(PL, pf, bounds, k, asof) for k in ("MTD", "YTD")}
+
+
+def south_pairs(L, df, asof):
+    """{"MTD": (ty, ly), "YTD": (ty, ly)} for South off the VFL feed — the month card's own windows: the year from
+    the 19 Apr 2026 takeover, the month against the same days of last year (see `build`)."""
+    south = df[df[L.COL_REGION] == "South"]
+    asof = pd.Timestamp(asof)
+    fy = asof.year if asof.month >= 4 else asof.year - 1
+    start = max(pd.Timestamp(fy, 4, 1), pd.Timestamp(2026, 4, 19))
+    s = lambda lo, hi: float(south[(south["date"] >= lo) & (south["date"] <= hi)][L.COL_AMOUNT].sum())
+    ly = asof - pd.DateOffset(years=1)
+    return {"YTD": (s(start, asof), s(start - pd.DateOffset(years=1), ly)),
+            "MTD": (s(asof.replace(day=1), asof), s(asof.replace(day=1) - pd.DateOffset(years=1), ly))}
 
 
 def panel(L, name, d, amt, asof, gd_mtd, gd_ytd, target=None):
