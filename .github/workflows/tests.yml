@@ -60,7 +60,10 @@ jobs:
           # failed at import on 4 Oct while passing on the laptop, the fourth time.
           pip install "pandas==2.2.3" "numpy==1.26.4" "pillow==12.3.0" \
                       "pyyaml==6.0.2" "pyarrow==18.1.0" "openpyxl==3.1.5" \
-                      "matplotlib==3.11.0" requests pytest
+                      "matplotlib==3.11.0" requests pytest \
+                      "streamlit==1.59.0"
+          # ★ streamlit (28 Oct 2026): tests/test_pivot_pane.py imports pivot_pane, which registers its component with
+          # Streamlit — CI went red on the push that added it. Pinned to the Space's version (requirements.txt).
 
       - name: Run the tests
         run: python -m pytest tests -q
