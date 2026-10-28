@@ -632,7 +632,7 @@ _PF_TABS = ["📈 MW Data", "🧾 GD Sheet", "🏷️ Brand-wise GD", "🗺️ L
             "🎯 Day Targets", "🥧 Contribution", "📆 Weekday vs Weekend",
             "🏙️ City-wise G/D", "🏬 Stores",
             "📅 Monthly", "🗓️ Day calendar", "🧾 Samir Report",
-            "🧮 Excel Builder", "🕒 Afternoon Sales", "📄 REPORTS PDF"]
+            "🧮 Excel Builder", "🧮 Excel Builder · new", "🕒 Afternoon Sales", "📄 REPORTS PDF"]
 
 
 # ================= Afternoon sales (26 Oct 2026) ================= #
@@ -989,6 +989,11 @@ def render_portfolio():
         # render_pivot_builder(pf, feed="portfolio", key="pf_pivot", asof=asof)
         import pivot_ui
         pivot_ui.render(pf, feed="portfolio", key="pf_pvx", asof=asof)
+    # 28 Oct 2026: the same pivot, drawn as Excel's own PivotTable (pivot_pane). Beside the old tab until Manav
+    # approves it; then it takes the "🧮 Excel Builder" name and the old one goes.
+    if nav == "🧮 Excel Builder · new":
+        import pivot_pane
+        pivot_pane.render(pf, feed="portfolio", key="pf_pxx", asof=asof)
         return
 
     # ===================== Executive ===================== #
@@ -2915,7 +2920,7 @@ _TAB_LABELS = [
     "⚖️ Gender Mix",
     "📊 Executive", "🎯 Day Targets", "🏙️ City-wise G/D", "📅 Monthly Contribution",
     "📐 Store Productivity", "Overview", "🏬 Stores",
-    "🧮 Excel Builder", "✂️ Alterations", "🔧 Build your view", "Trends",
+    "🧮 Excel Builder", "🧮 Excel Builder · new", "✂️ Alterations", "🔧 Build your view", "Trends",
     "Category mix", "Salespeople",
     "Customers", "Colors & sizes",
 ]
@@ -3246,6 +3251,10 @@ if nav == "🧮 Excel Builder":
     # render_pivot_builder(df_all, feed="vfl", key="vfl_pivot", asof=pd.Timestamp(end_d))
     import pivot_ui
     pivot_ui.render(df_all, feed="vfl", key="vfl_pvx", asof=pd.Timestamp(end_d))
+if nav == "🧮 Excel Builder · new":
+    # 28 Oct 2026: Excel's own PivotTable look and behaviour (pivot_pane), beside the old tab until approved.
+    import pivot_pane
+    pivot_pane.render(df_all, feed="vfl", key="vfl_pxx", asof=pd.Timestamp(end_d))
 
 
 # =========================================================================== #
