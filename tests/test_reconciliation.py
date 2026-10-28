@@ -28,14 +28,20 @@ import os
 
 import pytest
 
-GOLDEN = os.environ.get("PEANUTS_RECON",
-                        os.path.expanduser("~/Documents/peanuts-recon/golden.json"))
+# ★ 28 Oct 2026: the figures moved out of Documents (iCloud-synced, macOS-protected — reading them there died on
+# "Operation not permitted", even from Manav's own Terminal). ~/peanuts-recon first, the old place as a fallback.
+_HOME, _OLD = os.path.expanduser("~/peanuts-recon/golden.json"), os.path.expanduser("~/Documents/peanuts-recon/golden.json")
+GOLDEN = os.environ.get("PEANUTS_RECON") or (_HOME if os.path.exists(_HOME) else _OLD)
 
 if not os.path.exists(GOLDEN):
     pytest.skip(f"no reconciliation file on this machine ({GOLDEN}); it runs on "
                 f"Manav's Mac at deploy", allow_module_level=True)
 
-CHECKS = json.load(open(GOLDEN))["checks"]
+try:
+    CHECKS = json.load(open(GOLDEN))["checks"]
+except PermissionError:                                 # a lock is not a pass — say what to do
+    pytest.fail(f"macOS will not let this process read {GOLDEN}. Move the folder 'peanuts-recon' out of Documents "
+                f"into the home folder (~/peanuts-recon) and run again.", pytrace=False)
 
 
 @pytest.fixture(scope="module")

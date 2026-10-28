@@ -48,7 +48,24 @@ fi
 # this public repo. A SKIP is treated as a failure here — "could not check" is
 # not "checked" (see feedback-silent-failure-must-speak). Override, with a
 # reason, only for an emergency:  SKIP_RECON=1 ./deploy.sh
-GOLDEN="${PEANUTS_RECON:-$HOME/Documents/peanuts-recon/golden.json}"
+#
+# ★ 28 Oct 2026 — THE FIGURES LIVE OUTSIDE DOCUMENTS (~/peanuts-recon). Documents is iCloud-synced and macOS-
+# protected: twice a deploy died on "Operation not permitted" reading ~/Documents/peanuts-recon — first for
+# Claude's process, then for Manav's own Terminal — because macOS had stopped letting apps into Documents (or iCloud
+# had offloaded the file). The home folder is neither synced nor protected. The old path is still read if the
+# file has not moved, and a file that exists but cannot be read now says so in plain words.
+if [ -n "${PEANUTS_RECON:-}" ]; then GOLDEN="$PEANUTS_RECON"
+elif [ -f "$HOME/peanuts-recon/golden.json" ]; then GOLDEN="$HOME/peanuts-recon/golden.json"
+else GOLDEN="$HOME/Documents/peanuts-recon/golden.json"; fi
+export PEANUTS_RECON="$GOLDEN"
+if [ "${SKIP_RECON:-0}" != "1" ] && { [ -e "$GOLDEN" ] || ls -d "$(dirname "$GOLDEN")" >/dev/null 2>&1 || [ -d "$(dirname "$GOLDEN")" ]; } \
+   && ! head -c 1 "$GOLDEN" >/dev/null 2>&1; then
+    echo "✗ NOT DEPLOYED — the signed-off figures exist but macOS will not let this Terminal read them:"
+    echo "    $GOLDEN"
+    echo "  Fix once and for all: in Finder, move the folder 'peanuts-recon' out of Documents into your home"
+    echo "  folder (Go → Home), so it is $HOME/peanuts-recon/golden.json. Then run ./deploy.sh again."
+    exit 1
+fi
 if [ "${SKIP_RECON:-0}" = "1" ]; then
     echo "! reconciliation SKIPPED by SKIP_RECON=1 — say why in the commit or the log"
 elif [ -f "$GOLDEN" ]; then
