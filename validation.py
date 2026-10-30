@@ -99,6 +99,39 @@ class Report:
                 f"through {n.get('max_date', '—')}")
 
 
+# ★ CHECKED ONCE PER LOAD, NOT ONCE PER CLICK (30 Oct 2026). The dashboard re-ran `validate` on every redraw (~2.2 s
+# of a ~9.5 s warm redraw) on data it had already checked. It also made warnings FLICKER: the first run compares the
+# new load with the last one and may warn, then saves the new load as the baseline, so the next click compared the
+# data with itself and the warning vanished. Remembering the first report for the same data fixes both.
+# The key is everything the answer depends on: the feed, the columns, the data's fingerprint, today, the store count
+# expected. A different load has a different fingerprint and is checked afresh; `clear_cache()` empties it (Refresh).
+_MEMO = {}
+
+
+def clear_cache():
+    _MEMO.clear()
+
+
+def validate_cached(df: pd.DataFrame, kind: str, *, date_col: str, store_col: str, value_col: str,
+                    expect_stores: int | None = None) -> "Report":
+    """`validate`, remembered for identical data on the same day. Same arguments, same Report."""
+    try:
+        f = fingerprint(df, date_col=date_col, store_col=store_col, value_col=value_col) if df is not None and not df.empty \
+            and all(c in df.columns for c in (date_col, store_col, value_col)) else None
+    except Exception:
+        f = None
+    if f is None:                                  # nothing safe to key on: check it fresh, as before
+        return validate(df, kind, date_col=date_col, store_col=store_col, value_col=value_col, expect_stores=expect_stores)
+    key = (kind, date_col, store_col, value_col, expect_stores, str(pd.Timestamp.today().normalize().date()),
+           f["rows"], f["stores"], f["max_date"], round(f["total"], 2), int(df.shape[1]))
+    if key not in _MEMO:
+        if len(_MEMO) > 16:
+            _MEMO.clear()
+        _MEMO[key] = validate(df, kind, date_col=date_col, store_col=store_col, value_col=value_col,
+                              expect_stores=expect_stores)
+    return _MEMO[key]
+
+
 def _state() -> dict:
     try:
         with open(_STATE) as f:

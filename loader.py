@@ -297,7 +297,7 @@ def clean(df: pd.DataFrame) -> pd.DataFrame:
     return df.reset_index(drop=True)
 
 
-def load_data(pf="auto") -> pd.DataFrame:
+def load_data(pf="auto", raw=None) -> pd.DataFrame:
     """Public entry point. Streamlit caching is applied in app.py.
 
     If a night fill is configured and holds a day NEWER than anything in the VFL
@@ -316,8 +316,11 @@ def load_data(pf="auto") -> pd.DataFrame:
     downloaded twice); "auto" loads it; None switches the source off.
     `df.attrs["provisional_estimated"]` lists the store codes whose brand
     split had to be estimated because the intake form was not filed.
+
+    `raw` is the sheet if the caller already downloaded it (the app fetches it alongside the portfolio feed); None
+    reads it here, exactly as before.
     """
-    raw = _read_raw()
+    raw = _read_raw() if raw is None else raw
     provisional, estimated = None, []
     prov_from = None
     try:

@@ -81,12 +81,38 @@ def _master_url():
             f"/export?format=csv&gid={_GID}") if m else None
 
 
+# ★ ONE DOWNLOAD PER TEN MINUTES, NOT ELEVEN PER CLICK (30 Oct 2026). Every page redraw read this tab from Google
+# eleven times — opened(), closed() and carpet() are each called from several places — and those reads were ~6 of a
+# warm redraw's ~9.5 s. The rules that keep this from making anything fragile:
+#   · only a SUCCESSFUL read is remembered; a failure is never cached, so the next call simply tries again;
+#   · a remembered copy lives at most _TTL seconds, so an edit to the sheet shows within ten minutes;
+#   · every caller gets its own copy, so nothing a caller does to its frame can leak into the next one;
+#   · `clear_cache()` empties it (the dashboard's Refresh button calls it).
+import time as _time
+_TTL = 600
+_MEMO = {}
+
+
+def clear_cache():
+    _MEMO.clear()
+
+
+def _fetch(url):
+    """pd.read_csv(url, dtype=str), remembered for _TTL seconds when it succeeds. Raises exactly as read_csv does."""
+    hit = _MEMO.get(url)
+    if hit is not None and _time.monotonic() - hit[0] < _TTL:
+        return hit[1].copy()
+    m = pd.read_csv(url, dtype=str)
+    _MEMO[url] = (_time.monotonic(), m)
+    return m.copy()
+
+
 def carpet() -> dict:
     """store code -> carpet sqft."""
     url = _master_url()
     if url:
         try:
-            m = pd.read_csv(url, dtype=str)
+            m = _fetch(url)
             m.columns = [str(c).strip() for c in m.columns]
             code = pd.to_numeric(m.get("STORE CODE"), errors="coerce")
             area = pd.to_numeric(m.get("CARPET"), errors="coerce")
@@ -122,7 +148,7 @@ def _read():
 def _read_one(url):
     global _LAST_PROBLEM
     try:
-        m = pd.read_csv(url, dtype=str)
+        m = _fetch(url)
         m.columns = [str(c).strip() for c in m.columns]
         m["_code"] = pd.to_numeric(m.get("STORE CODE"), errors="coerce")
         m = m[m["_code"].notna()]

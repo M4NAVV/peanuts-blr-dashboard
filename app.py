@@ -108,6 +108,13 @@ st.markdown(
 # expose a manual "Refresh" button + a "data as of" timestamp for on-demand
 # updates. This avoids re-downloading the ~265k-row sheet on a short TTL.
 # --------------------------------------------------------------------------- #
+def _clear_quick_caches():
+    """Every Refresh button empties the short-lived caches too, so 'refresh' always means fresh."""
+    import master_lookup, validation
+    master_lookup.clear_cache()
+    validation.clear_cache()
+
+
 @st.cache_data(ttl=21600, show_spinner="Loading sales data… (first load ~10s)")
 def _load_cached():
     from datetime import datetime
@@ -115,11 +122,22 @@ def _load_cached():
     # ★ The night's VFL figures come from PEANUTS TOTAL (28 Sep), so the
     # portfolio frame is handed over from its own cache rather than downloaded
     # a second time. If it cannot load, the VFL page still loads without it.
-    try:
-        _pf = _load_portfolio_cached()[0]
-    except Exception:
-        _pf = None
-    df = L.load_data(pf=_pf)
+    # ★ BOTH SHEETS AT ONCE (30 Oct 2026). The bill sheet used to wait for the portfolio sheet; each is mostly
+    # Google generating a CSV (~8-9 s), so the bill sheet now downloads on a helper thread while the portfolio one
+    # loads. If that early download fails for ANY reason it is discarded and `load_data` reads the sheet itself,
+    # exactly as before — same retry, same error on screen. At worst it is as slow as it was; never more fragile.
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=1) as _ex:
+        _raw_f = _ex.submit(L._read_raw)
+        try:
+            _pf = _load_portfolio_cached()[0]
+        except Exception:
+            _pf = None
+        try:
+            _raw = _raw_f.result()
+        except Exception:
+            _raw = None
+    df = L.load_data(pf=_pf, raw=_raw)
     # Carried out of the cache explicitly; attrs are not guaranteed to survive it.
     return (df, datetime.now(ZoneInfo("Asia/Kolkata")),
             df.attrs.get("provisional_date"),
@@ -592,8 +610,8 @@ def _gate(df, kind, *, date_col, store_col, value_col, expect_stores=None):
     and the numbers are labelled unvalidated while it is on.
     """
     import validation
-    rep = validation.validate(df, kind, date_col=date_col, store_col=store_col,
-                              value_col=value_col, expect_stores=expect_stores)
+    rep = validation.validate_cached(df, kind, date_col=date_col, store_col=store_col,
+                                     value_col=value_col, expect_stores=expect_stores)
     if rep.problems:
         st.error("**This data does not look right, so it is not being shown.**")
         for p in rep.problems:
@@ -613,6 +631,7 @@ def _gate(df, kind, *, date_col, store_col, value_col, expect_stores=None):
         if st.button("🔄 Re-read the feed now", key=f"gate_reload_{kind}"):
             _load_cached.clear()
             _load_portfolio_cached.clear()
+            _clear_quick_caches()
             st.rerun()
         if not st.checkbox("Show it anyway (numbers are unverified)",
                            key=f"override_{kind}"):
@@ -814,6 +833,7 @@ def render_portfolio():
         # the only refresh control this mode offers, and a button that silently
         # leaves half the data stale is worse than no button.
         _load_cached.clear()
+        _clear_quick_caches()
         st.rerun()
 
     # ---- Apply category filters ----
@@ -2455,6 +2475,7 @@ if _vfl_prov is not None:
 if st.sidebar.button("🔄 Refresh data now"):
     _load_cached.clear()
     _load_portfolio_cached.clear()
+    _clear_quick_caches()
     st.rerun()
 
 if df.empty:
