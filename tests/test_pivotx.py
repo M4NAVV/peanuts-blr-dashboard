@@ -124,3 +124,19 @@ def test_workbook_builds_both_feeds():
 def test_indian_grouping():
     assert P.fmt(12345678, "money") == "1,23,45,678"
     assert P.fmt(0.123, "pctchg") == "+12.3%"
+
+
+def test_store_code_is_a_vfl_field_from_the_store_master(monkeypatch):
+    """2 Nov 2026 (Manav: "add the store codes also as a field in the excel builder")."""
+    import loader as L
+    monkeypatch.setattr(L, "load_store_master", lambda: pd.DataFrame(
+        {"tableau_name": ["Jayanagar", "Indiranagar"], "code": ["101.0", "9"]}))
+    assert "Store code" in P.field_names("vfl") and P.field_group("vfl")["Store code"] == "Region"
+    df = _vfl2()
+    df.loc[df.index[0], "store"] = "Somewhere New"                  # a store the master does not know
+    w = P.prepare(df, "vfl")
+    got = set(P.labels(w, "vfl", "Store code")[0])
+    assert {"101", "(not in store master)"} <= got and "101.0" not in got
+    g = P.build(_vfl2(), "vfl", P.Spec(rows=["Store code"], values=[("Sales (₹)", "Value")]))
+    keys = [r["key"] for r in g["rows"] if r["kind"] == "item"]
+    assert keys and all(len(k) == 1 for k in keys)

@@ -42,7 +42,8 @@ _WEEKDAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday",
 
 # field -> column on the VFL frame (plain label fields)
 _VFL_COLS = {
-    "Region": "region", "State": "state", "City": "city", "Store": "store", "Store format": "store_format",
+    "Region": "region", "State": "state", "City": "city", "Store": "store", "Store code": "_store_code",
+    "Store format": "store_format",
     "Brand": "brand", "Men/Women/Child": "Men/Women/Child", "Division": "Division", "Section": "Section",
     "Department": "Department", "Size": "Size", "Colour": "color_name", "Colour (with code)": "CATEGORY2",
     "Style code": "CATEGORY1", "HSN code": "HSN_SAC_CODE", "Tax rate": "Tax rate",
@@ -53,7 +54,7 @@ GROUPS = {
     "vfl": [
         ("Financial calendar", TIME_FIN),
         ("Calendar", TIME_CAL),
-        ("Region", ["Region", "State", "City", "Store", "Store format"]),
+        ("Region", ["Region", "State", "City", "Store", "Store code", "Store format"]),
         ("Product", ["Brand", "Men/Women/Child", "Division", "Section", "Department", "Size", "Colour",
                      "Colour (with code)", "Style code", "Price bracket", "HSN code", "Tax rate"]),
         ("People and bills", ["Salesperson", "Sale or return"]),
@@ -212,6 +213,21 @@ def _num(s):
     return pd.to_numeric(s.astype(str).str.replace(",", "", regex=False).str.replace("%", "", regex=False), errors="coerce")
 
 
+def _store_codes(w: pd.DataFrame) -> pd.Series:
+    """★ 2 Nov 2026 (Manav: "add the store codes also as a field in the excel builder"): the store master's code
+    for each row's store, as text ("56", not 56.0). A store the master does not know says so instead of going blank."""
+    if "store" not in w.columns:
+        return pd.Series("(not in feed)", index=w.index)
+    try:
+        import loader as L
+        m = L.load_store_master()
+        codes = dict(zip(m["tableau_name"].astype(str).str.strip(),
+                         m["code"].astype(str).str.strip().str.replace(r"\.0$", "", regex=True)))
+    except Exception:
+        codes = {}
+    return w["store"].astype(str).str.strip().map(codes).fillna("(not in store master)")
+
+
 def prepare(df: pd.DataFrame, feed: str) -> pd.DataFrame:
     """Coerce the text measures once; give the portfolio a store identity. No mobiles leave this frame
     except as the hashed-free count the VFL `customers` aggregate needs."""
@@ -219,6 +235,7 @@ def prepare(df: pd.DataFrame, feed: str) -> pd.DataFrame:
     w["date"] = pd.to_datetime(w["date"], errors="coerce")
     if feed == "vfl":
         w["_tax"] = _num(w["Tax Amount"]) if "Tax Amount" in w.columns else 0.0
+        w["_store_code"] = _store_codes(w)
     else:
         import pivot as PV
         w = PV._pf_prepare(w)
