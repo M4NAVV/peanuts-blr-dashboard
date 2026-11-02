@@ -651,7 +651,7 @@ _PF_TABS = ["📈 MW Data", "🧾 GD Sheet", "🏷️ Brand-wise GD", "🗺️ L
             "🎯 Day Targets", "🥧 Contribution", "📆 Weekday vs Weekend",
             "🏙️ City-wise G/D", "🏬 Stores",
             "📅 Monthly", "🗓️ Day calendar", "🧾 Samir Report",
-            "🧮 Excel Builder", "🕒 Afternoon Sales", "📄 REPORTS PDF"]
+            "🧮 Excel Builder", "🕒 Afternoon Sales", "📄 REPORTS PDF", "📣 Socials"]
 
 
 # ================= Afternoon sales (26 Oct 2026) ================= #
@@ -869,6 +869,11 @@ def render_portfolio():
     # ★ before the empty-filter check: the afternoon tab reads its own sheet, not the portfolio filters
     if nav == "🕒 Afternoon Sales":
         _afternoon_tab()
+        return
+    # ★ 2 Nov 2026: the social media manager page (socials_tab.py). It reads the social queue from GitHub, not the sales feed.
+    if nav == "📣 Socials":
+        import socials_tab
+        socials_tab.render()
         return
 
     if pf.empty:
