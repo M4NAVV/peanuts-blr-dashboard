@@ -94,3 +94,27 @@ def test_a_post_under_the_bar_is_marked_not_hidden():
     assert G.quality(unmarked_low)["marked"]                       # the tab does its own sum, never trusts the flag alone
     assert G.quality({})["marked"] is False and G.quality({})["scored"] is False   # old posts: no badge
     assert G.quality({"quality": {"checks": ["money / offer language: 'Flat 30%'"]}})["marked"]
+
+
+def test_the_reject_form_sends_the_reason(monkeypatch):
+    """2 Nov 2026: the reason boxes lived in popovers that closed while Manav typed. Now a form: pick, type, Send."""
+    from streamlit.testing.v1 import AppTest
+
+    def app():
+        import streamlit as st
+        import socials_gh as G
+        import socials_tab as T
+        sent = st.session_state.setdefault("sent", [])
+        G.dispatch = lambda *a, **k: sent.append(a)
+        T._feedback_form({"id": "2026-11-21-wedding-watch-01", "status": "drafted"}, "t")
+
+    at = AppTest.from_function(app).run()
+    at.multiselect(key="fbt_t").set_value(["Boring", "Lacks depth"])
+    at.text_area(key="fbn_t").input("line art doesn't work as a still")
+    at.radio(key="fbr_t").set_value("Reject: take it off the calendar")
+    at.button[0].click().run()
+    assert at.session_state["sent"] == [("cancel", "2026-11-21-wedding-watch-01",
+                                         "Boring; Lacks depth. line art doesn't work as a still", "")]
+    at2 = AppTest.from_function(app).run()
+    at2.button[0].click().run()                                    # nothing picked, nothing written
+    assert at2.session_state["sent"] == [] and at2.error

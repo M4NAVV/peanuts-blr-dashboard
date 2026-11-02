@@ -178,13 +178,38 @@ def _send(action, pid="", value="", value2="", label=""):
         st.error(f"Could not send it: {e}")
 
 
+# ★ 2 Nov 2026 (Manav: "i am trying to enter my reason in the dropdown that comes when i reject, but the UI is not
+# made properly"): the reasons lived in popovers inside the preview dialog, which close on every keystroke's rerun, so
+# the send button never became clickable. Now ONE form: nothing reruns while he types; one Send. And the reason is
+# not decoration — it lands in social/state/feedback.jsonl and both weekly routines read it before designing.
+REASONS = ("Boring", "Lacks depth", "Line art doesn't work as a still", "Hard to read", "Off-brand",
+           "Too similar to a recent post", "Wrong or doubtful fact", "Wrong tone")
+THEN = {"Ask for changes": "change", "Reject: take it off the calendar": "cancel", "Park it for now": "park"}
+
+
+def _feedback_form(p: dict, key: str):
+    with st.form(f"fb_{key}", border=True, clear_on_submit=False):
+        st.markdown("**Not right? Say why — the drafting runs learn from it.**")
+        tags = st.multiselect("What's wrong", REASONS, key=f"fbt_{key}", placeholder="Pick any that apply")
+        note = st.text_area("In your words", key=f"fbn_{key}", height=90,
+                            placeholder="e.g. the drawings don't work as a still; show the real outfits")
+        then = st.radio("Then", list(THEN), key=f"fbr_{key}", horizontal=True)
+        sent = st.form_submit_button("Send", type="primary")
+    if sent:
+        reason = "; ".join(tags) + (". " if tags and note.strip() else "") + note.strip()
+        if not reason:
+            st.error("Pick a reason or write one, so the drafting runs can learn from it.")
+        else:
+            _send(THEN[then], p["id"], reason[:600], label=then.split(":")[0].lower())
+
+
 def _actions_panel(p: dict, key: str):
     pid, status = p["id"], p.get("status")
     if status == "published":
         links = {k: v.get("url") for k, v in (p.get("published") or {}).items() if isinstance(v, dict) and v.get("url")}
         st.markdown("Published. " + " · ".join(f"[Open on {k.title()}]({u})" for k, u in links.items()))
         return
-    c = st.columns(4)
+    c = st.columns(2)
     if status in G.NEEDS_YOU and status != "blocked":
         if c[0].button("Approve", key=f"ap_{key}", type="primary", use_container_width=True):
             _send("approve", pid, label="approve")
@@ -194,15 +219,8 @@ def _actions_panel(p: dict, key: str):
     if status not in ("parked", "cancelled"):
         if c[1].button("Park", key=f"pk_{key}", use_container_width=True, help="Hold it back; it keeps its place"):
             _send("park", pid, label="park")
-    with c[2].popover("Ask for changes", use_container_width=True):
-        note = st.text_area("What should change?", key=f"cn_{key}", height=90)
-        if st.button("Send the note", key=f"cs_{key}", disabled=not note.strip()):
-            _send("change", pid, note.strip(), label="ask for changes")
-    with c[3].popover("Cancel post", use_container_width=True):
-        st.caption("Takes it off the calendar for good.")
-        why = st.text_input("Why (optional)", key=f"cw_{key}")
-        if st.button("Yes, cancel it", key=f"cx_{key}", type="primary"):
-            _send("cancel", pid, why, label="cancel")
+    if status != "cancelled":
+        _feedback_form(p, key)
     m1, m2, m3 = st.columns([2, 1, 1], vertical_alignment="bottom")
     try:
         d0 = dt.date.fromisoformat(p["date"])
@@ -425,14 +443,17 @@ def _journal_view(arts):
             if status == "draft":
                 if c[1].button("Approve", key=f"ja_{a['slug']}", type="primary", use_container_width=True):
                     _send("journal-approve", a["slug"], label="approve the article")
-                with c[2].popover("Ask for changes", use_container_width=True):
-                    n = st.text_area("What should change?", key=f"jn_{a['slug']}")
-                    if st.button("Send", key=f"jns_{a['slug']}", disabled=not n.strip()):
-                        _send("journal-note", a["slug"], n.strip(), label="ask for changes")
-                with c[3].popover("Drop", use_container_width=True):
-                    w = st.text_input("Why", key=f"jw_{a['slug']}")
-                    if st.button("Yes, drop it", key=f"jd_{a['slug']}"):
-                        _send("journal-drop", a["slug"], w or "dropped from the dashboard", label="drop the article")
+                with st.form(f"jfb_{a['slug']}", border=True):          # a form: popovers lost the typing (2 Nov)
+                    n = st.text_area("Not right? Say what should change, or why to drop it", key=f"jn_{a['slug']}", height=90)
+                    j_then = st.radio("Then", ["Ask for changes", "Drop the article"], key=f"jr_{a['slug']}", horizontal=True)
+                    j_sent = st.form_submit_button("Send")
+                if j_sent:
+                    if not n.strip():
+                        st.error("Write what should change (or why to drop it) first.")
+                    elif j_then == "Ask for changes":
+                        _send("journal-note", a["slug"], n.strip()[:600], label="ask for changes")
+                    else:
+                        _send("journal-drop", a["slug"], n.strip()[:600], label="drop the article")
             if a.get("questions"):
                 with st.expander("Questions for the director"):
                     for q in a["questions"]:
