@@ -77,6 +77,11 @@ def pill(status: str) -> str:
     return f"<span class='soc-pill {cls}'>{label}</span>"
 
 
+def flag(p: dict) -> str:
+    """★ 2 Nov 2026: a draft below the quality bar is shown MARKED, never hidden."""
+    return "<span class='soc-pill bad'>Below standard</span>" if G.quality(p)["marked"] else ""
+
+
 def when(p: dict) -> str:
     try:
         return f"{dt.date.fromisoformat(p['date']):%a %d %b} · {p.get('time', '')}"
@@ -293,6 +298,12 @@ def _preview(pid: str):
                     unsafe_allow_html=True)
         if p.get("change_note"):
             st.info(f"Change asked: {p['change_note']}")
+        q = G.quality(p)
+        if q["marked"]:
+            st.warning("**Below our quality bar.** " + (" · ".join(q["why"]) if q["why"] else "Its scores are under the bar."))
+        if q["scored"]:
+            st.caption("Quality scores: " + " · ".join(f"{k} {v:g}" for k, v in q["scores"].items())
+                       + f" · average {q['avg']:g} (bar: 8, none under 7)")
         _captions(p, key)
         st.markdown("")
         _actions_panel(p, key)
@@ -355,7 +366,10 @@ def _row(p, key, pics, quick_approve=False):
         c[1].markdown(f"<div class='soc-row-title'>{title(p)}</div><div class='soc-sub'>{when(p)} IST · {kind_line(p)}</div>"
                       + (f"<div class='soc-sub'>Change asked: {p['change_note']}</div>" if p.get("change_note") else ""),
                       unsafe_allow_html=True)
-        c[2].markdown(pill(p.get("status")), unsafe_allow_html=True)
+        q = G.quality(p)
+        c[2].markdown(pill(p.get("status")) + (f"<br>{flag(p)}" if q["marked"] else ""), unsafe_allow_html=True)
+        if q["marked"] and q["why"]:
+            c[1].caption("Why: " + q["why"][0][:140])
         with c[3]:
             _open(p["id"], f"row_{key}", primary=not quick_approve)
             if quick_approve and p.get("status") in G.NEEDS_YOU and p.get("status") != "blocked":
@@ -461,8 +475,8 @@ def _health(posts, today):
         st.dataframe(df, hide_index=True, use_container_width=True)
     except Exception as e:
         st.caption(f"Could not read recent actions: {e}")
-    st.caption("AI art spend is still counted on the Mac that makes the images (the ₹400 cap lives there); it moves here when "
-               "the weekly drafting run starts.")
+    st.caption("AI art: ₹400 a month cap, counted in the repo (social/state/imagegen_log.jsonl) by both the Friday run and "
+               "the Mac; a run that would cross it writes a brief instead.")
 
 
 def _requests():

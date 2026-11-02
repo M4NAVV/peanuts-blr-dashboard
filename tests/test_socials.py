@@ -80,3 +80,17 @@ def test_no_token_says_so_rather_than_failing_quietly(monkeypatch):
     except G.NotConfigured:
         return
     raise AssertionError("expected NotConfigured")
+
+
+def test_a_post_under_the_bar_is_marked_not_hidden():
+    """2 Nov 2026, Manav: a draft below the quality bar is "show it to me marked"."""
+    good = {"quality": {"scores": {"stop": 8, "grasp": 9, "brand": 9, "original": 8, "accurate": 10}}}
+    assert G.quality(good)["marked"] is False and G.quality(good)["avg"] == 8.8
+    calm = {"quality": {"scores": {"stop": 6, "grasp": 9, "brand": 9, "original": 8, "accurate": 10},
+                        "notes": {"stop": "calm: small icons in big empty fields"}, "below_standard": True}}
+    q = G.quality(calm)
+    assert q["marked"] and "stop: calm: small icons in big empty fields" in q["why"]
+    unmarked_low = {"quality": {"scores": {"stop": 6, "grasp": 9, "brand": 9, "original": 8, "accurate": 10}}}
+    assert G.quality(unmarked_low)["marked"]                       # the tab does its own sum, never trusts the flag alone
+    assert G.quality({})["marked"] is False and G.quality({})["scored"] is False   # old posts: no badge
+    assert G.quality({"quality": {"checks": ["money / offer language: 'Flat 30%'"]}})["marked"]

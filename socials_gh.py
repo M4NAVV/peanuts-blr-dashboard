@@ -285,6 +285,23 @@ def live(posts: list[dict]) -> list[dict]:
     return [p for p in posts if p.get("status") not in ("cancelled",)]
 
 
+QUALITY_SCORES = ("stop", "grasp", "brand", "original", "accurate")
+
+
+def quality(p: dict) -> dict:
+    """The drafter's quality record, read for the tab (2 Nov 2026, Manav: a post below the bar is "show it to me
+    marked"). {"marked": bool, "why": [plain reasons], "scores": {...}, "avg": float | None, "scored": bool}."""
+    q = p.get("quality") or {}
+    sc = {k: q["scores"][k] for k in QUALITY_SCORES if isinstance((q.get("scores") or {}).get(k), (int, float))}
+    avg = round(sum(sc.values()) / len(sc), 1) if len(sc) == len(QUALITY_SCORES) else None
+    why = [str(w) for w in (q.get("why") or [])]
+    notes = q.get("notes") or {}
+    why += [f"{k}: {v}" for k, v in notes.items() if isinstance(v, str) and f"{k}: {v}" not in why]
+    marked = bool(q.get("below_standard")) or bool(q.get("checks")) or (
+        avg is not None and (avg < 8 or min(sc.values()) < 7))
+    return {"marked": marked, "why": why, "scores": sc, "avg": avg, "scored": avg is not None}
+
+
 def needs_you(posts: list[dict], since: dt.date) -> list[dict]:
     return [p for p in posts if p.get("status") in NEEDS_YOU and p.get("date", "") >= since.isoformat()]
 
