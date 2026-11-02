@@ -125,9 +125,21 @@ def blob_bytes(oid: str) -> bytes:
     return base64.b64decode(r.json()["content"])
 
 
-def thumb_from(raw: bytes, width: int = 240) -> bytes:
+def thumb_from(raw: bytes, width: int = 240, crop: bool = False) -> bytes:
+    """A JPEG `width` wide. `crop` trims it to the feed's 4:5 from the centre, so a calendar of Reel covers (9:16) and
+    posts (4:5) lines up in even rows."""
     from PIL import Image
     im = Image.open(io.BytesIO(raw)).convert("RGB")
+    if crop:
+        w, h = im.size
+        th = int(w * 5 / 4)
+        if h > th:
+            top = (h - th) // 2
+            im = im.crop((0, top, w, top + th))
+        elif h < th:
+            tw = int(h * 4 / 5)
+            left = (w - tw) // 2
+            im = im.crop((left, 0, left + tw, h))
     im.thumbnail((width, width * 2))
     buf = io.BytesIO()
     im.save(buf, "JPEG", quality=80)
@@ -151,6 +163,13 @@ def slide_files(post: dict) -> list[str]:
 
 def video_file(post: dict) -> str | None:
     return next((n for n in post.get("_files", {}) if n.lower().endswith(".mp4")), None)
+
+
+def load_text(path: str) -> str:
+    """One text file from the repo (e.g. social/requests.md), or "" when it is not there yet."""
+    got = _graphql('{ repository(owner: "%s", name: "%s") { object(expression: "%s:%s") { ... on Blob { text } } } }'
+                   % (OWNER, REPO, BRANCH, path))
+    return (((got.get("repository") or {}).get("object") or {}).get("text")) or ""
 
 
 def many_blobs(oids: list[str], fetch=None) -> dict:
