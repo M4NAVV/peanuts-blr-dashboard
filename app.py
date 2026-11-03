@@ -11,6 +11,7 @@ updating the source sheet updates the dashboard with no redeploy.
 
 from __future__ import annotations
 
+import os
 import re
 
 import pandas as pd
@@ -26,7 +27,8 @@ from imaging import table_to_png
 
 st.set_page_config(
     page_title="VFL × Peanuts Retail — Sales Dashboard",
-    page_icon="Ⓜ️",
+    # ★ 3 Nov 2026 (Manav: "change the favicon to our logo"): the peanutsretail.com tab icon — the symbol on green.
+    page_icon=os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "favicon.png"),
     layout="wide",
     initial_sidebar_state="auto",  # collapses on mobile, open on desktop
 )
