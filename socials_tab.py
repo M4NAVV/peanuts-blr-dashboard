@@ -121,6 +121,11 @@ def _posting_runs():
 
 
 @st.cache_data(ttl=600, show_spinner=False)
+def _playbook():
+    return G.load_text("social/PLAYBOOK.md")
+
+
+@st.cache_data(ttl=600, show_spinner=False)
 def _results():
     return G.parse_results(G.load_text("social/state/results.json"))
 
@@ -169,7 +174,7 @@ def _oid(p, name):
 
 
 def _clear():
-    _queue.clear(); _journal.clear(); _actions.clear(); _requests_text.clear(); _results.clear()
+    _queue.clear(); _journal.clear(); _actions.clear(); _requests_text.clear(); _results.clear(); _playbook.clear()
 
 
 # ------------------------------------------------------------------ the buttons
@@ -541,6 +546,12 @@ def _banner():
 
 def _results_view():
     """★ 3 Nov 2026 (the outside review: "we're flying blind"): what each post did out there, read once a day."""
+    pb = _playbook()
+    if pb:
+        # ★ 3 Nov 2026 (Manav: "the system should get smarter every week"): what it has learned, rewritten each Friday
+        now = pb.split("## Now", 1)[1] if "## Now" in pb else pb
+        with st.expander("**What the system has learned** — the playbook every draft is planned against", expanded=True):
+            st.markdown("## Now" + now)
     snap = _results()
     if not snap:
         st.info("No results yet. The posting job reads them once a day (social/state/results.json).")
