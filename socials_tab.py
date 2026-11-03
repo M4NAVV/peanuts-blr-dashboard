@@ -120,6 +120,11 @@ def _posting_runs():
     return G.posting_runs(6)
 
 
+@st.cache_data(ttl=600, show_spinner=False)
+def _results():
+    return G.parse_results(G.load_text("social/state/results.json"))
+
+
 @st.cache_data(ttl=120, show_spinner=False)
 def _requests_text():
     return G.load_text("social/requests.md")
@@ -164,7 +169,7 @@ def _oid(p, name):
 
 
 def _clear():
-    _queue.clear(); _journal.clear(); _actions.clear(); _requests_text.clear()
+    _queue.clear(); _journal.clear(); _actions.clear(); _requests_text.clear(); _results.clear()
 
 
 # ------------------------------------------------------------------ the buttons
@@ -534,6 +539,39 @@ def _banner():
         st.markdown(f"<div class='soc-banner'><b>Refused:</b> {a['what']}: {a.get('why', '')}</div>", unsafe_allow_html=True)
 
 
+def _results_view():
+    """★ 3 Nov 2026 (the outside review: "we're flying blind"): what each post did out there, read once a day."""
+    snap = _results()
+    if not snap:
+        st.info("No results yet. The posting job reads them once a day (social/state/results.json).")
+        return
+    acc = snap.get("accounts") or {}
+    def fol(k):
+        a = acc.get(k) or {}
+        v = a.get("followers_count", a.get("followers"))
+        return (f"{v:,}", "followers") if v is not None else ("—", (a.get("error") or "not read")[:40])
+    rows = G.result_rows(snap)
+    read = [r for r in rows if r["ig_reach"] is not None]
+    avg = sum(r["ig_reach"] for r in read) / len(read) if read else 0
+    cells = [("Instagram", *fol("instagram")), ("Facebook", *fol("facebook")), ("LinkedIn", *fol("linkedin")),
+             ("Instagram reach", f"{avg:.0f}", f"average a post · {len(read)} posts")]
+    st.markdown("<div class='soc-kpis'>" + "".join(f"<div class='soc-kpi'><span>{a}</span><b>{b}</b><small>{c}</small></div>"
+                                                   for a, b, c in cells) + "</div>", unsafe_allow_html=True)
+    st.caption(f"Read {snap.get('at', '')[:16].replace('T', ' ')} IST. Reach = how many accounts saw a post; views count repeats.")
+    for pr in snap.get("problems") or []:
+        st.warning(pr)
+    c1, c2 = st.columns(2)
+    for col, key, label in ((c1, "format", "Format"), (c2, "kind", "Kind of post")):
+        col.markdown(f"**Instagram reach by {label.lower()}**")
+        col.dataframe(pd.DataFrame([{label: k, "Average reach": round(a), "Posts": n} for k, a, n in G.reach_by(rows, key)]),
+                      hide_index=True, use_container_width=True)
+    st.markdown("**Every post**")
+    df = pd.DataFrame([{"Date": r["date"], "Post": r["hook"][:70], "Format": r["format"], "IG reach": r["ig_reach"],
+                        "IG views": r["ig_views"], "Saves": r["ig_saves"], "Shares": r["ig_shares"], "Likes": r["ig_likes"],
+                        "Comments": r["ig_comments"], "FB views": r["fb_views"], "LinkedIn views": r["li_views"]} for r in rows])
+    st.dataframe(df, hide_index=True, use_container_width=True)
+
+
 def render():
     st.markdown(CSS, unsafe_allow_html=True)
     if not G.token():
@@ -569,7 +607,7 @@ def render():
         "</div>", unsafe_allow_html=True)
     _banner()
     # one section at a time (not st.tabs, which builds every tab on every click)
-    views = ["Calendar", "Review", "Journal", "Published", "Health", "Requests"]
+    views = ["Calendar", "Review", "Journal", "Results", "Published", "Health", "Requests"]
     if "soc_view" not in st.session_state:
         st.session_state["soc_view"] = "Review" if waiting else "Calendar"
     view = st.segmented_control("Section", views, key="soc_view", label_visibility="collapsed") or "Calendar"
@@ -582,6 +620,8 @@ def render():
             _journal_view(_journal())
         except Exception as e:
             st.error(f"Could not read the Journal: {e}")
+    elif view == "Results":
+        _results_view()
     elif view == "Published":
         _published(posts)
     elif view == "Health":

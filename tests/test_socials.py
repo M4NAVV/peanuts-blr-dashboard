@@ -118,3 +118,14 @@ def test_the_reject_form_sends_the_reason(monkeypatch):
     at2 = AppTest.from_function(app).run()
     at2.button[0].click().run()                                    # nothing picked, nothing written
     assert at2.session_state["sent"] == [] and at2.error
+
+
+def test_results_rows_keep_unread_platforms_as_none_and_rank_formats():
+    """3 Nov 2026: the Results section. A platform that could not be read shows blank, never 0 (a fake flop)."""
+    snap = {"posts": {"a": {"date": "2026-11-01", "format": "reel", "instagram": {"reach": 59, "views": 73, "saved": 0},
+                            "facebook": {"error": "HTTP 400"}},
+                      "b": {"date": "2026-11-02", "format": "still", "instagram": {"reach": 9}, "linkedin": {"views": 8}}}}
+    rows = G.result_rows(snap)
+    assert [r["id"] for r in rows] == ["b", "a"] and rows[1]["fb_views"] is None and rows[0]["li_views"] == 8
+    assert G.reach_by(rows, "format") == [("reel", 59.0, 1), ("still", 9.0, 1)]
+    assert G.parse_results("") == {} and G.parse_results("{bad") == {}

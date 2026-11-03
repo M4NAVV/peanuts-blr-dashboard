@@ -329,3 +329,37 @@ def gone_out(posts: list[dict]) -> list[dict]:
         if p.get("status") == "published" or links:
             out.append({**p, "_links": links})
     return sorted(out, key=lambda p: (p.get("date", ""), p.get("time", "")), reverse=True)
+
+
+# ------------------------------------------------------------------ results (3 Nov 2026)
+# social/state/results.json, written once a day by the posting job (social/results.py): what each post did out there.
+def parse_results(text: str) -> dict:
+    try:
+        return json.loads(text) if text.strip() else {}
+    except ValueError:
+        return {}
+
+
+def result_rows(snap: dict) -> list[dict]:
+    """One row per published post, newest first. A platform that could not be read is None, never 0."""
+    def val(r, plat, k):
+        d = r.get(plat)
+        return d.get(k) if isinstance(d, dict) and "error" not in d else None
+    rows = []
+    for pid, r in (snap.get("posts") or {}).items():
+        rows.append({"id": pid, "date": r.get("date", ""), "format": r.get("format"), "kind": r.get("kind"),
+                     "hook": r.get("hook", ""), "ig_reach": val(r, "instagram", "reach"),
+                     "ig_views": val(r, "instagram", "views"), "ig_saves": val(r, "instagram", "saved"),
+                     "ig_shares": val(r, "instagram", "shares"), "ig_likes": val(r, "instagram", "likes"),
+                     "ig_comments": val(r, "instagram", "comments"), "fb_views": val(r, "facebook", "views"),
+                     "li_views": val(r, "linkedin", "views")})
+    return sorted(rows, key=lambda x: x["date"], reverse=True)
+
+
+def reach_by(rows: list[dict], key: str) -> list[tuple[str, float, int]]:
+    """(group, average Instagram reach, posts) over the rows that were read, highest first."""
+    g = {}
+    for r in rows:
+        if r["ig_reach"] is not None:
+            g.setdefault(r.get(key) or "?", []).append(r["ig_reach"])
+    return sorted(((k, sum(v) / len(v), len(v)) for k, v in g.items()), key=lambda x: -x[1])
