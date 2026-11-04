@@ -147,3 +147,18 @@ def test_a_press_shows_at_once_and_clears_when_github_has_it(monkeypatch):
     assert out["p3"]["status"] == "drafted" and not out["p3"].get("_pending")
     landed = [{"id": "p1", "status": "approved"}, {"id": "p2", "status": "changes", "change_note": "too dull"}]
     assert all(not x.get("_pending") for x in T._overlay(landed, "id")) and T._pending() == {}
+
+
+def test_a_linkedin_document_shows_every_page():
+    """4 Nov 2026: the ghost-malls document (format "document", 8 slides) showed only its cover in the preview."""
+    from streamlit.testing.v1 import AppTest
+
+    def app():
+        import socials_tab as T
+        T._thumbs = lambda oids, width=240, crop=False: {o: None for o in oids}
+        files = {f"slide-0{i}.png": (f"o{i}", 1) for i in range(1, 9)}
+        files.update({"image.png": ("c", 1), "post.json": ("j", 1)})
+        T._media({"id": "x", "format": "document", "kind": "linkedin", "_files": files}, "t")
+
+    at = AppTest.from_function(app).run()
+    assert any("Slide 1 of 8" in m.value for m in at.markdown)

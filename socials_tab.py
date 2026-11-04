@@ -97,8 +97,8 @@ def when(p: dict) -> str:
 
 def kind_line(p: dict) -> str:
     bits = [FORMAT.get(p.get("format"), str(p.get("format", "")).title())]
-    if p.get("format") == "carousel" and G.slide_files(p):
-        bits[0] += f" · {len(G.slide_files(p))} slides"
+    if p.get("format") in ("carousel", "document") and G.slide_files(p):
+        bits[0] += f" · {len(G.slide_files(p))} {'pages' if p.get('format') == 'document' else 'slides'}"
     if p.get("ai_art"):
         bits.append("AI art")
     return " · ".join(b for b in bits if b)
@@ -351,7 +351,9 @@ def _media(p: dict, key: str):
         except Exception as e:
             st.warning(f"Could not load the Reel: {e}")
         return
-    if p.get("format") == "carousel" and slides:
+    # every post with pages: an Instagram carousel AND a LinkedIn document (format "document", 4 Nov 2026 — the
+    # ghost-malls deep-dive showed only its cover though it carries 8 pages)
+    if slides and (p.get("format") in ("carousel", "document") or len(slides) > 1):
         n = len(slides)
         k = f"slide_{key}"
         i = min(st.session_state.get(k, 0), n - 1)
