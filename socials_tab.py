@@ -19,6 +19,7 @@ post's own log with the name typed at the top of the page.
 from __future__ import annotations
 
 import datetime as dt
+import time
 from concurrent.futures import ThreadPoolExecutor
 
 import pandas as pd
@@ -58,8 +59,8 @@ CSS = """<style>
 .soc-banner{border-left:3px solid #a35a00;background:#fff8ec;padding:8px 12px;border-radius:4px;font-size:.86rem;margin:6px 0}
 .soc-banner.busy{border-color:#14532d;background:#eef6f1}
 .soc-counter{text-align:center;font-size:.85rem;color:#555;padding-top:6px}
-@media (prefers-color-scheme: dark){.soc-kpi{background:rgba(127,199,150,.06);border-color:rgba(127,199,150,.25)}
- .soc-kpi b{color:#8fd3a5}.soc-banner{background:#2d2414}.soc-banner.busy{background:#13261b}}
+/* (4 Nov 2026) no dark-mode overrides: the app's theme is always light (.streamlit/config.toml), so switching these on
+   the COMPUTER's dark mode put pale-green numbers and dark-on-dark bars on a light page */
 @media (max-width: 760px){.soc-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}}
 </style>"""
 
@@ -75,6 +76,11 @@ def title(p: dict) -> str:
 def pill(status: str) -> str:
     label, cls = PILL.get(status, (str(status).title(), "off"))
     return f"<span class='soc-pill {cls}'>{label}</span>"
+
+
+def pill_p(p: dict) -> str:
+    """The status pill, plus "saving…" while a button press is still being written to GitHub (see `_send`)."""
+    return pill(p.get("status")) + (" <span class='soc-pill off'>saving…</span>" if p.get("_pending") else "")
 
 
 def flag(p: dict) -> str:
@@ -179,13 +185,81 @@ def _clear():
 
 # ------------------------------------------------------------------ the buttons
 
+# ★ 4 Nov 2026 (Manav: "i approved a post, but its still on the waiting for approval thing"). A press is carried out by
+# a GitHub job that takes about a minute, and the queue was cached for two, so the page went on showing the old status
+# and nothing said why. Now a press is shown AT ONCE ("saving…"), the dialog closes, `_watch` checks GitHub every few
+# seconds and reloads the page the moment the job has saved it — or puts the post back and says why it was refused.
+EXPECT = {"approve": "approved", "change": "changes", "park": "parked", "cancel": "cancelled", "restore": "drafted",
+          "journal-approve": "scheduled", "journal-drop": "dropped"}
+PENDING_MAX = 600                                   # seconds; a job that has not landed by then is shown as it really is
+
+
+def _pending() -> dict:
+    return st.session_state.setdefault("soc_pending", {})
+
+
+def _overlay(items: list[dict], idkey: str) -> list[dict]:
+    """The queue (or the Journal) as it WILL be once the pending presses land."""
+    pend, now, out = _pending(), time.time(), []
+    for x in items:
+        pe = pend.get(x.get(idkey))
+        if pe:
+            want = EXPECT.get(pe["action"])
+            landed = pe.get("done") or now - pe["at"] > PENDING_MAX or (
+                (want and x.get("status") == want and pe["action"] not in ("change",))
+                or (pe["action"] in ("change", "journal-note") and x.get("change_note") == pe["value"])
+                or (pe["action"] == "move" and x.get("date") == pe["value"]))
+            if landed:
+                pend.pop(x.get(idkey), None)
+            else:
+                x = dict(x, _pending=pe["label"])
+                if want:
+                    x["status"] = want
+                if pe["action"] in ("change", "journal-note"):
+                    x["change_note"] = pe["value"]
+                if pe["action"] == "move":
+                    x["date"], x["time"] = pe["value"], pe["value2"] or x.get("time")
+        out.append(x)
+    return out
+
+
 def _send(action, pid="", value="", value2="", label=""):
     try:
         G.dispatch(action, pid, value, value2, by=st.session_state.get("soc_by") or "dashboard")
-        _actions.clear()
-        st.toast(f"Sent: {label or action}. It takes about a minute; press Refresh to see it.", icon="📨")
     except Exception as e:
         st.error(f"Could not send it: {e}")
+        return
+    _pending()[pid or f"_{action}"] = {"action": action, "value": value, "value2": value2,
+                                       "label": label or action, "at": time.time()}
+    _actions.clear()
+    st.session_state["soc_flash"] = f"{(label or action).capitalize()}: shown here now; GitHub is saving it (about a minute)."
+    st.rerun()                                       # closes the preview, and every list shows the new status at once
+
+
+@st.fragment(run_every=6)
+def _watch():
+    """While a press is being saved: ask GitHub how its job went, and reload when it has finished."""
+    pend = _pending()
+    live = {k: v for k, v in pend.items() if not v.get("done")}
+    if not live:
+        return
+    try:
+        acts = G.recent_actions(12)
+    except Exception:
+        return
+    finished = False
+    for pid, pe in live.items():
+        run = next((a for a in acts if str(a.get("what") or "").startswith(f"{pe['action']} {pid if not pid.startswith('_') else ''}".strip())
+                    and a.get("at") and pd.Timestamp(a["at"]).timestamp() >= pe["at"] - 60), None)
+        if run and run.get("status") == "completed":
+            pe["done"] = True
+            finished = True
+            if run.get("conclusion") != "success":
+                st.session_state["soc_err"] = f"{pe['label'].capitalize()} was NOT done: {run.get('why') or 'refused'}"
+    st.caption("Saving " + ", ".join(v["label"] for v in live.values()) + " … the page updates itself.")
+    if finished:
+        _queue.clear(); _journal.clear(); _actions.clear()
+        st.rerun(scope="app")
 
 
 # ★ 2 Nov 2026 (Manav: "i am trying to enter my reason in the dropdown that comes when i reject, but the UI is not
@@ -200,7 +274,9 @@ THEN = {"Ask for changes": "change", "Reject: take it off the calendar": "cancel
 def _feedback_form(p: dict, key: str):
     with st.form(f"fb_{key}", border=True, clear_on_submit=False):
         st.markdown("**Not right? Say why — the drafting runs learn from it.**")
-        tags = st.multiselect("What's wrong", REASONS, key=f"fbt_{key}", placeholder="Pick any that apply")
+        # chips, not a dropdown: the multiselect's list never opened inside the preview dialog (4 Nov 2026: "the
+        # dropdown for the changes doesnt work")
+        tags = st.pills("What's wrong (tap any that apply)", REASONS, selection_mode="multi", key=f"fbt_{key}") or []
         note = st.text_area("In your words", key=f"fbn_{key}", height=90,
                             placeholder="e.g. the drawings don't work as a still; show the real outfits")
         then = st.radio("Then", list(THEN), key=f"fbr_{key}", horizontal=True)
@@ -312,7 +388,7 @@ def _media(p: dict, key: str):
 
 @st.dialog("Post preview", width="large")
 def _preview(pid: str):
-    p = next((x for x in _queue() if x["id"] == pid), None)
+    p = next((x for x in _overlay(_queue(), "id") if x["id"] == pid), None)
     if not p:
         st.warning("This post is no longer in the queue. Press Refresh.")
         return
@@ -322,7 +398,7 @@ def _preview(pid: str):
         _media(p, key)
     with right:
         st.markdown(f"### {title(p)}")
-        st.markdown(f"{pill(p.get('status'))} &nbsp; <span class='soc-sub'>{when(p)} IST · {kind_line(p)}</span>",
+        st.markdown(f"{pill_p(p)} &nbsp; <span class='soc-sub'>{when(p)} IST · {kind_line(p)}</span>",
                     unsafe_allow_html=True)
         if p.get("change_note"):
             st.info(f"Change asked: {p['change_note']}")
@@ -379,7 +455,7 @@ def _calendar(posts, today):
                     pic = pics.get(_oid(x, G.cover_file(x)))
                     if pic:
                         st.image(pic, use_container_width=True)
-                    st.markdown(f"<div class='soc-meta'>{x.get('time', '')} · {title(x)[:40]}</div>{pill(x.get('status'))}",
+                    st.markdown(f"<div class='soc-meta'>{x.get('time', '')} · {title(x)[:40]}</div>{pill_p(x)}",
                                 unsafe_allow_html=True)
                     _open(x["id"], f"cal_{x['id']}")
         d += dt.timedelta(days=7)
@@ -395,7 +471,7 @@ def _row(p, key, pics, quick_approve=False):
                       + (f"<div class='soc-sub'>Change asked: {p['change_note']}</div>" if p.get("change_note") else ""),
                       unsafe_allow_html=True)
         q = G.quality(p)
-        c[2].markdown(pill(p.get("status")) + (f"<br>{flag(p)}" if q["marked"] else ""), unsafe_allow_html=True)
+        c[2].markdown(pill_p(p) + (f"<br>{flag(p)}" if q["marked"] else ""), unsafe_allow_html=True)
         if q["marked"] and q["why"]:
             c[1].caption("Why: " + q["why"][0][:140])
         with c[3]:
@@ -434,7 +510,9 @@ def _journal_view(arts):
               "dropped": ("Dropped", "off")}.get(status, (status.title(), "off"))
         with st.container(border=True):
             st.markdown(f"<div class='soc-row-title'>{a.get('title', a.get('slug'))}</div>"
-                        f"<span class='soc-pill {jp[1]}'>{jp[0]}</span> &nbsp;<span class='soc-sub'>{when_} · "
+                        f"<span class='soc-pill {jp[1]}'>{jp[0]}</span>"
+                        + (" <span class='soc-pill off'>saving…</span>" if a.get("_pending") else "")
+                        + f" &nbsp;<span class='soc-sub'>{when_} · "
                         f"{a.get('_words', 0):,} words · {len(a.get('sources') or [])} sources</span>", unsafe_allow_html=True)
             if a.get("dek"):
                 st.caption(a["dek"])
@@ -537,7 +615,7 @@ def _banner():
     recent = [a for a in acts if a.get("at") and now - pd.Timestamp(a["at"]) < pd.Timedelta(minutes=15)]
     busy = [a for a in recent if a["status"] != "completed"]
     bad = [a for a in recent if a["conclusion"] == "failure"]
-    if busy:
+    if busy and not _pending():                      # this browser's own presses are shown by `_watch`
         st.markdown(f"<div class='soc-banner busy'>Working on: {', '.join(a['what'] for a in busy[:3])}. Press Refresh in a minute.</div>",
                     unsafe_allow_html=True)
     for a in bad[:2]:
@@ -591,7 +669,7 @@ def render():
                    "read and write. Add it in the Space's Settings → Variables and secrets, then restart the Space.")
         return
     try:
-        posts = _queue()
+        posts = _overlay(_queue(), "id")
     except Exception as e:
         st.error(f"Could not read the social queue from GitHub: {e}")
         return
@@ -616,6 +694,11 @@ def render():
         f"<div class='soc-kpi{' warn' if gaps else ''}'><span>Empty days</span><b>{len(gaps)}</b><small>in the next 31</small></div>"
         f"<div class='soc-kpi'><span>AI art</span><b>{mx['ai']:.0%}</b><small>of {mx['n']} approved · limit 50%</small></div>"
         "</div>", unsafe_allow_html=True)
+    if st.session_state.get("soc_flash"):
+        st.success(st.session_state.pop("soc_flash"), icon="✅")
+    if st.session_state.get("soc_err"):
+        st.error(st.session_state.pop("soc_err"), icon="⛔")
+    _watch()
     _banner()
     # one section at a time (not st.tabs, which builds every tab on every click)
     views = ["Calendar", "Review", "Journal", "Results", "Published", "Health", "Requests"]
@@ -628,7 +711,7 @@ def render():
         _review(posts, today)
     elif view == "Journal":
         try:
-            _journal_view(_journal())
+            _journal_view(_overlay(_journal(), "slug"))
         except Exception as e:
             st.error(f"Could not read the Journal: {e}")
     elif view == "Results":

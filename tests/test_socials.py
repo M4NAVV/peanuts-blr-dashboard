@@ -109,7 +109,7 @@ def test_the_reject_form_sends_the_reason(monkeypatch):
         T._feedback_form({"id": "2026-11-21-wedding-watch-01", "status": "drafted"}, "t")
 
     at = AppTest.from_function(app).run()
-    at.multiselect(key="fbt_t").set_value(["Boring", "Lacks depth"])
+    at.session_state["fbt_t"] = ["Boring", "Lacks depth"]     # chips since 4 Nov 2026 (the dropdown never opened)
     at.text_area(key="fbn_t").input("line art doesn't work as a still")
     at.radio(key="fbr_t").set_value("Reject: take it off the calendar")
     at.button[0].click().run()
@@ -129,3 +129,21 @@ def test_results_rows_keep_unread_platforms_as_none_and_rank_formats():
     assert [r["id"] for r in rows] == ["b", "a"] and rows[1]["fb_views"] is None and rows[0]["li_views"] == 8
     assert G.reach_by(rows, "format") == [("reel", 59.0, 1), ("still", 9.0, 1)]
     assert G.parse_results("") == {} and G.parse_results("{bad") == {}
+
+
+def test_a_press_shows_at_once_and_clears_when_github_has_it(monkeypatch):
+    """4 Nov 2026 (Manav: "i approved a post, but its still on the waiting for approval thing"): the press shows at
+    once as 'saving…', and the overlay drops away when the queue really says so."""
+    import time
+    import streamlit as st
+    import socials_tab as T
+    st.session_state.clear()
+    T._pending()["p1"] = {"action": "approve", "value": "", "value2": "", "label": "approve", "at": time.time()}
+    T._pending()["p2"] = {"action": "change", "value": "too dull", "value2": "", "label": "ask for changes", "at": time.time()}
+    q = [{"id": "p1", "status": "drafted"}, {"id": "p2", "status": "drafted"}, {"id": "p3", "status": "drafted"}]
+    out = {x["id"]: x for x in T._overlay(q, "id")}
+    assert out["p1"]["status"] == "approved" and out["p1"]["_pending"]
+    assert out["p2"]["status"] == "changes" and out["p2"]["change_note"] == "too dull"
+    assert out["p3"]["status"] == "drafted" and not out["p3"].get("_pending")
+    landed = [{"id": "p1", "status": "approved"}, {"id": "p2", "status": "changes", "change_note": "too dull"}]
+    assert all(not x.get("_pending") for x in T._overlay(landed, "id")) and T._pending() == {}
