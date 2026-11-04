@@ -356,7 +356,11 @@ def l2l_store_table(cur, pri, bounds, ident, key, amt):
     ty = c.groupby(key)[amt].sum().rename("cur")
     ly = p.groupby(key)[amt].sum().rename("prior")
     t = pd.concat([ty, ly], axis=1).fillna(0.0).reset_index()
-    t = t[t["prior"] > 0]                       # nothing to be like to like with
+    # ★ NO `prior > 0` FILTER (Manav, 4 Nov 2026: "make the card match the table"). `l2l_frames` has already cut
+    # every store to its own comparable span, so a store present here IS like to like; one with no span at all
+    # (Dibrugarh) has no rows and is already gone. The filter also threw out comparable stores whose last year in
+    # the window happened to be ZERO — Madame City Centre sold nothing on 1–3 Nov 2025, so its Rs 20,112 this
+    # November fell out and the card read +27.3% against the GD sheet's +27.6%. A zero last year is a real zero.
     keep = [c for c in ident.columns if c not in ("cur", "prior",
                                                   "growth", "shortfall")]
     out = ident[keep].merge(t, on=key, how="inner")
