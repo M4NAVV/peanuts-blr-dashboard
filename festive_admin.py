@@ -45,6 +45,14 @@ BAR_LY = (226, 226, 226)
 RULE = (200, 200, 200)
 
 
+def degrowth(r):
+    """★ THE BAR IS THE FALL (Manav, 4 Nov 2026: "the bar should be representative of the amount of degrowth, rather
+    than this [the share], because thats more meaningful … no to [green bars for growth] … can be done everywhere").
+    How far the COMPARABLE pair went backwards, as a positive number; 0 for a row that grew or has no comparable
+    pair — the same rule as `in_degrowth`, so a bar appears exactly on the rows the sheet already reddens."""
+    return -float(r["gd"]) if in_degrowth(r) else 0.0
+
+
 def in_degrowth(r):
     """A row is in degrowth when its COMPARABLE pair went backwards.
 
@@ -441,6 +449,8 @@ def table_image(df, spec, width, font_px=26, bar_col=None, bar_label="",
     peak = 1.0
     if bar_col is not None:
         def _bv(r):
+            if bar_col == "degrowth":
+                return degrowth(r)
             v = r.get(bar_col)
             # ★ `or 0` DOES NOT CATCH NaN — NaN is truthy, so an unreached day
             # in the ladder came through as NaN and `int()` raised on it.
@@ -489,9 +499,12 @@ def table_image(df, spec, width, font_px=26, bar_col=None, bar_label="",
         for j, (c, k, _h) in enumerate(spec):
             f = bold if (is_total or is_sub) else reg
             if k == "bar" and not is_total:
-                _raw = src.get(bar_col)
+                _raw = degrowth(src) if bar_col == "degrowth" else src.get(bar_col)
                 v = (0.0 if _raw is None or pd.isna(_raw) else float(_raw))
                 bw = int((widths[j] - pad_x * 2) * abs(v) / peak)
+                if bar_col == "degrowth" and v <= 0:      # grew, or no comparable pair: no bar at all
+                    x += widths[j]
+                    continue
                 by = y + pad_y + PP._px(2)
                 bh = row_h - pad_y * 2 - PP._px(4)
                 d.rectangle([x + pad_x, by, x + pad_x + max(bw, 1), by + bh],
@@ -814,7 +827,7 @@ def rollup_spec(rows):
             ("total_ty", "money", "THIS YEAR\nTOTAL"),
             ("l2l_ty", "money", "THIS YEAR\nCOMPARABLE"),
             ("non_ty", "money", "THIS YEAR\nNON COMP"),
-            ("total_ty", "bar", "SHARE"),
+            ("total_ty", "bar", "DEGROWTH"),
             ("gd", "gd", "G/D\nCOMPARABLE")]
 
 
@@ -1135,7 +1148,7 @@ def build(pf, w, basis_label="", vfl=False):
                                     frame["ty"].sum()),
                    "share": 100.0}
             sp = [("store", "text", "STORE"), ("loc", "text", "LOCATION"),
-                  ("ty", "money", "THIS YEAR"), ("ty", "bar", "SHARE"),
+                  ("ty", "money", "THIS YEAR"), ("ty", "bar", "DEGROWTH"),
                   ("share", "pct", "% OF\nSET")]
             # ★ TTM SITS BESIDE `LY FULL RUN-UP` BECAUSE BOTH ARE WHOLE-WINDOW
             # FIGURES. The elapsed-window columns are to their left and the two
@@ -1153,7 +1166,7 @@ def build(pf, w, basis_label="", vfl=False):
                        ("ly_full", "money", "LY FULL\nRUN-UP")] + _ttm
             sh = A4._Sheet(w.label, asof, "", bounded=False, footer=True)
             sh.put(A4._heading(W, title, sub), gap=18)
-            sh.put(table_image(rs, sp, W, font_px=24, bar_col="ty",
+            sh.put(table_image(rs, sp, W, font_px=24, bar_col="degrowth",
                                total_row=tot, neg_row=in_degrowth), gap=20)
             sh._footers()
             return sh.pages
@@ -1170,7 +1183,7 @@ def build(pf, w, basis_label="", vfl=False):
                            f"the {len(s_l2l)} {regions_phrase(s_l2l)} stores "
                            f"that traded both run-ups and are still open  ·  "
                            f"biggest first  ·  "
-                           f"the bar is each store's share of this set")
+                           f"the bar is the store's degrowth: the longer, the bigger the fall; no bar, no fall")
         if len(s_oth):
             pages += sheet(s_oth, "store",
                            f"{w.festival} — not comparable",
@@ -1200,7 +1213,7 @@ def build(pf, w, basis_label="", vfl=False):
             _rspec = rollup_spec(rs)
             _rshade = [i for i, (c, _k, _h) in enumerate(_rspec)
                        if c in ("l2l_ty", "l2l_ly")]
-            sh.put(table_image(rs, _rspec, W, font_px=24, bar_col="total_ty",
+            sh.put(table_image(rs, _rspec, W, font_px=24, bar_col="degrowth",
                                total_row=tot, shade=_rshade,
                                neg_row=in_degrowth), gap=20)
             sh._footers()

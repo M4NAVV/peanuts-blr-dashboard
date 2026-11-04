@@ -102,3 +102,16 @@ def test_the_narrative_is_built_from_the_helpers_not_from_literals():
     import inspect
     src = inspect.getsource(FADM.build)
     assert "regions_phrase(" in src and "heldout_phrase(" in src
+
+
+def test_the_bar_is_the_degrowth_only():
+    """4 Nov 2026 (Manav): the bar shows how far a row FELL; a row that grew, or has no comparable pair, has none."""
+    import festive_admin as FA
+    assert FA.degrowth({"gd": -12.5}) == 12.5
+    assert FA.degrowth({"gd": 8.0}) == 0.0 and FA.degrowth({"gd": 0.0}) == 0.0
+    assert FA.degrowth({"gd": None}) == 0.0 and FA.degrowth({}) == 0.0
+    assert FA.degrowth({"gd": float("nan")}) == 0.0
+    rows = [{"name": "A", "gd": -20.0, "ty": 5.0}, {"name": "B", "gd": 10.0, "ty": 9.0}, {"name": "C", "gd": -5.0, "ty": 1.0}]
+    img = FA.table_image(rows, [("name", "text", "NAME"), ("ty", "bar", "DEGROWTH"), ("gd", "gd", "G/D")], 900,
+                         bar_col="degrowth", neg_row=FA.in_degrowth)
+    assert img.width > 0 and img.height > 0
