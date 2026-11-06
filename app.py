@@ -648,12 +648,14 @@ def _cr(x) -> str:
     return f"₹{(x or 0) / 1e7:,.2f} Cr"
 
 
-_PF_TABS = ["📈 MW Data", "🧾 GD Sheet", "🏷️ Brand-wise GD", "🗺️ Loc-wise GD",
+# ★ 6 Nov 2026 (Manav: "make excel builder the landing page for both VFL and portfolio"): first in the list = where
+# the page opens (pf_active_nav starts at _PF_TABS[0]); the VFL list below does the same.
+_PF_TABS = ["🧮 Excel Builder", "📈 MW Data", "🧾 GD Sheet", "🏷️ Brand-wise GD", "🗺️ Loc-wise GD",
             "📐 Average", "📊 Executive", "📋 MTD / YTD Report", "📉 Degrowth",
             "🎯 Day Targets", "🥧 Contribution", "📆 Weekday vs Weekend",
             "🏙️ City-wise G/D", "🏬 Stores",
             "📅 Monthly", "🗓️ Day calendar", "🧾 Samir Report",
-            "🧮 Excel Builder", "🕒 Afternoon Sales", "📄 REPORTS PDF", "📣 Socials"]
+            "🕒 Afternoon Sales", "📄 REPORTS PDF", "📣 Socials"]
 
 
 # ================= Afternoon sales (26 Oct 2026) ================= #
@@ -2938,6 +2940,7 @@ def render_productivity(pr, key):
 # rerun). EVERY section is a pill, wrapped over as many rows as it takes.
 # Selection lives in session_state (active_nav), so it PERSISTS on rerun.
 _TAB_LABELS = [
+    "🧮 Excel Builder",                  # ★ 6 Nov 2026: the landing page (active_nav starts at _PILL_TABS[0])
     "🧾 VFL G/D", "🧾 VFL Gender", "📄 REPORTS PDF", "🖼️ REPORTS IMAGES",
     "📝 Intake vs Tableau",
     "📋 MTD / YTD Report", "📉 Degrowth", "🔎 Degrowth Drivers",
@@ -2946,7 +2949,7 @@ _TAB_LABELS = [
     "⚖️ Gender Mix",
     "📊 Executive", "🎯 Day Targets", "🏙️ City-wise G/D", "📅 Monthly Contribution",
     "📐 Store Productivity", "Overview", "🏬 Stores",
-    "🧮 Excel Builder", "✂️ Alterations", "🔧 Build your view", "Trends",
+    "✂️ Alterations", "🔧 Build your view", "Trends",
     "Category mix", "Salespeople",
     "Customers", "Colors & sizes",
 ]
