@@ -77,10 +77,12 @@ def _stack(images, gap=None):
     return out
 
 
-def build(df, asof, gen_date=None, basis_label=""):
+def build(df, asof, gen_date=None, basis_label="", df_all=None):
     """Compile the VFL G/D + VFL Gender sheets into one PDF (bytes). `df` is the
     (already filtered) VFL frame; `asof` sets the sum windows (month-end matches
-    the workbook), `gen_date` the projection day-count anchor (the live date)."""
+    the workbook), `gen_date` the projection day-count anchor (the live date).
+    `df_all` is the UNFILTERED VFL frame for the MW Data pages (default: `df`) —
+    like the portfolio pack's MW Data, which ignores the page's filters."""
     asof = pd.Timestamp(asof)
     gen_date = asof if gen_date is None else pd.Timestamp(gen_date)
     asof_label = f"As of {asof:%d %b %Y}" + (f" · {basis_label}" if basis_label else "")
@@ -190,6 +192,30 @@ def build(df, asof, gen_date=None, basis_label=""):
                                             A4._ft(30)[0], A4.SUB)])
         contents.append(("VFL — Brand Contribution",
                          _stack([_grid, _say], gap=PP._px(44))))
+
+        # ★ MW DATA, VFL ONLY (Manav, 7 Nov 2026: "the MW data sheet we make in
+        # the portfolio pack, i want that in the VFL pdf also, but only for
+        # VFL"). The portfolio pack's grid and drawing, fed VFL alone
+        # (`portfolio_loader.mw_data_vfl`): this year and last side by side on
+        # page one, the earlier years on a second page — straight after the
+        # Executive Snapshot, where the portfolio pack puts its own.
+        import portfolio_loader as PL
+        tbl_w = max(c.width for _, c in contents)
+        tbl_h = max(c.height for _, c in contents)
+        _mw = PL.mw_data_vfl(df if df_all is None else df_all, asof)
+        _lay = PL.mw_layout(_mw)
+        mw_pages = []
+        if _lay:
+            _recent, _rest = _lay[0], _lay[1:]
+            _cur, _prior = [_recent[-1]], ([_recent[-2]] if len(_recent) > 1 else [])
+            _flat = _recent[:-2] + [fy for row in _rest for fy in row]
+            mw_pages.append((f"VFL MW Data — Monthly Contribution · {(_prior or _cur)[0]} – {_cur[-1]}",
+                             PP._fit_mw(_mw, [_prior + _cur], tbl_w, tbl_h)))
+            if _flat:
+                _older = [_flat[i:i + 4] for i in range(0, len(_flat), 4)]
+                mw_pages.append((f"VFL MW Data — Monthly Contribution · earlier years ({_flat[-1]} – {_flat[0]})",
+                                 PP._fit_mw(_mw, _older, tbl_w, tbl_h)))
+        contents = mw_pages + contents
 
         # Executive Snapshot — replaces the cover. Sized to the box the sheets
         # establish, then placed first.

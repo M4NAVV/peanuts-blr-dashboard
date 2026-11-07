@@ -1293,6 +1293,67 @@ def mw_data(df: pd.DataFrame, asof=None, vfl_df=None) -> dict:
     return out
 
 
+def mw_data_vfl(vfl_df: pd.DataFrame, asof=None) -> dict:
+    """The MW Data grid for VFL ALONE (Manav, 7 Nov 2026: "the MW data sheet we make in the portfolio pack, i want that
+    in the VFL pdf also, but only for VFL"). Same shape as `mw_data` — {fy: {type, months, grand}} — so the portfolio
+    PDF's drawing (`portfolio_pdf._mw_image` / `_fit_mw`) draws it unchanged, in the region layout every year:
+    TOTAL SALE, East and NE, South, monthly contribution, each region's month contribution and share.
+
+    Sources, the same two `_vfl_slice` reads: the VFL feed for every year it reaches back to 1 April of (2025-26 on),
+    and the workbook's VFL history tab (vfl_history_monthly.csv) before that, when East & NE was the whole estate. A
+    year neither covers is LEFT OUT, never drawn as zeroes. The feed is taken as the VFL pack takes it everywhere else
+    (South's previous-operator months included). No "vfl" slice rows: on a VFL-only sheet they would repeat it."""
+    import loader as _L
+    asof = pd.Timestamp(asof) if asof is not None else pd.Timestamp(vfl_df["date"].max())
+    amt = "Sales" if "Sales" in vfl_df.columns else _L.COL_AMOUNT
+    reg = "Region" if "Region" in vfl_df.columns else _L.COL_REGION
+    v = vfl_df[vfl_df["date"] <= asof].copy()
+    v["m"] = v["date"].dt.to_period("M")
+    vm = v.groupby(["m", reg])[amt].sum().unstack(fill_value=0)
+    for r in REGION_ORDER:
+        if r not in vm.columns:
+            vm[r] = 0.0
+    feed_from = v["date"].min() if len(v) else pd.NaT
+    vhist = pd.read_csv(os.path.join(_DIR, "vfl_history_monthly.csv"))
+    vhist["fy"] = vhist["fy"].astype(str)
+
+    def _pct(x, tot):
+        return (x / tot * 100) if tot else 0.0
+
+    def _year(fy):
+        start = int(fy.split("-")[0])
+        pers = _fy_periods(start)
+        labels = [p_.strftime("%b-%y") for p_ in pers]
+        if pd.notna(feed_from) and feed_from <= pd.Timestamp(start, 4, 1):
+            ene = [float(vm.loc[q, "East & NE"]) if q in vm.index else 0.0 for q in pers]
+            sth = [float(vm.loc[q, "South"]) if q in vm.index else 0.0 for q in pers]
+        else:
+            h = vhist[vhist["fy"] == fy].set_index("month_idx")
+            if h.empty:
+                return None
+            ene = [float(h.loc[i, "total"]) if i in h.index else 0.0 for i in range(1, 13)]
+            sth = [0.0] * 12                     # East & NE was the whole estate in these years
+        tot = [a + b for a, b in zip(ene, sth)]
+        g, ge, gs = sum(tot), sum(ene), sum(sth)
+        if not g:
+            return None
+        return {"type": "region", "vfl": None,
+                "months": [{"month": labels[i], "total": tot[i], "ene": ene[i], "south": sth[i],
+                            "cont": _pct(tot[i], g), "ene_contrib": _pct(ene[i], ge),
+                            "south_contrib": _pct(sth[i], gs), "ene_pct": _pct(ene[i], tot[i]),
+                            "south_pct": _pct(sth[i], tot[i])} for i in range(12)],
+                "grand": {"total": g, "ene": ge, "south": gs,
+                          "ene_contrib": _pct(ge, g), "south_contrib": _pct(gs, g)}}
+
+    out = {}
+    for block in mw_blocks(asof):                # the portfolio grid's year order, so the PDF lays it out the same way
+        for fy in block:
+            y = _year(fy)
+            if y:
+                out[fy] = y
+    return out
+
+
 # MW_DATA grid → HTML (matches the workbook layout: 3 stacked blocks, FY groups
 # side-by-side, region split + contribution % for the current FY).
 _MW_STD = (["MONTH", "TOTAL SALE", "PRPL", "MRIPL", "MONTHLY CONT  (%)"],

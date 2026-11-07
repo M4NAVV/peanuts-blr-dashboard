@@ -3888,7 +3888,7 @@ if nav == "📄 REPORTS PDF":
                         f"peanuts_vfl_{p_asof:%Y%m%d}.pdf",
                         vfl_pdf.build(df_exec, asof=p_asof,
                                       gen_date=pd.Timestamp(end_d),
-                                      basis_label=p_basis)))
+                                      basis_label=p_basis, df_all=df_all)))
                 if "db" in chosen:
                     _prog.step("Women's discount")
                     built.append(DISC.build_pdf(get_data(), p_asof, p_basis))
