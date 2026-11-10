@@ -260,8 +260,9 @@ def day_target(pf, code, asof):
     return float(v.iloc[0]) if len(v) else None
 
 
-def build(df, pf, store_label, asof, code=None) -> tuple:
-    """(filename, pdf bytes, page count) — one store, one night, his layout."""
+def build(df, pf, store_label, asof, code=None, fmt="pdf") -> tuple:
+    """(filename, pdf bytes, page count) — one store, one night, his layout.
+    fmt="pages": the PIL pages instead of the PDF, for `region_pdfs` to bind."""
     import festive_admin as FADM
     import portfolio_pdf as PP
     import snapshots_a4 as A4
@@ -421,7 +422,7 @@ def build(df, pf, store_label, asof, code=None) -> tuple:
             sheet.put(A4._text_block(
                 W, [(" ".join(said), A4._ft(21)[0], A4.SUB)]), gap=10)
         sheet._footers()
-        out = sheet.pdf()
+        out = list(sheet.pages) if fmt == "pages" else sheet.pdf()
         pages = len(sheet.pages)
     finally:
         A4.MARGIN, A4.CONTENT_W, PP.PAD_Y = _keep
@@ -441,3 +442,37 @@ def _beside(images, gap):
         out.paste(i, (x, 0))
         x += i.width + gap
     return out
+
+
+# --------------------------------------------------------------------------- #
+#  To the directors, every morning (Manav, 10 Nov 2026)                         #
+# --------------------------------------------------------------------------- #
+# *"once both the VFL and the peanuts total sheet is updated, then this night report should be built and whatsapp to
+# the directors as is the process."* He chose ONE PDF PER REGION, a page per store (the directors already get twenty
+# store sheets), sent as VFL 10a East & NE / VFL 10b South, and last year from the feed as everywhere else.
+# The night form is gone; nothing here ever read it — footfall and the day target come from Peanuts Total.
+REGIONS = (("East & NE", "east-ne"), ("South", "south"))
+
+
+def region_pdfs(df, pf, asof):
+    """([(file name, PDF bytes, region tag)], [problems]) — East & NE then South, a page per open VFL store,
+    alphabetical (the store sheets' order). A store that fails is named, never quietly missing."""
+    import report_names as RN
+    import snapshots_a4 as A4
+    asof = pd.Timestamp(asof).normalize()
+    master = L.load_store_master().set_index("tableau_name")
+    stores = A4.open_stores(L, df)
+    out, failed = [], []
+    for letter, (region, tag) in zip(RN.letters(len(REGIONS)), REGIONS):
+        mine = sorted(s for s in stores if s in master.index
+                      and str(master.loc[s].get("region") or "").strip() == region)
+        pages = []
+        for s in mine:
+            try:
+                pages += build(df, pf, s, asof, int(master.loc[s, "code"]), fmt="pages")[1]
+            except Exception as e:              # one store must not sink the region
+                failed.append(f"{s}: {type(e).__name__}: {e}")
+        if pages:
+            out.append((RN.name("night_report", asof, ".pdf", letter=letter, label=region),
+                        A4.pages_pdf(pages), tag))
+    return out, failed

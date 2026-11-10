@@ -9,7 +9,7 @@ bucket, and names the file it sends
     <CODE> · <Name> · DD-MM-YYYY.<ext>          e.g.  VFL 2 · Graph analysis VFL · 09-11-2026.pdf
 
   OVR 1–9      the Overall PDFs          VFL IMG 1–5   the VFL morning images
-  VFL 1–9      the VFL PDFs              EAST n / SOUTH n   the store sheets, alphabetical in the region
+  VFL 1–10     the VFL PDFs              EAST n / SOUTH n   the store sheets, alphabetical in the region
 
 A report with several files that day takes letters (OVR 7a, 7b … for the festive run-ups, OVR 8a/8b for Google
 reviews by region). The date is the DATA day the report is built to, never the clock.
@@ -48,6 +48,7 @@ CATALOGUE = {
     "festive_vfl": ("VFL 7", "Festive run-up VFL"),
     "alterations": ("VFL 8", "Parking and alteration charges"),
     "books": ("VFL 9", "Collection books"),
+    "night_report": ("VFL 10", "Night report"),        # 10 Nov 2026: 10a East & NE, 10b South
     "stores_east": ("EAST", "Store sheet"),
     "stores_south": ("SOUTH", "Store sheet"),
 }

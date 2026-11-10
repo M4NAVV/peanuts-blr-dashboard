@@ -3831,7 +3831,7 @@ if nav == "📄 REPORTS PDF":
         # is exactly what a master tick must do. The default is set once, on
         # the first render, and the widget then owns it.
         _VRP_KEYS = ("vrp_pack", "vrp_db", "vrp_store_pack",
-                     "vrp_alter", "vrp_books", "vrp_graph", "vrp_cat",
+                     "vrp_alter", "vrp_books", "vrp_night", "vrp_graph", "vrp_cat",
                      "vrp_catb", "vrp_price")
         st.session_state.setdefault("vrp_pack", True)
         if _pack_all and not st.session_state.get("_vrp_all_was"):
@@ -3937,6 +3937,13 @@ if nav == "📄 REPORTS PDF":
                  "year, the total, and the bills of the last day that book "
                  "recorded. Page one lists every book so the pack totals "
                  "reconcile against the pages behind it.")
+        # ★ 10 Nov 2026 (Manav): the store night report, to the directors every morning as VFL 10a / 10b
+        picked["night"] = st.checkbox(
+            "Night report  ·  a page per VFL store, one PDF per region",
+            key="vrp_night",
+            help="Each store's night report in the stores' own workbook layout — the day, the month and the year "
+                 "from the takeover, brand split, averages and conversion. East & NE and South as two PDFs, "
+                 "the same files the directors get on WhatsApp as VFL 10a and 10b.")
 
     with c2:
         st.markdown("**Festive run-ups**")
@@ -4066,6 +4073,13 @@ if nav == "📄 REPORTS PDF":
                     else:
                         built.append(RN.named("books", TLRBK.build(_tf, _tfold, _tsrc,
                                                  asof=p_asof)[:2], p_asof))
+                if "night" in chosen:
+                    _prog.step("Night report")
+                    import store_night as SNI
+                    _nr, _nf = SNI.region_pdfs(get_data(), _load_portfolio_cached()[0], p_asof)
+                    built += [(n, b) for n, b, _t in _nr]
+                    if _nf:
+                        st.warning(f"Night report: {len(_nf)} store(s) could not be built: " + "; ".join(_nf[:5]))
                 if "graph" in chosen:
                     # ★ THE FULL ESTATE (get_data, not the filtered frame): its
                     # portfolio and region pages are totals, and a sidebar filter
