@@ -257,3 +257,14 @@ def test_a_window_that_has_not_opened_is_still_not_drawn():
     import month_brief as MB
     assert MB.festive_windows_started(pd.Timestamp("2026-09-11"),
                                       windows=[_win(elapsed=0)]) == []
+
+
+def test_the_samir_page_drops_a_run_up_the_day_after_it_closes():
+    """Manav, 10 Nov 2026: "take them off now too" — the page passes grace=0."""
+    import month_brief as MB
+    from pathlib import Path
+    assert "MB.festive_windows_started(PL.as_of(pf_all), grace=0)" in Path("app.py").read_text()
+    _, ws = _two_windows()
+    puja = [w for w in ws if w.festival == "Durga Puja"]      # ends 20 Oct
+    assert len(MB.festive_windows_started(pd.Timestamp("2026-10-20"), windows=puja, grace=0)) == 2
+    assert MB.festive_windows_started(pd.Timestamp("2026-10-21"), windows=puja, grace=0) == []

@@ -932,7 +932,9 @@ def render_portfolio():
         st.divider()
         st.markdown("**Festive run-ups**")
         try:
-            _wins = MB.festive_windows_started(PL.as_of(pf_all))
+            # ★ grace=0 (Manav, 10 Nov 2026: "take them off now too"): a run-up
+            # leaves this page the day after it closes, not FINISHED_GRACE_DAYS later.
+            _wins = MB.festive_windows_started(PL.as_of(pf_all), grace=0)
             _cards = [(w,
                        MB.build_festive(L, PL, get_data(), pf_all, window=w),
                        MB.build_festive(L, PL, get_data(), pf_all, window=w,
