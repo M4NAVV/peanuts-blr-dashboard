@@ -2153,9 +2153,15 @@ def vfl_gd_report(df: pd.DataFrame, asof=None, gen_date=None):
         # win and report a window that mostly predates the closure.
         sb.loc[shut, _YE.COL_VFL] = sb.loc[shut, "YTD TY"]
 
-    # Drop pure-return / all-zero brand-lines (no positive activity), like the sheet.
-    keep = ((sb["YTD LY"] > 0) | (sb["YTD TY"] > 0)
-            | (sb["MTD LY"] > 0) | (sb["MTD TY"] > 0))
+    # Drop only brand-lines with NO activity at all. ★ A RETURN-ONLY LINE STAYS
+    # (Manav, 10 Nov 2026: "go with a"). Until then lines with no POSITIVE
+    # figure were dropped "like the sheet" — and a store whose year on a line was
+    # only a return vanished: Malda TWAMEV MEN −12,999 (6 Nov) read the store,
+    # region and grand total ₹12,999 HIGH, then hid the ₹12,999 re-sale on 8 Nov
+    # when the line netted to zero; Siliguri −13,999 from 3 Jun to 9 Aug. The
+    # sheet now ties to the raw feed to the rupee (tests/test_vfl_brand.py).
+    _act = ["YTD LY", "YTD TY", "MTD LY", "MTD TY", "Day Sales"]
+    keep = sb[_act].ne(0).any(axis=1)
     sb = sb[keep].reset_index(drop=True)
 
     rows, types = [], []
@@ -2211,9 +2217,9 @@ def vfl_gd_report(df: pd.DataFrame, asof=None, gen_date=None):
         if s is None or e is None or s > e:
             return []                     # no comparable span at all: one line
         # ★ THE TEST IS WHETHER THE SPAN CLIPS THE WINDOW, not whether two
-        # sums differ. This sheet DROPS pure-return brand lines ("like the
-        # sheet"), so a store total can sit a few thousand rupees off the raw
-        # frames — Agartala carries a TWAMEV MEN line at YTD LY -9,999 with no
+        # sums differ. Until 10 Nov 2026 this sheet DROPPED pure-return brand
+        # lines, so a store total could sit a few thousand rupees off the raw
+        # frames — Agartala carried a TWAMEV MEN line at YTD LY -9,999 with no
         # this-year counterpart. Reading that residual as "outside the span"
         # split a store that is comparable from 2023 and put a phantom -100%
         # line under it. Only a real clip splits a store.

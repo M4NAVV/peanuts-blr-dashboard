@@ -169,6 +169,51 @@ def test_the_page_totals_tie_to_the_gd_sheets_grand_total():
     assert float(grand["Sum of DAY SALE FIGURE"]) == pytest.approx(total["day"])
 
 
+
+def test_every_store_on_the_gd_sheet_ties_to_its_raw_feed():
+    """★ A RETURN-ONLY BRAND LINE IS KEPT (Manav, 10 Nov 2026: "go with a").
+
+    The sheet used to drop lines with no POSITIVE figure. Malda's year on
+    TWAMEV MEN was one −12,999 return (6 Nov), the line vanished, and the store,
+    region and grand total read ₹12,999 high; the 8 Nov re-sale netted the line
+    to zero and the day's real sale went missing. Store by store, every column
+    the sheet sums must now be the feed's own sum."""
+    try:
+        df = L.load_data()
+    except Exception as e:                 # no sheet, no export: not a fault
+        pytest.skip(f"live data unavailable: {type(e).__name__}")
+    master = L.load_store_master()
+    code = dict(zip(master["tableau_name"], pd.to_numeric(master["code"], errors="coerce")))
+    # the latest day, AND 6 Nov 2026 — the day that broke (a test that passes on
+    # the old rule too proves nothing; the latest day had no return-only line)
+    days = [L.as_of(df)] + [d for d in (pd.Timestamp("2026-11-06"),) if d <= L.as_of(df)]
+    for asof in days:
+        _store_tie(df, code, asof)
+
+
+def _store_tie(df, code, asof):
+    raw = L._gd_by(df, [L.COL_STORE_LABEL], asof=asof)
+    raw["c"] = raw[L.COL_STORE_LABEL].map(code)
+    raw = raw.groupby("c")[["YTD TY", "YTD LY", "MTD TY", "Day Sales"]].sum()
+    gd, rt = L.vfl_gd_report(df, asof=asof, gen_date=asof)
+    g = gd.assign(__t=rt).reset_index(drop=True)
+    g["c"] = pd.to_numeric(g["STORE CODE"].replace("", pd.NA), errors="coerce").ffill()
+    st = g[g["__t"] == "storetotal"].groupby("c")[
+        ["Sum of YTD_TY", "Sum of YTD_LY", "Sum of MTD_TY", "Sum of DAY SALE FIGURE"]].sum()
+    j = st.join(raw, how="outer").fillna(0)
+    for sheet, feed in (("Sum of YTD_TY", "YTD TY"), ("Sum of YTD_LY", "YTD LY"),
+                        ("Sum of MTD_TY", "MTD TY"), ("Sum of DAY SALE FIGURE", "Day Sales")):
+        off = j[(j[sheet] - j[feed]).abs() > 0.5]
+        assert off.empty, f"{asof.date()} {sheet}: stores off the feed {dict((off[sheet] - off[feed]).round())}"
+
+
+def test_the_sheet_keeps_a_line_whose_only_activity_is_a_return():
+    """Pinned on the source so CI checks it with no feed."""
+    from pathlib import Path
+    src = Path("loader.py").read_text()
+    assert 'keep = sb[_act].ne(0).any(axis=1)' in src
+    assert '(sb["YTD TY"] > 0)' not in src
+
 # --------------------------------------------------------------------------- #
 # Where it sits, and how it is drawn
 # --------------------------------------------------------------------------- #

@@ -13,7 +13,7 @@ Two things these pin, both of which were wrong in the first cut:
    last year against a part year.
 
 2. A store splits when its SPAN CLIPS THE WINDOW, not when two sums differ. This
-   sheet drops pure-return brand lines, so a store total can sit a few thousand
+   sheet dropped pure-return brand lines until 10 Nov 2026, so a store total could sit a few thousand
    rupees off the raw frames; reading that residual as "outside the span" split a
    store comparable since 2023 and printed a phantom -100% line under it.
 """
