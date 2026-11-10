@@ -79,3 +79,4 @@ def test_the_vfl_builder_offers_the_books_as_a_second_source():
     src = Path("app.py").read_text()
     assert 'feed="tailoring", key="vfl_tlpx"' in src
     assert '["Sales", "Alterations & parking"]' in src
+    assert 'feed="tailoring", key="pf_tlpx"' in src

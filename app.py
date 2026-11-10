@@ -729,6 +729,32 @@ def _afternoon_tab():
             st.download_button("⬇️ This picture", png, file_name=name, mime="image/png", key=f"aft_{name}")
 
 
+# ★ Defined up here (10 Nov 2026): the Portfolio Excel Builder reads the alteration books too, and
+# render_portfolio() runs before the rest of this file is reached.
+@st.cache_data(ttl=86400, show_spinner=False)
+def _tailoring_registry():
+    """Which store folder holds which workbook. A store is added maybe twice a
+    year, so this is walked once a day and not on every read."""
+    import tailoring as TLR
+    return TLR.registry()
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def _tailoring():
+    """Read every store's workbook, hourly.
+
+    ★ ONLY WHAT CHANGED IS DOWNLOADED — Drive's own `modifiedTime` is the cache
+    key, so a store that has not typed since the last read costs nothing. The
+    stores enter bills through the day; an hour behind them is close enough,
+    and a page load never waits on thirteen downloads."""
+    import tailoring as TLR
+    try:
+        reg = _tailoring_registry()
+    except Exception:
+        reg = None                 # no credentials: load() says so properly
+    return TLR.load(reg=reg)
+
+
 def render_portfolio():
     try:
         pf_all, pf_at, pf_provisional = _load_portfolio_cached()
@@ -1021,7 +1047,22 @@ def render_portfolio():
         # below. The 13 Oct builder (pivot_ui) is kept, just not mounted; the 22-Sep one before it:
         # render_pivot_builder(pf, feed="portfolio", key="pf_pivot", asof=asof)
         import pivot_pane
-        pivot_pane.render(pf, feed="portfolio", key="pf_pxx", asof=asof)
+        # ★ 10 Nov 2026 (Manav): the alteration and parking books here too, as on the VFL builder.
+        _px_src = st.segmented_control("Data", ["Sales", "Alterations & parking"], key="pf_px_src",
+                                       default="Sales", label_visibility="collapsed") or "Sales"
+        if _px_src == "Sales":
+            pivot_pane.render(pf, feed="portfolio", key="pf_pxx", asof=asof)
+        else:
+            with st.spinner("Reading the store workbooks…"):
+                _tlf, _tln, _, _ = _tailoring()
+            if _tlf.empty:
+                st.error("**No alteration or parking data could be read.** "
+                         + (_tln[0] if _tln else "No store workbook returned any rows."))
+            else:
+                st.caption(f"The stores' own alteration and parking books, read from Drive hourly — "
+                           f"{len(_tlf):,} jobs, {_tlf['date'].min():%d %b %Y} to {_tlf['date'].max():%d %b %Y}. "
+                           "A figure is only as current as the last time the store typed in its book.")
+                pivot_pane.render(_tlf, feed="tailoring", key="pf_tlpx", asof=asof)
         # import pivot_ui; pivot_ui.render(pf, feed="portfolio", key="pf_pvx", asof=asof)
         return
 
@@ -3008,28 +3049,6 @@ if nav == "🗓️ Day calendar":
 # =========================================================================== #
 # ALTERATIONS & PARKING — the store-kept workbooks in Drive
 # =========================================================================== #
-@st.cache_data(ttl=86400, show_spinner=False)
-def _tailoring_registry():
-    """Which store folder holds which workbook. A store is added maybe twice a
-    year, so this is walked once a day and not on every read."""
-    import tailoring as TLR
-    return TLR.registry()
-
-
-@st.cache_data(ttl=3600, show_spinner=False)
-def _tailoring():
-    """Read every store's workbook, hourly.
-
-    ★ ONLY WHAT CHANGED IS DOWNLOADED — Drive's own `modifiedTime` is the cache
-    key, so a store that has not typed since the last read costs nothing. The
-    stores enter bills through the day; an hour behind them is close enough,
-    and a page load never waits on thirteen downloads."""
-    import tailoring as TLR
-    try:
-        reg = _tailoring_registry()
-    except Exception:
-        reg = None                 # no credentials: load() says so properly
-    return TLR.load(reg=reg)
 
 
 def rupees(x) -> str:
