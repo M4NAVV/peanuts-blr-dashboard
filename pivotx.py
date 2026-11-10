@@ -49,6 +49,10 @@ _VFL_COLS = {
     "Style code": "CATEGORY1", "HSN code": "HSN_SAC_CODE", "Tax rate": "Tax rate",
 }
 _PF_COLS = {"Region": "region", "City": "city", "Location": "location", "Brand": "brand", "Store code": "code"}
+# ★ 10 Nov 2026 (Manav: "pull the alterations and parking in the excel builder too"): the stores' own alteration
+# and parking books (tailoring.load), one row per booked job. Prepared columns, set in `prepare`.
+_TL_COLS = {"Region": "_region", "City": "_city", "Store": "_store", "Store code": "_code",
+            "Book": "_book", "Done by": "_done_by"}
 
 GROUPS = {
     "vfl": [
@@ -65,7 +69,17 @@ GROUPS = {
         ("Region", ["Region", "City", "Location", "Store", "Store code"]),
         ("Brand", ["Brand", "Brand group"]),
     ],
+    "tailoring": [
+        ("Financial calendar", TIME_FIN),
+        ("Calendar", TIME_CAL),
+        ("Region", ["Region", "City", "Store", "Store code"]),
+        ("Book", ["Book", "Done by"]),
+    ],
 }
+
+FEED_LABEL = {"vfl": "VFL feed · one row per bill line",
+              "portfolio": "Portfolio feed · one row per store per day",
+              "tailoring": "Alterations & parking books · one row per job, as the stores typed it"}
 
 
 def field_names(feed: str) -> list[str]:
@@ -118,6 +132,10 @@ def labels(work: pd.DataFrame, feed: str, f: str):
     """(labels as text, explicit order or None) for field `f` on the prepared frame."""
     if f in TIME_FIN or f in TIME_CAL:
         return _time(work["date"], f)
+    if feed == "tailoring":
+        if f in _TL_COLS:
+            return work[_TL_COLS[f]].fillna("(blank)").astype(str), (["Alterations", "Parking"] if f == "Book" else None)
+        raise KeyError(f"Unknown field: {f}")
     if feed == "vfl":
         if f in _VFL_COLS:
             col = _VFL_COLS[f]
@@ -192,6 +210,22 @@ PF_MEASURES = {m.label: m for m in [
     Measure("Days traded", "int", False, ("days",), lambda b: b["days"]),
 ]}
 
+TL_MEASURES = {m.label: m for m in [
+    Measure("Collected (₹)", "money", True, ("total",), lambda b: b["total"]),
+    Measure("Billed (₹)", "money", True, ("billed",), lambda b: b["billed"]),
+    # ★ billed − collected: booked work not yet paid for (the books' own "Total" is what came in)
+    Measure("Outstanding (₹)", "money", True, ("billed", "total"), lambda b: b["billed"] - b["total"]),
+    Measure("Due (₹)", "money", True, ("due",), lambda b: b["due"]),
+    Measure("Due paid (₹)", "money", True, ("due_paid",), lambda b: b["due_paid"]),
+    Measure("Cash (₹)", "money", True, ("cash",), lambda b: b["cash"]),
+    Measure("Card / UPI (₹)", "money", True, ("card_upi",), lambda b: b["card_upi"]),
+    Measure("Jobs", "int", True, ("jobs",), lambda b: b["jobs"]),
+    Measure("Avg per job (₹)", "moneyratio", False, ("total", "jobs"), lambda b: _div(b["total"], b["jobs"])),
+    Measure("Cash share %", "pct", False, ("cash", "total"), lambda b: _div(b["cash"], b["total"])),
+    Measure("Stores recording", "int", False, ("stores",), lambda b: b["stores"]),
+    Measure("Days recorded", "int", False, ("days",), lambda b: b["days"]),
+]}
+
 SHOW_AS = ["Value", "% of grand total", "% of column total", "% of row total", "% of parent row",
            "Change vs previous column", "% change vs previous column", "Running total across"]
 SHORT = {"% of grand total": "% of total", "% of column total": "% of column", "% of row total": "% of row",
@@ -201,7 +235,7 @@ SHOW_ADDITIVE_ONLY = {"% of grand total", "% of column total", "% of row total",
 
 
 def measures(feed: str) -> dict:
-    return VFL_MEASURES if feed == "vfl" else PF_MEASURES
+    return {"vfl": VFL_MEASURES, "tailoring": TL_MEASURES}.get(feed, PF_MEASURES)
 
 
 def show_as_for(feed: str, m: str) -> list[str]:
@@ -233,6 +267,8 @@ def prepare(df: pd.DataFrame, feed: str) -> pd.DataFrame:
     except as the hashed-free count the VFL `customers` aggregate needs."""
     w = df.copy()
     w["date"] = pd.to_datetime(w["date"], errors="coerce")
+    if feed == "tailoring":
+        return _tl_prepare(w)
     if feed == "vfl":
         w["_tax"] = _num(w["Tax Amount"]) if "Tax Amount" in w.columns else 0.0
         w["_store_code"] = _store_codes(w)
@@ -242,10 +278,49 @@ def prepare(df: pd.DataFrame, feed: str) -> pd.DataFrame:
     return w
 
 
+def _done_by(s: pd.Series) -> pd.Series:
+    """The books type the tailor freehand ("InHouse", "in house", "OUR TAILOR", "suhail"): one spelling each.
+    A blank is the usual case (most stores never fill the column) and says so."""
+    raw = s.fillna("").astype(str).str.strip()
+    k = raw.str.lower().str.replace(r"[^a-z]", "", regex=True)
+    out = raw.str.title()
+    out[k.isin(["inhouse", "ourtailor", "house"])] = "In-house"
+    out[k.eq("suhail")] = "Suhail"
+    out[k.isin(["commercial", "comstreet", "commercialstreet", "commst"])] = "Commercial Street"   # Jayanagar's two spellings
+    out[k.isin(["", "none", "nan"])] = "(not recorded)"
+    return out
+
+
+def _tl_prepare(w: pd.DataFrame) -> pd.DataFrame:
+    """Store identity from the store MASTER by code (the same names the sales pivots use), the book, the tailor."""
+    try:
+        import loader as L
+        m = L.load_store_master()
+        m = m.assign(_c=pd.to_numeric(m["code"], errors="coerce"))
+        by = m.dropna(subset=["_c"]).drop_duplicates("_c").set_index("_c")
+    except Exception:
+        by = pd.DataFrame(columns=["tableau_name", "city", "region"])
+    c = pd.to_numeric(w["store_code"], errors="coerce")
+    w["_code"] = c.astype("Int64").astype(str).replace("<NA>", "(blank)")
+    w["_store"] = c.map(by["tableau_name"]).fillna("(not in store master) " + w["_code"])
+    w["_city"] = c.map(by["city"]).fillna("(not in store master)").astype(str).str.title()
+    w["_region"] = c.map(by["region"]).fillna("(not in store master)")
+    w["_book"] = w["kind"].map({"alter": "Alterations", "parking": "Parking"}).fillna(w["kind"].astype(str))
+    w["_done_by"] = _done_by(w["done_by"] if "done_by" in w.columns else pd.Series("", index=w.index))
+    for col in ("billed", "due", "due_paid", "total", "cash", "card_upi"):
+        w[col] = pd.to_numeric(w[col], errors="coerce").fillna(0.0)
+    return w
+
+
 def _aggregate(work: pd.DataFrame, keys: list[str], feed: str, parts: set) -> pd.DataFrame:
     """Base aggregates per group (one row when keys is empty)."""
     tmp = work if keys else work.assign(_all=1)
     g = keys or ["_all"]
+    if feed == "tailoring":
+        spec = {k: (k, "sum") for k in ("total", "billed", "due", "due_paid", "cash", "card_upi")}
+        spec.update({"jobs": ("date", "size"), "stores": ("store_code", "nunique"), "days": ("date", "nunique")})
+        core = tmp.groupby(g, dropna=False).agg(**{k: v for k, v in spec.items() if k in parts}).reset_index()
+        return core.drop(columns=["_all"]) if not keys else core
     if feed == "vfl":
         import loader as L
         core = L._agg_base(tmp, g)                                    # the app's own definitions

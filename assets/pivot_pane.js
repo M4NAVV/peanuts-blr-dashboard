@@ -303,7 +303,7 @@ function render(S) {
       </div>
       ${S.paneHidden ? "" : pane(S)}
     </div>
-    <div class="pv-sheettabs"><span>PivotTable</span><i>${d.feed === "vfl" ? "VFL feed · one row per bill line" : "Portfolio feed · one row per store per day"}</i></div>
+    <div class="pv-sheettabs"><span>PivotTable</span><i>${d.feed_label || (d.feed === "vfl" ? "VFL feed · one row per bill line" : "Portfolio feed · one row per store per day")}</i></div>
     ${statusBar(S)}
     ${S.menu ? menuHtml(S) : ""}
     ${S.dlg ? dialogHtml(S) : ""}

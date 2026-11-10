@@ -52,7 +52,24 @@ PRESETS = {
                                         period="This month", sort_by="Sales (₹)"),
     },
 }
-DEFAULT = {"vfl": "Store growth, FY to date", "portfolio": "Store growth, FY to date"}
+PRESETS["tailoring"] = {
+    "Store by month, this FY": dict(rows=["Region", "Store"], cols=["Fiscal Month"],
+                                    values=[("Collected (₹)", "Value")], period="This FY"),
+    "Collected, billed and outstanding by store": dict(rows=["Region", "Store"], cols=[],
+                                                       values=[("Billed (₹)", "Value"), ("Collected (₹)", "Value"),
+                                                               ("Outstanding (₹)", "Value"), ("Jobs", "Value")],
+                                                       period="All data", sort_by="Collected (₹)"),
+    "Alterations vs parking by store": dict(rows=["Store"], cols=["Book"],
+                                            values=[("Collected (₹)", "Value")], period="This FY"),
+    "Who did the work (in-house or outside)": dict(rows=["Store", "Done by"], cols=[],
+                                                   values=[("Collected (₹)", "Value"), ("Jobs", "Value"),
+                                                           ("Avg per job (₹)", "Value")], period="All data"),
+    "Cash vs card / UPI": dict(rows=["Region", "Store"], cols=[],
+                               values=[("Cash (₹)", "Value"), ("Card / UPI (₹)", "Value"),
+                                       ("Cash share %", "Value")], period="This FY"),
+}
+DEFAULT = {"vfl": "Store growth, FY to date", "portfolio": "Store growth, FY to date",
+           "tailoring": "Store by month, this FY"}
 SORTS_LABEL = ["Label (A to Z)", "Label (Z to A)"]
 
 

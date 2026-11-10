@@ -424,9 +424,9 @@ def _render(df: pd.DataFrame, *, feed: str, key: str, asof):
             src = P.source_rows(df, feed, spec)
             if len(src) > 250000:
                 src = None
-        title = f"{'VFL' if feed == 'vfl' else 'Portfolio'} pivot"
+        title = {"vfl": "VFL", "tailoring": "Alterations & parking"}.get(feed, "Portfolio") + " pivot"
         about = {
-            "Feed": "VFL (one row per bill line)" if feed == "vfl" else "Portfolio (one row per store per day)",
+            "Feed": P.FEED_LABEL.get(feed, feed),
             "Rows": ", ".join(ui["rows"]) or "(none)", "Columns": ", ".join(ui["cols"]) or "(none)",
             "Values": "; ".join((v.get("name") or v["m"]) + ("" if v.get("how", "Value") == "Value"
                                                               else f" — {SHOW_AS_EXCEL[v['how']]}") for v in ui["values"]),
@@ -458,7 +458,7 @@ def _render(df: pd.DataFrame, *, feed: str, key: str, asof):
     dmin, dmax = pd.to_datetime(W["date"]).min(), pd.to_datetime(W["date"]).max()
 
     payload = {
-        "feed": feed, "ui": ui, "rev": ss.get(rk, 0), "fields": fields, "measures": measures,
+        "feed": feed, "feed_label": P.FEED_LABEL.get(feed, feed), "ui": ui, "rev": ss.get(rk, 0), "fields": fields, "measures": measures,
         "show_names": SHOW_AS_EXCEL, "presets": presets, "saved": saved, "periods": pnames,
         "dmin": f"{dmin:%Y-%m-%d}", "dmax": f"{dmax:%Y-%m-%d}", "items": items,
         "grid": out.get("grid"), "error": out.get("error"),

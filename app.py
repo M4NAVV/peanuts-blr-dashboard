@@ -3282,7 +3282,25 @@ if nav == "🧮 Excel Builder":
     # (pivot_ui) is kept, just not mounted. The 22-Sep one before it:
     # render_pivot_builder(df_all, feed="vfl", key="vfl_pivot", asof=pd.Timestamp(end_d))
     import pivot_pane
-    pivot_pane.render(df_all, feed="vfl", key="vfl_pxx", asof=pd.Timestamp(end_d))
+    # ★ 10 Nov 2026 (Manav: "pull the alterations and parking in the excel builder too"): a second data
+    # source — the stores' own alteration and parking books, the same read as the ✂️ Alterations tab.
+    _px_src = st.segmented_control("Data", ["Sales", "Alterations & parking"], key="vfl_px_src",
+                                   default="Sales", label_visibility="collapsed") or "Sales"
+    if _px_src == "Sales":
+        pivot_pane.render(df_all, feed="vfl", key="vfl_pxx", asof=pd.Timestamp(end_d))
+    else:
+        with st.spinner("Reading the store workbooks…"):
+            _tlf, _tln, _, _ = _tailoring()
+        if _tlf.empty:
+            # A source that cannot run says why, on the page ([[feedback-silent-failure-must-speak]]).
+            st.error("**No alteration or parking data could be read.** "
+                     + (_tln[0] if _tln else "No store workbook returned any rows."))
+        else:
+            st.caption(f"The stores' own alteration and parking books, read from Drive hourly — "
+                       f"{len(_tlf):,} jobs, {_tlf['date'].min():%d %b %Y} to {_tlf['date'].max():%d %b %Y}. "
+                       "A figure is only as current as the last time the store typed in its book; "
+                       "the ✂️ Alterations tab shows when each one last did.")
+            pivot_pane.render(_tlf, feed="tailoring", key="vfl_tlpx", asof=pd.Timestamp(end_d))
     # import pivot_ui; pivot_ui.render(df_all, feed="vfl", key="vfl_pvx", asof=pd.Timestamp(end_d))
 
 
