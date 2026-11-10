@@ -3213,25 +3213,42 @@ if nav == "✂️ Alterations":
                        f"week. Their figures below are not wrong — they are "
                        f"simply not being kept.")
 
-        st.markdown("**Alterations, month by month**")
-        _m = TLR.by_month(_alt)
-        _m.columns = [pd.Timestamp(c).strftime("%b %Y") for c in _m.columns]
-        _m.index = [_names.get(i, str(i)) for i in _m.index]
-        _m["Total"] = _m.sum(axis=1)
-        _m = _m.sort_values("Total", ascending=False)
-        _m.loc["TOTAL"] = _m.sum()
-        st.dataframe(_m.style.format(lambda v: rupees(v)),
-                     use_container_width=True)
+        def _book_summary(book, label, paid):
+            """Month by month, then how it was paid — one store a row. The
+            SAME two tables for each book (Manav, 10 Nov 2026: parking "also
+            to have something like that"), so the two can never drift apart."""
+            if book.empty:
+                st.markdown(f"**{label}**")
+                st.caption(f"No store has recorded any {label.lower()} yet.")
+                return
+            st.markdown(f"**{label}, month by month**")
+            _m = TLR.by_month(book)
+            _m.columns = [pd.Timestamp(c).strftime("%b %Y") for c in _m.columns]
+            _m.index = [_names.get(i, str(i)) for i in _m.index]
+            _m["Total"] = _m.sum(axis=1)
+            _m = _m.sort_values("Total", ascending=False)
+            _m.loc["TOTAL"] = _m.sum()
+            st.dataframe(_m.style.format(lambda v: rupees(v)),
+                         use_container_width=True)
 
-        st.markdown("**How alterations were paid**")
-        _sp = _alt.groupby("store_code")[["cash", "card_upi", "total"]].sum()
-        _sp["Card %"] = (_sp.card_upi / _sp.total.where(_sp.total != 0) * 100)
-        _sp.index = [_names.get(i, str(i)) for i in _sp.index]
-        _sp.columns = ["Cash", "Card / UPI", "Total", "Card %"]
-        st.dataframe(_sp.sort_values("Total", ascending=False).style.format(
-            {"Cash": lambda v: rupees(v), "Card / UPI": lambda v: rupees(v),
-             "Total": lambda v: rupees(v), "Card %": "{:.1f}%"}),
-            use_container_width=True)
+            st.markdown(f"**{paid}**")
+            _sp = book.groupby("store_code")[["cash", "card_upi", "total"]].sum()
+            _sp["Card %"] = (_sp.card_upi / _sp.total.where(_sp.total != 0) * 100)
+            _sp.index = [_names.get(i, str(i)) for i in _sp.index]
+            _sp.columns = ["Cash", "Card / UPI", "Total", "Card %"]
+            _sp = _sp.sort_values("Total", ascending=False)
+            # ★ the TOTAL row recomputes Card % from the summed pair, never an
+            # average of the store percentages ([[feedback-aggregate-ratios-in-pairs]])
+            _tot = _sp[["Cash", "Card / UPI", "Total"]].sum()
+            _sp.loc["TOTAL"] = [_tot["Cash"], _tot["Card / UPI"], _tot["Total"],
+                                _tot["Card / UPI"] / _tot["Total"] * 100 if _tot["Total"] else float("nan")]
+            st.dataframe(_sp.style.format(
+                {"Cash": lambda v: rupees(v), "Card / UPI": lambda v: rupees(v),
+                 "Total": lambda v: rupees(v), "Card %": "{:.1f}%"}),
+                use_container_width=True)
+
+        _book_summary(_alt, "Alterations", "How alterations were paid")
+        _book_summary(_park, "Parking", "How parking was paid")
 
         _probs = TLR.check(_tf)
         if _probs:

@@ -80,3 +80,11 @@ def test_the_vfl_builder_offers_the_books_as_a_second_source():
     assert 'feed="tailoring", key="vfl_tlpx"' in src
     assert '["Sales", "Alterations & parking"]' in src
     assert 'feed="tailoring", key="pf_tlpx"' in src
+
+
+def test_the_alterations_tab_summarises_parking_like_alterations():
+    """Manav, 10 Nov 2026: parking "also to have something like that" — one helper draws both books."""
+    from pathlib import Path
+    src = Path("app.py").read_text()
+    assert '_book_summary(_alt, "Alterations", "How alterations were paid")' in src
+    assert '_book_summary(_park, "Parking", "How parking was paid")' in src
