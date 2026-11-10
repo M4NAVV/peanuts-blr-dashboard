@@ -3943,7 +3943,7 @@ if nav == "📄 REPORTS PDF":
             key="vrp_night",
             help="Each store's night report in the stores' own workbook layout — the day, the month and the year "
                  "from the takeover, brand split, averages and conversion. East & NE and South as two PDFs, "
-                 "the same files the directors get on WhatsApp as VFL 10a and 10b.")
+                 "the same files the directors get on WhatsApp as ASM EAST and ASM SOUTH.")
 
     with c2:
         st.markdown("**Festive run-ups**")

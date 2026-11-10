@@ -9,7 +9,7 @@ bucket, and names the file it sends
     <CODE> · <Name> · DD-MM-YYYY.<ext>          e.g.  VFL 2 · Graph analysis VFL · 09-11-2026.pdf
 
   OVR 1–9      the Overall PDFs          VFL IMG 1–5   the VFL morning images
-  VFL 1–10     the VFL PDFs              EAST n / SOUTH n   the store sheets, alphabetical in the region
+  VFL 1–9      the VFL PDFs, then ASM EAST / ASM SOUTH (the night report)              EAST n / SOUTH n   the store sheets, alphabetical in the region
 
 A report with several files that day takes letters (OVR 7a, 7b … for the festive run-ups, OVR 8a/8b for Google
 reviews by region). The date is the DATA day the report is built to, never the clock.
@@ -48,7 +48,7 @@ CATALOGUE = {
     "festive_vfl": ("VFL 7", "Festive run-up VFL"),
     "alterations": ("VFL 8", "Parking and alteration charges"),
     "books": ("VFL 9", "Collection books"),
-    "night_report": ("VFL 10", "Night report"),        # 10 Nov 2026: 10a East & NE, 10b South
+    "night_report": ("ASM", "Night report"),           # 10 Nov 2026: ASM EAST / ASM SOUTH (VARIANT_CODES)
     "stores_east": ("EAST", "Store sheet"),
     "stores_south": ("SOUTH", "Store sheet"),
 }
@@ -87,8 +87,13 @@ def file_name(words: str, day, ext: str) -> str:
     return f"{words} · {pd.Timestamp(day):%d-%m-%Y}{_ext(ext)}"
 
 
+# A report whose regions carry their OWN codes, not letters (Manav, 10 Nov 2026: "ASM EAST AND ASM SOUTH, instead of
+# VFL 10A/B"). The bot's VARIANT_CODES.
+VARIANT_CODES = {("night_report", "East & NE"): "ASM EAST", ("night_report", "South"): "ASM SOUTH"}
+
+
 def name(rid: str, day, ext: str, *, label: str = "", letter: str = "", n: int | None = None,
-         store: str = "") -> str:
+         store: str = "", code: str = "") -> str:
     """The bot's name for report `rid`.
 
     label   a variant in brackets: "Festive run-up (Diwali 18)", "Google reviews (South)"
@@ -96,7 +101,10 @@ def name(rid: str, day, ext: str, *, label: str = "", letter: str = "", n: int |
     n       a numbered file: VFL IMG 3, EAST 4
     store   a store sheet: "EAST 4 · Store sheet, Malda"
     """
-    code, base = CATALOGUE[rid]
+    _code, base = CATALOGUE[rid]
+    if code:                                   # a region with its own code: "ASM EAST · Night report"
+        return file_name(f"{code} · {base}", day, ext)
+    code = _code
     if n is not None:
         code = f"{code} {n}"
     elif letter:

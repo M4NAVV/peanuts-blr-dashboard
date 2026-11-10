@@ -1,5 +1,5 @@
 """The night report to the directors (Manav, 10 Nov 2026): one PDF per region, a page per open VFL store, in the
-store sheets' alphabetical order, named VFL 10a East & NE / VFL 10b South."""
+store sheets' alphabetical order, named ASM EAST / ASM SOUTH."""
 import pandas as pd
 from PIL import Image
 
@@ -22,8 +22,8 @@ def test_one_pdf_per_region_a_page_per_store_in_order(monkeypatch):
                         seen.append(s) or ("x", [Image.new("RGB", (20, 20), "white")], 1))
     out, failed = SNI.region_pdfs(pd.DataFrame(), pd.DataFrame(), "2026-11-09")
     assert failed == [] and seen == ["Agartala", "Silchar", "Orion Mall"]
-    assert [(n, t) for n, _b, t in out] == [("VFL 10a · Night report (East & NE) · 09-11-2026.pdf", "east-ne"),
-                                            ("VFL 10b · Night report (South) · 09-11-2026.pdf", "south")]
+    assert [(n, t) for n, _b, t in out] == [("ASM EAST · Night report · 09-11-2026.pdf", "east-ne"),
+                                            ("ASM SOUTH · Night report · 09-11-2026.pdf", "south")]
 
 
 def test_a_store_that_fails_is_named_and_the_rest_still_go(monkeypatch):

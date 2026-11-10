@@ -464,7 +464,7 @@ def _beside(images, gap):
 # --------------------------------------------------------------------------- #
 # *"once both the VFL and the peanuts total sheet is updated, then this night report should be built and whatsapp to
 # the directors as is the process."* He chose ONE PDF PER REGION, a page per store (the directors already get twenty
-# store sheets), sent as VFL 10a East & NE / VFL 10b South, and last year from the feed as everywhere else.
+# store sheets), sent as ASM EAST / ASM SOUTH (renamed from VFL 10a/10b the same day), and last year from the feed as everywhere else.
 # The night form is gone; nothing here ever read it — footfall and the day target come from Peanuts Total.
 REGIONS = (("East & NE", "east-ne"), ("South", "south"))
 
@@ -488,6 +488,6 @@ def region_pdfs(df, pf, asof):
             except Exception as e:              # one store must not sink the region
                 failed.append(f"{s}: {type(e).__name__}: {e}")
         if pages:
-            out.append((RN.name("night_report", asof, ".pdf", letter=letter, label=region),
+            out.append((RN.name("night_report", asof, ".pdf", code=RN.VARIANT_CODES[("night_report", region)]),
                         A4.pages_pdf(pages), tag))
     return out, failed
