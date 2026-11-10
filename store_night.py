@@ -216,6 +216,22 @@ def _pairs(width, rows, font_px=26):
     return img
 
 
+def _title(width, text, font_px=30):
+    """The store's title bar: one yellow band across the page, the words centred (Manav, 10 Nov 2026: "center the
+    header row which has the store name"). It used to be a label/value row — text at the left, a divider at 56%."""
+    from PIL import Image, ImageDraw
+    import portfolio_pdf as PP
+    reg, bold = PP._ft(font_px)
+    pad = PP._px(10)
+    rh = int((reg.getmetrics()[0] + reg.getmetrics()[1]) + pad * 2)
+    fill, ink, _strong = BAND["title"]
+    img = Image.new("RGB", (width, rh), fill)
+    d = ImageDraw.Draw(img)
+    d.rectangle([0, 0, width - 1, rh - 1], outline=(170, 170, 170))
+    d.text(((width - d.textlength(text, font=bold)) / 2, pad), text, font=bold, fill=ink)
+    return img
+
+
 def _r(v, dp=0):
     import portfolio_pdf as PP
     return "—" if v is None else PP._fmt_in(v, dp)
@@ -369,9 +385,8 @@ def build(df, pf, store_label, asof, code=None, fmt="pdf") -> tuple:
                  ("TOTAL SALE", _r(lf.get("sales")), "title")]
 
         sheet = A4._Sheet(store_label, asof, "", bounded=False, footer=True)
-        sheet.put(_pairs(W, [(f"PEANUTS RETAIL — {store_label.upper()}  ·  "
-                              f"NIGHT REPORT  ·  {asof:%d-%m-%Y}", "",
-                              "title")], font_px=30), gap=14)
+        sheet.put(_title(W, f"PEANUTS RETAIL — {store_label.upper()}  ·  "
+                            f"NIGHT REPORT  ·  {asof:%d-%m-%Y}", font_px=30), gap=14)
         cols = [_pairs(cw, left[1:]), _pairs(cw, mid), _pairs(cw, right)]
         sheet.put(_beside(cols, gap), gap=20)
 
