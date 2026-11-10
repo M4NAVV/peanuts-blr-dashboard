@@ -23,6 +23,7 @@ import streamlit.components.v1 as components
 import festive as FEST
 import loader as L
 import portfolio_loader as PL
+import report_names as RN
 from imaging import table_to_png
 
 st.set_page_config(
@@ -581,6 +582,9 @@ def _festive_tab(df, *, vfl: bool):
         with st.spinner("Building…"):
             try:
                 name, payload = FEST.build_festive_pdf(df, w, vfl=vfl)
+                # ★ the house file name (10 Nov 2026) — the workbook sheets, not the bot's run-up pack, so no code
+                name = RN.plain(f"Festive sheets{' VFL' if vfl else ''} ({w.festival} {w.tenure})",
+                                pd.to_datetime(df["date"]).max(), name)
                 st.session_state[f"fest_out_{vfl}"] = (name, payload)
             except Exception as e:                      # surface, don't crash tab
                 st.session_state[f"fest_out_{vfl}"] = None
@@ -719,7 +723,7 @@ def _afternoon_tab():
             st.error(f"**The pictures could not be drawn.** {type(e).__name__}: {e}")
             return
     st.download_button("⬇️ Download all 7 as a zip", AS.zip_bytes([(n, b) for n, _, b in pngs]),
-                       file_name=f"Afternoon sale {d.date:%d-%m-%Y}.zip", mime="application/zip",
+                       file_name=RN.plain("AFT · Afternoon sale", d.date, ".zip"), mime="application/zip",
                        type="primary", key="aft_zip")
     tabs = st.tabs([f"AFT {i}" for i in range(1, len(pngs) + 1)])
     for t, (name, words, png) in zip(tabs, pngs):
@@ -936,9 +940,11 @@ def render_portfolio():
             # ★ ONE BUILD, THREE IMAGES. Each download comes from the same call
             # that drew what is on screen, so a region card cannot disagree with
             # the pair above it.
-            c1.download_button("⬇ East & NE  (PNG)", _east[1], file_name=_east[0],
+            c1.download_button("⬇ East & NE  (PNG)", _east[1],
+                               file_name=RN.plain("Samir card, the month, East & NE", PL.as_of(pf_all), ".png"),
                                mime="image/png", use_container_width=True)
-            c2.download_button("⬇ South  (PNG)", _south[1], file_name=_south[0],
+            c2.download_button("⬇ South  (PNG)", _south[1],
+                               file_name=RN.plain("Samir card, the month, South", PL.as_of(pf_all), ".png"),
                                mime="image/png", use_container_width=True)
             st.caption(
                 "ℹ️ **Mtd G/D compares the same days**, not this month against "
@@ -1002,10 +1008,12 @@ def render_portfolio():
                     f1, f2 = st.columns(2)
                     _k = f"{_w.festival}{_w.tenure}".replace(" ", "")
                     f1.download_button("⬇ East & NE  (PNG)", _e[1],
-                                       file_name=_e[0], mime="image/png",
+                                       file_name=RN.plain(f"Samir card, {_w.festival} {_w.tenure}, East & NE",
+                                                          PL.as_of(pf_all), ".png"), mime="image/png",
                                        key=f"dl_e_{_k}", use_container_width=True)
                     f2.download_button("⬇ South  (PNG)", _s[1],
-                                       file_name=_s[0], mime="image/png",
+                                       file_name=RN.plain(f"Samir card, {_w.festival} {_w.tenure}, South",
+                                                          PL.as_of(pf_all), ".png"), mime="image/png",
                                        key=f"dl_s_{_k}", use_container_width=True)
                 st.caption(
                     "ℹ️ **G/D is like to like** — this year's days so far "
@@ -1281,13 +1289,14 @@ def render_portfolio():
             _imgs = _built[1]
             for _c, (_label, _name, _png) in zip(st.columns(len(_imgs) + 1),
                                                  _imgs):
-                _c.download_button(f"⬇ {_label}", _png, file_name=_name,
+                _c.download_button(f"⬇ {_label}", _png,
+                                   file_name=RN.plain(f"Manager image Mon-Thu vs Fri-Sun, {_label}", asof, ".png"),
                                    mime="image/png", use_container_width=True,
                                    key=f"pf_wk_snap_{_label}")
             import report_td as _RTD
             _zn, _zb, _zm = _RTD.bundle(
-                [(n, b) for _, n, b in _imgs],
-                zip_name=f"MANAGER IMAGES MON-THU vs FRI-SUN {asof:%d-%m-%Y}.zip")
+                [(RN.plain(f"Manager image Mon-Thu vs Fri-Sun, {lb}", asof, ".png"), b) for lb, n, b in _imgs],
+                zip_name=RN.plain("Manager images Mon-Thu vs Fri-Sun", asof, ".zip"))
             st.columns(len(_imgs) + 1)[-1].download_button(
                 "⬇ All three (zip)", _zb, file_name=_zn, mime=_zm,
                 use_container_width=True, key="pf_wk_snap_zip")
@@ -1665,19 +1674,19 @@ def render_portfolio():
                     if "pack" in chosen:
                         _prog.step("Portfolio pack")
                         built.append((
-                            f"peanuts_portfolio_{pdf_asof:%Y%m%d}.pdf",
+                            RN.name("portfolio_pack", pdf_asof, ".pdf"),
                             PPDF.build(pf, pf_all, pdf_asof, basis,
                                        vfl_df=vdf, on_step=_prog.sub)))
                     if "south_ltol" in chosen:
                         _prog.step("South L-to-L")
-                        built.append(RTD.build_south_ltol(vdf, v_asof, tdb))
+                        built.append(RN.named("south_ltol", RTD.build_south_ltol(vdf, v_asof, tdb), pdf_asof))
                     if "east_ltol" in chosen:
                         _prog.step("East L-to-L")
-                        built.append(RTD.build_east_ltol(pf_all, v_asof, tdb))
+                        built.append(RN.named("east_ltol", RTD.build_east_ltol(pf_all, v_asof, tdb), pdf_asof))
                     if "mw" in chosen:
                         _prog.step("Month-wise")
-                        built.append(
-                            RTD.build_month_wise(pf_all, vdf, v_asof, tdb))
+                        built.append(RN.named("month_wise",
+                            RTD.build_month_wise(pf_all, vdf, v_asof, tdb), pdf_asof))
                     if "night_sms" in chosen:
                         _prog.step("Night SMS")
                         # ★ ANY NIGHT, NOT JUST THE LAST ONE (26 Sep). The tab
@@ -1689,11 +1698,12 @@ def render_portfolio():
                         # dedented this call by one level, so the night SMS was
                         # built on EVERY generate whatever was ticked. Tick
                         # Google reviews, get the night SMS.
-                        built.append(RTD.build_night_sms(
+                        built.append(RN.named("night_sms", RTD.build_night_sms(
                             pf_all, basis_label=tdb,
                             day=(None if _sms_day is None
                                  else pd.Timestamp(_sms_day)),
-                            vfl_df=get_data()))
+                            vfl_df=get_data()),
+                            pdf_asof if _sms_day is None else pd.Timestamp(_sms_day)))
                     if "reviews" in chosen:
                         _prog.step("Google reviews")
                         import reviews as RV
@@ -1720,16 +1730,19 @@ def render_portfolio():
                                        "yet.")
                         elif rv is not None and not rv.empty:
                             # ★ ONE PER REGION (Manav, 23 Oct 2026: "split it in the 2 regions").
-                            for _n, _pdf, _tag in RV.region_pdfs(rv, _bills, vdf, _asof, src):
-                                built.append((_n, _pdf))
+                            for _lt, (_n, _pdf, _tag) in zip(RN.letters(26), RV.region_pdfs(rv, _bills, vdf, _asof, src)):
+                                built.append(RN.named("reviews", (_n, _pdf), _asof, letter=_lt,
+                                                      label=RN.REGION.get(_tag, str(_tag))))
                     if "tva" in chosen:
                         _prog.step("Target vs achievement")
-                        built.append(RTD.build_target_vs_ach(pf_all, pdf_asof,
-                                                             basis))
+                        built.append(RN.named("target_vs_ach", RTD.build_target_vs_ach(pf_all, pdf_asof,
+                                                             basis), pdf_asof))
                     if "weekend" in chosen:
                         _prog.step("Weekday vs weekend")
                         import weekend as WK
-                        built.append(WK.build_pdf(pf_all, pdf_asof, basis))
+                        built.append(RN.named("weekday_weekend", WK.build_pdf(pf_all, pdf_asof, basis), pdf_asof))
+                    _fsel = RN.festive_order([_w for _i, _w in enumerate(_fw) if f"festive_{_i}" in chosen])
+                    _flet = {id(_w): _l for _w, _l in zip(_fsel, RN.letters(len(_fsel)))}
                     for _i, _w in enumerate(_fw):
                         if f"festive_{_i}" in chosen:
                             _prog.step(f"Festive — {_w.label}"
@@ -1754,11 +1767,12 @@ def render_portfolio():
                             # `festive.build_festive_pdf` — a different report
                             # from this one, not an older version of it.
                             import festive_admin as FADM
-                            built.append(FADM.build(
-                                pf_all, _w, basis_label=basis))
+                            built.append(RN.named("festive", FADM.build(
+                                pf_all, _w, basis_label=basis), pdf_asof,
+                                letter=_flet[id(_w)], label=f"{_w.festival} {_w.tenure}"))
                     _prog.done("Packaging…")
                     name, payload, mime = RTD.bundle(
-                        built, zip_name=f"PORTFOLIO REPORTS {pdf_asof:%d-%m-%Y}.zip")
+                        built, zip_name=RN.bucket_zip("overall", pdf_asof))
                     st.session_state["rp_out"] = (name, payload, mime)
                 except Exception as e:                    # surface, don't crash tab
                     _prog.done()                          # never leave a bar mid-way
@@ -1992,6 +2006,8 @@ def _calendar_png_download(df, *, date_col, value_col, store_col, id_cols,
     import zipfile
 
     ly_start, ly_end, ty_start, ty_end = windows
+    # the file's date (10 Nov 2026, the house name): the window's last day, never past the data
+    _cal_day = min(pd.Timestamp(ly_end if show_ly else ty_end), pd.to_datetime(df[date_col]).max())
 
     with st.expander("🖼️ Download calendars (PNG)"):
         work = df[[date_col, value_col]].copy()
@@ -2060,7 +2076,8 @@ def _calendar_png_download(df, *, date_col, value_col, store_col, id_cols,
             buf = io.BytesIO()
             img.save(buf, "PNG")
             safe = re.sub(r"[^\w \-—&]", "-", str(name)).strip()
-            built.append((f"{safe} {series.index[0]:%b %Y}.png", buf.getvalue()))
+            built.append((RN.plain(f"Day calendar, {safe}, {series.index[0]:%b %Y}", _cal_day, ".png"),
+                          buf.getvalue()))
             bar.progress(i / len(chosen))
         bar.empty()
 
@@ -2084,7 +2101,7 @@ def _calendar_png_download(df, *, date_col, value_col, store_col, id_cols,
                     z.writestr(fn, data)
             st.download_button(
                 f"⬇ Download {len(built)} calendars (ZIP)", zbuf.getvalue(),
-                file_name=f"Day calendars {stamp}.zip", mime="application/zip",
+                file_name=RN.plain(f"Day calendars, {stamp}", _cal_day, ".zip"), mime="application/zip",
                 use_container_width=True, key=f"{key}_png_zip")
             st.image(built[0][1], use_container_width=True)
             st.caption(f"Showing the first of {len(built)}.")
@@ -2158,9 +2175,8 @@ def _monthly_sales_download(df, *, date_col, value_col, store_col, asof,
 
         tag = ("live" if scope == opt_live else
                "all" if scope == opt_all else f"{len(chosen)} {label}s")
-        stem = (f"Monthly sales {tag} "
-                f"{choice.replace(' ', '-') if fy else 'all-years'} "
-                f"{pd.Timestamp(asof):%d-%m-%Y}")
+        stem = (f"Monthly sales, {tag}, "
+                f"{choice if fy else 'all years'}")
 
         import io
         buf = io.BytesIO()
@@ -2168,12 +2184,12 @@ def _monthly_sales_download(df, *, date_col, value_col, store_col, asof,
             frame.to_excel(xl, index=False, sheet_name="Monthly sales")
         d1, d2 = st.columns(2)
         d1.download_button("⬇ Download (Excel)", buf.getvalue(),
-                           file_name=f"{stem}.xlsx", use_container_width=True,
+                           file_name=RN.plain(stem, asof, ".xlsx"), use_container_width=True,
                            mime=("application/vnd.openxmlformats-officedocument"
                                  ".spreadsheetml.sheet"),
                            key=f"{key}_dl_xlsx")
         d2.download_button("⬇ Download (CSV)", frame.to_csv(index=False).encode(),
-                           file_name=f"{stem}.csv", mime="text/csv",
+                           file_name=RN.plain(stem, asof, ".csv"), mime="text/csv",
                            use_container_width=True, key=f"{key}_dl_csv")
 
 
@@ -2315,7 +2331,7 @@ def render_pivot_builder(df, *, feed, key, asof):
                           subtitle=f"Measures: {', '.join(meas)}")
     st.download_button(
         "⬇ Download (Excel)", payload, use_container_width=True, type="primary",
-        file_name=f"{title} {pd.Timestamp(asof):%d-%m-%Y}.xlsx".replace("/", "-"),
+        file_name=RN.plain(title, asof, ".xlsx"),
         mime=("application/vnd.openxmlformats-officedocument"
               ".spreadsheetml.sheet"),
         key=f"{key}_dl")
@@ -2698,7 +2714,7 @@ def render_gd_table(disp, label_cols, key, region_grouped=False):
         unsafe_allow_html=True)
     st.write("")
     st.download_button("⬇ Download (CSV)", table.to_csv(index=False).encode(),
-                       file_name=f"{key}.csv", mime="text/csv",
+                       file_name=RN.from_key(key, ".csv"), mime="text/csv",
                        key=f"{key}_csv", use_container_width=True)
     return table
 
@@ -2779,7 +2795,7 @@ def render_gd_grouped(detail, key):
         unsafe_allow_html=True)
     st.write("")
     st.download_button("⬇ Download (CSV)", table.to_csv(index=False).encode(),
-                       file_name=f"{key}.csv", mime="text/csv",
+                       file_name=RN.from_key(key, ".csv"), mime="text/csv",
                        key=f"{key}_csv", use_container_width=True)
     return table
 
@@ -2806,7 +2822,7 @@ def render_gender_mix_grouped(detail, key):
         unsafe_allow_html=True)
     st.write("")
     st.download_button("⬇ Download (CSV)", table.to_csv(index=False).encode(),
-                       file_name=f"{key}.csv", mime="text/csv",
+                       file_name=RN.from_key(key, ".csv"), mime="text/csv",
                        key=f"{key}_csv", use_container_width=True)
     return table
 
@@ -2870,7 +2886,7 @@ def render_store_brand_gd(detail, key):
         unsafe_allow_html=True)
     st.write("")
     st.download_button("⬇ Download (CSV)", table.to_csv(index=False).encode(),
-                       file_name=f"{key}.csv", mime="text/csv",
+                       file_name=RN.from_key(key, ".csv"), mime="text/csv",
                        key=f"{key}_csv", use_container_width=True)
     return table
 
@@ -2899,7 +2915,7 @@ def render_loc_gd(detail, key):
         unsafe_allow_html=True)
     st.write("")
     st.download_button("⬇ Download (CSV)", table.to_csv(index=False).encode(),
-                       file_name=f"{key}.csv", mime="text/csv",
+                       file_name=RN.from_key(key, ".csv"), mime="text/csv",
                        key=f"{key}_csv", use_container_width=True)
     return table
 
@@ -2921,7 +2937,7 @@ def render_monthly_contrib(mc, key):
         unsafe_allow_html=True)
     st.write("")
     st.download_button("⬇ Download (CSV)", disp.to_csv(index=False).encode(),
-                       file_name=f"{key}.csv", mime="text/csv",
+                       file_name=RN.from_key(key, ".csv"), mime="text/csv",
                        key=f"{key}_csv", use_container_width=True)
     return disp
 
@@ -2974,7 +2990,7 @@ def render_productivity(pr, key):
         unsafe_allow_html=True)
     st.write("")
     st.download_button("⬇ Download (CSV)", table.to_csv(index=False).encode(),
-                       file_name=f"{key}.csv", mime="text/csv",
+                       file_name=RN.from_key(key, ".csv"), mime="text/csv",
                        key=f"{key}_csv", use_container_width=True)
     return table
 
@@ -3268,8 +3284,8 @@ if nav == "✂️ Alterations":
             with st.spinner("Building…"):
                 try:
                     import tailoring_pdf as TLRPDF
-                    st.session_state["tlr_out"] = TLRPDF.build(
-                        _tf, _tfolders, _tnotes, asof=_asof)[:2]
+                    st.session_state["tlr_out"] = RN.named("alterations", TLRPDF.build(
+                        _tf, _tfolders, _tnotes, asof=_asof)[:2], _asof)
                 except Exception as e:                 # surface, don't crash
                     st.session_state["tlr_out"] = None
                     st.error(f"Could not build: {e}")
@@ -3298,9 +3314,9 @@ if nav == "✂️ Alterations":
             with st.spinner("Building…"):
                 try:
                     import tailoring_ledger as TLRBK
-                    st.session_state["tlr_out"] = TLRBK.build(
+                    st.session_state["tlr_out"] = RN.named("books", TLRBK.build(
                         _tf, _tfolders, _tsources,
-                        asof=pd.Timestamp(_bk_day))[:2]
+                        asof=pd.Timestamp(_bk_day))[:2], pd.Timestamp(_bk_day))
                 except Exception as e:                 # surface, don't crash
                     st.session_state["tlr_out"] = None
                     st.error(f"Could not build: {e}")
@@ -3395,7 +3411,7 @@ if nav == "📋 MTD / YTD Report":
     _c1.download_button(
         "⬇ Download report (CSV)",
         rep.to_csv(index=False).encode(),
-        file_name=f"peanuts_mtd_ytd_report_{end_d:%Y%m%d}.csv",
+        file_name=RN.plain("MTD-YTD report", end_d, ".csv"),
         mime="text/csv", use_container_width=True,
     )
     _c2.caption("🖼️ The shareable picture of this table is under "
@@ -3422,7 +3438,7 @@ if nav == "🖼️ REPORTS IMAGES" and _img_what == "MTD / YTD report (PNG)":
     if st.session_state.get("rep_png"):
         st.download_button(
             "⬇ Download image", st.session_state["rep_png"],
-            file_name=f"peanuts_mtd_ytd_{end_d:%Y%m%d}.png",
+            file_name=RN.plain("MTD-YTD report", end_d, ".png"),
             mime="image/png", use_container_width=True)
         st.image(st.session_state["rep_png"],
                  caption="Preview — share this picture in the group")
@@ -3436,7 +3452,7 @@ if nav == "🖼️ REPORTS IMAGES" and _img_what == "Degrowth watchlist (PNG)":
     if st.session_state.get("dg_png"):
         st.download_button(
             "⬇ Download image", st.session_state["dg_png"],
-            file_name=f"peanuts_degrowth_{_ik}_{end_d:%Y%m%d}.png",
+            file_name=RN.plain(f"Degrowth watchlist {_ik}", end_d, ".png"),
             mime="image/png", use_container_width=True)
         st.image(st.session_state["dg_png"],
                  caption="Preview — share this picture in the group")
@@ -3504,13 +3520,16 @@ if nav == "🖼️ REPORTS IMAGES" and _img_what == "Morning set (ZIP)":
                                   f"{made[0] if made else 'skipped'}")
 
             try:
+                # ★ THE BOT'S NAMES (10 Nov 2026): this ZIP is the WhatsApp "VFL IMG" bucket, so each picture is
+                # named as it arrives there — "VFL IMG 3 · Degrowth watchlist, East & NE YTD · 09-11-2026.png".
                 if want_store_wise:
-                    _add("shared", SN.store_wise(L, _src, _asof))
+                    _add("shared", RN.named("vfl_images", SN.store_wise(L, _src, _asof), _asof, n=5))
                 if want_degrowth:
                     for _k in ("MTD", "YTD"):
                         for _r in ("South", "East & NE"):
                             _add("shared",
-                                 SN.degrowth_region(L, _src, _asof, _k, _r))
+                                 RN.named("vfl_images", SN.degrowth_region(L, _src, _asof, _k, _r), _asof,
+                                          n=RN.IMAGE_NO[(_k, _r)]))
                 if want_drivers:
                     # Footfall rides on the portfolio feed, not this one, and
                     # conversion is blank without it.
@@ -3541,7 +3560,7 @@ if nav == "🖼️ REPORTS IMAGES" and _img_what == "Morning set (ZIP)":
                 st.stop()
         bar.empty()
         st.session_state["snap_zip"] = buf.getvalue()
-        st.session_state["snap_name"] = f"snapshots_{_asof:%Y-%m-%d}.zip"
+        st.session_state["snap_name"] = RN.bucket_zip("vfl_images", _asof)
         if failed:
             st.warning(f"{len(failed)} snapshot(s) failed: " + "; ".join(failed[:5]))
         st.success(f"{done[0]} image(s) · "
@@ -3615,8 +3634,7 @@ if nav == "🔎 Degrowth Drivers":
                                row_types=drv_types),
             unsafe_allow_html=True)
         st.download_button("⬇ Download (CSV)", drv.to_csv(index=False).encode(),
-                           file_name=f"degrowth_drivers_{dd_kind.lower()}_"
-                                     f"{end_d:%Y%m%d}.csv",
+                           file_name=RN.plain(f"Degrowth drivers {dd_kind}", end_d, ".csv"),
                            mime="text/csv")
 
 if nav == "📉 Degrowth":
@@ -3654,7 +3672,7 @@ if nav == "📉 Degrowth":
         _d1, _d2 = st.columns(2)
         _d1.download_button(
             "⬇ Download degrowth list (CSV)", disp.to_csv(index=False).encode(),
-            file_name=f"peanuts_degrowth_{dg_kind}_{end_d:%Y%m%d}.csv",
+            file_name=RN.plain(f"Degrowth watchlist {dg_kind}", end_d, ".csv"),
             mime="text/csv", use_container_width=True)
         _d2.caption("🖼️ The shareable picture of this list is under "
                     "**Reports (images)**.")
@@ -3941,13 +3959,13 @@ if nav == "📄 REPORTS PDF":
                 if "pack" in chosen:
                     _prog.step("VFL pack")
                     built.append((
-                        f"peanuts_vfl_{p_asof:%Y%m%d}.pdf",
+                        RN.name("vfl_pack", p_asof, ".pdf"),
                         vfl_pdf.build(df_exec, asof=p_asof,
                                       gen_date=pd.Timestamp(end_d),
                                       basis_label=p_basis, df_all=df_all)))
                 if "db" in chosen:
                     _prog.step("Women's discount")
-                    built.append(DISC.build_pdf(get_data(), p_asof, p_basis))
+                    built.append(RN.named("db_report", DISC.build_pdf(get_data(), p_asof, p_basis), p_asof))
                 if "morning" in chosen:
                     _prog.step("Morning snapshots")
                     import snapshots_a4 as A4
@@ -4004,6 +4022,8 @@ if nav == "📄 REPORTS PDF":
                                        + "; ".join(_sfail[:5]))
                     finally:
                         _sb.empty()
+                _fsel = RN.festive_order([_w for _i, _w in enumerate(_fw) if f"festive_{_i}" in chosen])
+                _flet = {id(_w): _l for _w, _l in zip(_fsel, RN.letters(len(_fsel)))}
                 for _i, _w in enumerate(_fw):
                     if f"festive_{_i}" in chosen:
                         _prog.step(f"Festive — {_w.label}")
@@ -4016,8 +4036,9 @@ if nav == "📄 REPORTS PDF":
                         # off the raw frame; it now translates the VFL feed
                         # first, so both sides draw the same pack.
                         import festive_admin as FADM
-                        built.append(FADM.build(
-                            df_exec, _w, basis_label=p_basis, vfl=True))
+                        built.append(RN.named("festive_vfl", FADM.build(
+                            df_exec, _w, basis_label=p_basis, vfl=True), p_asof,
+                            letter=_flet[id(_w)], label=f"{_w.festival} {_w.tenure}"))
                 if "alterations" in chosen:
                     _prog.step("Parking & alterations")
                     # ★ IT READS DRIVE, NOT THE FEED, so it is the one report
@@ -4032,8 +4053,8 @@ if nav == "📄 REPORTS PDF":
                         st.warning("Parking & alterations: "
                                    + (TLR.last_problem() or "no rows were read"))
                     else:
-                        built.append(TLRPDF.build(_tf, _tfold, _tn,
-                                                  asof=p_asof)[:2])
+                        built.append(RN.named("alterations", TLRPDF.build(_tf, _tfold, _tn,
+                                                  asof=p_asof)[:2], p_asof))
                 if "books" in chosen:
                     _prog.step("Collection books")
                     import tailoring as TLR
@@ -4043,15 +4064,15 @@ if nav == "📄 REPORTS PDF":
                         st.warning("Collection books: "
                                    + (TLR.last_problem() or "no books were found"))
                     else:
-                        built.append(TLRBK.build(_tf, _tfold, _tsrc,
-                                                 asof=p_asof)[:2])
+                        built.append(RN.named("books", TLRBK.build(_tf, _tfold, _tsrc,
+                                                 asof=p_asof)[:2], p_asof))
                 if "graph" in chosen:
                     # ★ THE FULL ESTATE (get_data, not the filtered frame): its
                     # portfolio and region pages are totals, and a sidebar filter
                     # would quietly shrink them. Built up to the picked day.
                     _prog.step("Graph analysis VFL")
                     import graph_analysis as GA
-                    built.append(GA.build(get_data(), asof=p_asof))
+                    built.append(RN.named("graph", GA.build(get_data(), asof=p_asof), p_asof))
                 for _ck, _cm, _cl in (("category", "category_rolling", "Category analysis VFL (rolling)"),
                                       ("category_brand", "brand_rolling",
                                        "Category analysis by brand VFL (rolling)"),
@@ -4065,11 +4086,11 @@ if nav == "📄 REPORTS PDF":
                     import category_pdf as CATPDF
                     _cw = (_cat_fw[st.session_state.get("vrp_cat_w", 0)]
                            if _cat_fw else None)
-                    built.append(CATPDF.build(get_data(), asof=p_asof, w=_cw,
-                                              basis_label=p_basis, mode=_cm))
+                    built.append(RN.named(_ck, CATPDF.build(get_data(), asof=p_asof, w=_cw,
+                                              basis_label=p_basis, mode=_cm), p_asof))
                 _prog.done("Packaging…")
                 name, payload, mime = RTD.bundle(
-                    built, zip_name=f"VFL REPORTS {p_asof:%d-%m-%Y}.zip")
+                    built, zip_name=RN.bucket_zip("vfl_pdf", p_asof))
                 st.session_state["vrp_out"] = (name, payload, mime)
             except Exception as e:                        # surface, don't crash tab
                 _prog.done()                              # never leave a bar mid-way
@@ -4212,7 +4233,10 @@ if nav == "⭐ Google Reviews":
                          type="primary"):
                 with st.spinner("Building…"):
                     try:
-                        st.session_state["rv_out"] = RV.region_pdfs(_rv, _bills, _b, _asof, _src)
+                        _rvp = RV.region_pdfs(_rv, _bills, _b, _asof, _src)
+                        st.session_state["rv_out"] = [
+                            (RN.name("reviews", _asof, _n, letter=_lt, label=RN.REGION.get(_tag, str(_tag))), _p, _tag)
+                            for _lt, (_n, _p, _tag) in zip(RN.letters(len(_rvp)), _rvp)]
                     except Exception as e:            # surface, don't crash
                         st.session_state["rv_out"] = None
                         st.error(f"Could not build: {e}")
@@ -4328,7 +4352,7 @@ if nav == "⚖️ Gender Mix":
         st.write("")
         st.download_button(
             "⬇ Download (CSV)", summary.to_csv(index=False).encode(),
-            file_name=f"gender_mix_{gd_asof:%Y%m%d}.csv", mime="text/csv",
+            file_name=RN.plain("Gender mix", gd_asof, ".csv"), mime="text/csv",
             use_container_width=True)
 
 # =========================================================================== #

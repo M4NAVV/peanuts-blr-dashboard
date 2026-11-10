@@ -35,6 +35,8 @@ import json
 from pathlib import Path
 
 import pandas as pd
+
+import report_names as RN
 import streamlit as st
 
 import pivotx as P
@@ -444,7 +446,7 @@ def _render(df: pd.DataFrame, *, feed: str, key: str, asof):
         }
         try:
             data = to_excel(ex["sheet"], title=title, about=about, source=src)
-            download = {"id": ex.get("id"), "name": f"{title} {pd.Timestamp(asof):%d-%m-%Y}.xlsx",
+            download = {"id": ex.get("id"), "name": RN.plain(title, asof, ".xlsx"),
                         "b64": base64.b64encode(data).decode()}
         except Exception as e:
             download = {"id": ex.get("id"), "error": f"Could not write the Excel file: {e}"}

@@ -48,11 +48,10 @@ def test_briefing_then_team_in_one_pdf_per_store(monkeypatch):
         return ("t.pdf", [_page("red")], 0, 1, 10)
     out, failed = _run(monkeypatch, team)
     assert failed == []
+    # ★ the WhatsApp bot's names (Manav, 10 Nov 2026), numbered alphabetically within the region
     assert [n for n, _ in out] == [
-        "store-briefing/South/2026-10-09_107_"
-        f"{A4.SN._slug('Grand Kamraj Road')}_briefing_team.pdf",
-        "store-briefing/East & NE/2026-10-09_120_"
-        f"{A4.SN._slug('Dibrugarh')}_briefing_team.pdf"]
+        "SOUTH/SOUTH 1 · Store sheet, Grand Kamraj Road · 09-10-2026.pdf",
+        "EAST/EAST 1 · Store sheet, Dibrugarh · 09-10-2026.pdf"]
     assert set(seen) == {"pages"}
     assert [_pdf_pages(b) for _, b in out] == [3, 3]   # briefing + categories + team
 

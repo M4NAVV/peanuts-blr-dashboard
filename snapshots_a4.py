@@ -1296,10 +1296,21 @@ def store_packs(L, df, asof, ff=None, pf=None, targets=None, progress=None,
                 region = "" if r is None or pd.isna(r) else str(r).strip()
             if not region:
                 unfiled.append(s)
-            tag = f"{code}_" if code is not None else ""
-            name = f"{asof:%Y-%m-%d}_{tag}{SN._slug(s)}_briefing_team.pdf"
-            parts = [p for p in (folder, region) if p]
-            out.append(("/".join(parts + [name]), pages_pdf(pages)))
+            # ★ THE WHATSAPP BOT'S NAME (Manav, 10 Nov 2026: "same naming convention as the whatsapp report
+            # bot"): "EAST 4 · Store sheet, Malda · 09-11-2026.pdf", numbered by the store's place among its
+            # region's open stores, alphabetically — the bot's own rule — in an EAST / SOUTH folder.
+            import report_names as RN
+            rid = {"East & NE": "stores_east", "South": "stores_south"}.get(region)
+            if rid:
+                mates = sorted(x for x in stores if x in master.index
+                               and str(master.loc[x].get("region") or "").strip() == region)
+                name = RN.name(rid, asof, ".pdf", n=mates.index(s) + 1, store=s)
+                out.append(("/".join([RN.BUCKETS[rid][0], name]), pages_pdf(pages)))
+            else:
+                tag = f"{code}_" if code is not None else ""
+                name = f"{asof:%Y-%m-%d}_{tag}{SN._slug(s)}_briefing_team.pdf"
+                parts = [p for p in (folder, region) if p]
+                out.append(("/".join(parts + [name]), pages_pdf(pages)))
         if progress:
             progress(i, len(stores), s)
     if unfiled:

@@ -9,6 +9,8 @@ table can be bookmarked or sent to someone and opens exactly as it was.
 from __future__ import annotations
 
 import pandas as pd
+
+import report_names as RN
 import streamlit as st
 
 import pivotx as P
@@ -338,7 +340,7 @@ def render(df: pd.DataFrame, *, feed: str, key: str, asof):
     }
     payload = P.to_excel(g, title=title, about=about, source=src)
     d1.download_button("⬇ Download this table (Excel)", payload, type="primary", use_container_width=True,
-                       file_name=f"{title} {pd.Timestamp(asof):%d-%m-%Y}.xlsx".replace("/", "-").replace("→", "-"),
+                       file_name=RN.plain(str(title).replace("→", "-"), asof, ".xlsx"),
                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", key=_k(key, "dl"))
     with d3.popover("Save this layout", use_container_width=True):
         nm = st.text_input("Name", key=_k(key, "savename"), placeholder="e.g. Monday review")
