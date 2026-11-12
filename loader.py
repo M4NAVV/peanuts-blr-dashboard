@@ -1603,15 +1603,29 @@ def build_view(
 # Gender-wise & Brand-wise Growth/Degrowth + Gender contribution %
 # (FY YoY, takeover-anchored — mirrors the "GROWTH DEGROWTH SHEET" tabs)
 # --------------------------------------------------------------------------- #
-GENDER_ORDER = ["MEN", "WOMEN"]
+GENDER_ORDER = ["MEN", "WOMEN", "KIDS"]      # ★ KIDS since 12 Nov 2026 — see brand_gender
 BRAND_ORDER = ["Manyavar", "Mohey", "Twamev", "Mebaz", "Manthan", "Other"]
 
 
 def brand_gender(df: pd.DataFrame) -> pd.Series:
-    """Source-sheet gender: classify each line by its BRAND-LINE, not the
-    product Men/Women/Child category. WOMEN = Mohey* / Twamev-Women / Mebaz;
-    everything else (Manyavar incl. its kids items, Manthan, Twamev-Men) = MEN.
-    This mirrors how the GROWTH DEGROWTH sheet assigns MEN/WOMEN."""
+    """MEN / WOMEN / KIDS — from the product's own Men/Women/Child tag.
+
+    ★ 12 Nov 2026 (Manav: the VFL report's gender "doesnt have kids, so it doesnt match the manager gender
+    bifurcation … change the VFL main sheet to also reflect kids seperately, so it matches the format"). Until then
+    gender came from the BRAND LINE (Mohey / Twamev-Women / Mebaz = WOMEN, everything else incl. Manyavar's kids items
+    = MEN), mirroring his GROWTH DEGROWTH workbook. Now one rule everywhere — the manager pack's page two, the VFL G/D
+    and Gender sheets, the Gender G/D and Gender Mix tabs: CHILD → KIDS. Totals are unchanged; only the split moves.
+    A frame without the tag (an old export) falls back to the brand-line rule below, with no KIDS."""
+    if "Men/Women/Child" in df.columns:
+        tag = df["Men/Women/Child"].astype(str).str.strip().str.upper()
+        g = tag.map({"MEN": "MEN", "WOMEN": "WOMEN", "CHILD": "KIDS", "KIDS": "KIDS"})
+        if g.notna().any():
+            return g.fillna(_brand_line_gender(df))
+    return _brand_line_gender(df)
+
+
+def _brand_line_gender(df: pd.DataFrame) -> pd.Series:
+    """The pre-12-Nov rule: gender by brand line (Mohey* / Twamev-Women / Mebaz = WOMEN, else MEN)."""
     div = df[COL_DIVISION].astype(str).str.upper()
     is_women = (div.str.startswith("MOHEY")
                 | div.str.contains("TWAMEV-WOMEN", regex=False)
@@ -2099,12 +2113,13 @@ def vfl_gd_report(df: pd.DataFrame, asof=None, gen_date=None):
     # 4-line brand detail per store (Manthan→Manyavar, Mebaz→Mohey), takeover-anchored.
     d = df.copy()
     d["_blv"] = brand_line_vfl(d)
-    sb = _gd_by(d, [COL_STORE_LABEL, "_blv"], asof=asof)
+    d["_g"] = brand_gender(d)                    # ★ 12 Nov 2026: MEN / WOMEN / KIDS from the product tag
+    sb = _gd_by(d, [COL_STORE_LABEL, "_g", "_blv"], asof=asof)
     master = load_store_master()[["tableau_name", "code", "location", "city",
                                   "region", "takeover_date"]]
     sb = sb.merge(master, left_on=COL_STORE_LABEL, right_on="tableau_name", how="left")
     sb["Store Code"] = pd.to_numeric(sb["code"], errors="coerce").astype("Int64")
-    sb["Gender"] = sb["_blv"].map(BRANDLINE_VFL_GENDER).fillna("MEN")
+    sb["Gender"] = sb["_g"]
     sb["Brand"] = sb["_blv"]
     sb["Region"] = sb["region"]
     sb["Master Location"] = sb["city"].astype(str).str.title().replace(
@@ -2277,7 +2292,7 @@ def vfl_gd_report(df: pd.DataFrame, asof=None, gen_date=None):
             for code in sorted(c for c in mdf["Store Code"].dropna().unique()):
                 cdf = mdf[mdf["Store Code"] == code]
                 c_pend = str(int(code))
-                for gender in ["MEN", "WOMEN"]:
+                for gender in GENDER_ORDER:
                     gdf = cdf[cdf["Gender"] == gender].sort_values(
                         by="Brand", key=lambda s: s.map(
                             {b: i for i, b in enumerate(BRANDLINE_VFL_ORDER)}).fillna(99))
