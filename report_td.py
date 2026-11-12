@@ -631,13 +631,16 @@ def _carpet_map():
     return master_lookup.carpet()
 
 
-def _pdf_from(contents, label):
+def _pdf_from(contents, label, own_heights=False):
+    """`own_heights`: each page as tall as ITS content (12 Nov 2026 — the Target vs achievement parent-company page is
+    a short landscape table and was being padded to the store sheet's height). Default stays one height for all, so
+    every other report is unchanged."""
     page_w = max(c.width for _, c in contents) + 2 * (PP.MARGIN + PP.FRAME + PP.PAD)
-    page_h = max(c.height for _, c in contents) + (
-        PP.MARGIN + PP.FRAME + PP.HEADER_H + PP.PAD + PP.FOOTER_H
-        + PP.FRAME + PP.MARGIN)
+    chrome = (PP.MARGIN + PP.FRAME + PP.HEADER_H + PP.PAD + PP.FOOTER_H + PP.FRAME + PP.MARGIN)
+    page_h = max(c.height for _, c in contents) + chrome
     pages = [_compose(img, sec, label, i, len(contents), page_w,
-                      footer_right=FOOTER_RIGHT, page_h=page_h)
+                      footer_right=FOOTER_RIGHT,
+                      page_h=(max(img.height + chrome, int(page_w * 595 / 842)) if own_heights else page_h))
              for i, (sec, img) in enumerate(contents, start=1)]
     return save_pages(pages)
 
@@ -1963,12 +1966,21 @@ def build_night_sms(pf_df, region=None, targets=None,
 TVA_COLS = [
     ("CITY", "l"), ("LOCATION", "l"), ("BRAND", "l"),
     ("MTD TARGET", "r"), ("MTD ACHIEVED", "r"), ("MTD ACHIEVED %", "r"),
-    ("MTD BALANCE", "r"),
+    ("MTD BALANCE", "r"), ("LY MTD", "r"), ("MTD GD %", "r"),
     ("YTD TARGET", "r"), ("YTD ACHIEVED", "r"), ("YTD ACHIEVED %", "r"),
-    ("YTD BALANCE", "r"),
+    ("YTD BALANCE", "r"), ("LY YTD", "r"), ("YTD GD %", "r"),
     ("YEAR TARGET", "r"), ("YEAR ACHIEVED %", "r"),
     ("AVG DAY SALES", "r"), ("TTM SALES", "r"),
 ]
+
+
+def _tva_gd(r, key):
+    """Like-to-like growth from the row's own pair (a total's pair is the sum of its stores' — never an average of %).
+    Blank when there is no comparable last year (a new store, or a total whose stores have none)."""
+    ty, ly = r.get(f"{key}_ty_l2l"), r.get(f"{key}_ly")
+    if ty is None or not ly:
+        return ""
+    return f"{(ty - ly) / ly * 100:+,.1f}"
 
 
 def _tva_cols():
@@ -1980,7 +1992,69 @@ def _tva_cols():
     return [(("YEAR END", a) if h == "TTM SALES" else (h, a))
             for h, a in TVA_COLS]
 _TVA_VALUES = ("mtd_target", "mtd", "mtd_bal", "ytd_target", "ytd", "ytd_bal",
-               "year_target", "ttm")
+               "year_target", "ttm",
+               # ★ 12 Nov 2026 (Manav: "Add LY MTD and GD% | LY YTD GD%"): the like-to-like pairs behind each GD%.
+               # A store with no comparable span carries None and drops out of every total's pair (LTL).
+               "mtd_ty_l2l", "mtd_ly", "ytd_ty_l2l", "ytd_ly")
+
+
+def _tva_ly(pf_df, asof, start_of, fy_start, vfl_df=None) -> dict:
+    """code -> {mtd_ty_l2l, mtd_ly, ytd_ty_l2l, ytd_ly} — LAST YEAR and the like-to-like THIS YEAR behind each GD%.
+
+    Manav, 12 Nov 2026: last year and growth on the Target vs achievement sheet, LIKE TO LIKE ("Like to like
+    (Recommended)"), South from the VFL feed's previous operator ("VFL previous operator (Recommended)").
+    ★ ONE RULE, THE ESTATE'S OWN: `exec_snapshot.l2l_bounds` (each store compared over the span it traded in both
+      years — Manav's 14 Aug rule) and `l2l_frames`; the LY figure is every rupee of last year in that span.
+    ★ EAST & NE from the portfolio feed through `_window_frames` (the GD sheet's windows); SOUTH from the VFL feed —
+      BOTH years from that one feed, so a growth figure never divides one feed by another — over the sheet's own
+      windows: the month from the 1st, the year from the store's start (19 Apr 2026 for South).
+    """
+    import exec_snapshot as ES
+    import loader as L
+    import portfolio_loader as PL
+    out = {}
+    yr = pd.DateOffset(years=1)
+
+    def put(c, ty, ly, key):
+        for code in set(ty.index) | set(ly.index):
+            d = out.setdefault(int(code), {})
+            d[f"{key}_ty_l2l"] = float(ty.get(code, 0.0))
+            d[f"{key}_ly"] = float(ly.get(code, 0.0))
+
+    east = pf_df[pf_df["region"] != "South"]
+    if not east.empty:
+        b = ES.l2l_bounds(east, "code", "sales", PL.closed_map(), asof, opened=PL.opened_map(east, asof))
+        for kind, key in (("MTD", "mtd"), ("YTD", "ytd")):
+            cur, pri = PL._window_frames(east, kind, asof)
+            if cur.empty and pri.empty:
+                continue
+            c, q = ES.l2l_frames(cur, pri, b, "code")
+            put(None, c.groupby("code")["sales"].sum(), q.groupby("code")["sales"].sum(), key)
+
+    if vfl_df is None:
+        try:
+            vfl_df = _YE_vfl()
+        except Exception:
+            vfl_df = None
+    if vfl_df is not None and not vfl_df.empty:
+        v = vfl_df[vfl_df[L.COL_REGION] == "South"]
+        code_of = {str(n).strip(): int(c) for n, c in zip(L.load_store_master()["tableau_name"],
+                                                          pd.to_numeric(L.load_store_master()["code"], errors="coerce"))
+                   if pd.notna(c)}
+        v = pd.DataFrame({"date": pd.to_datetime(v["date"]).dt.normalize(),
+                          "code": v[L.COL_STORE_LABEL].astype(str).str.strip().map(code_of),
+                          "sales": v[L.COL_AMOUNT].astype(float)}).dropna(subset=["code"])
+        v["code"] = v["code"].astype(int)
+        if not v.empty:
+            b = ES.l2l_bounds(v, "code", "sales", L.closed_map(), asof)
+            for key, start_fn in (("mtd", lambda c: asof.replace(day=1)),
+                                  ("ytd", lambda c: start_of.get(c, fy_start))):
+                s0 = v["code"].map(start_fn)
+                cur = v[(v["date"] >= s0) & (v["date"] <= asof)]
+                pri = v[(v["date"] >= s0 - yr) & (v["date"] <= asof - yr)]
+                c, q = ES.l2l_frames(cur, pri, b, "code")
+                put(None, c.groupby("code")["sales"].sum(), q.groupby("code")["sales"].sum(), key)
+    return out
 
 
 def _tva_months(asof):
@@ -2056,6 +2130,9 @@ def target_vs_ach(pf_df, asof=None, targets_df=None) -> dict:
         _fy0 = pd.Timestamp(asof.year if asof.month >= 4 else asof.year - 1, 4, 1)
 
     tgt = {} if t is None else t.set_index("code").to_dict("index")
+    ly = _tva_ly(p, asof, start_of, fy_start)
+    import master_lookup as _ML
+    prin = _ML.principal()
     rows = []
     for _, m in master.iterrows():
         c = int(m["code"])
@@ -2076,6 +2153,8 @@ def target_vs_ach(pf_df, asof=None, targets_df=None) -> dict:
             "mtd_target": float(mt) if mt is not None and pd.notna(mt) else None,
             "ytd_target": float(yt) if yt else None,
             "year_target": float(yr) if yr is not None and pd.notna(yr) else None,
+            "principal": prin.get(c, ""),
+            **{k: ly.get(c, {}).get(k) for k in ("mtd_ty_l2l", "mtd_ly", "ytd_ty_l2l", "ytd_ly")},
         })
     for r in rows:
         r["mtd_bal"] = (r["mtd_target"] - r["mtd"]) if r["mtd_target"] else None
@@ -2083,7 +2162,7 @@ def target_vs_ach(pf_df, asof=None, targets_df=None) -> dict:
     return {
         "closed_out": _gone,
         "rows": rows, "asof": asof, "months": months,
-            "fy_start": fy_start}
+            "fy_start": fy_start, "principal_read": bool(prin)}
 
 
 def _tva_total(part, label, city="", brand=""):
@@ -2309,8 +2388,10 @@ def render_target_vs_ach(sheet, region=None) -> "Image":
         return head + [
             _money(r["mtd_target"]), _money(r["mtd"]),
             pct(r["mtd"], r["mtd_target"]), _money(r["mtd_bal"]),
+            _money(r.get("mtd_ly")), _tva_gd(r, "mtd"),
             _money(r["ytd_target"]), _money(r["ytd"]),
             pct(r["ytd"], r["ytd_target"]), _money(r["ytd_bal"]),
+            _money(r.get("ytd_ly")), _tva_gd(r, "ytd"),
             _money(r["year_target"]), pct(r["ytd"], r["year_target"]),
             _money(_avg_day(r)), _money(r.get("ttm"))]
 
@@ -2379,7 +2460,56 @@ def render_target_vs_ach(sheet, region=None) -> "Image":
              if _gone else "")
     return _draw_grid(header, grid, landscape=False,
                       title=f"TARGET vs ACHIEVEMENT  ·  {asof:%d %b %Y}  ·  "
-                            f"year to date covers {m[0]}–{m[-1]}{_note}")
+                            f"year to date covers {m[0]}–{m[-1]}{_note}  ·  GD % like to like; "
+                            f"South last year from the VFL feed (previous operator)")
+
+
+TVA_PRIN_COLS = [
+    ("PRINCIPAL", "l"), ("BRANDS", "l"), ("STORES", "r"),
+    ("MTD TARGET", "r"), ("MTD ACHIEVED", "r"), ("MTD ACHIEVED %", "r"), ("LY MTD", "r"), ("MTD GD %", "r"),
+    ("YTD TARGET", "r"), ("YTD ACHIEVED", "r"), ("YTD ACHIEVED %", "r"), ("LY YTD", "r"), ("YTD GD %", "r"),
+    ("YEAR TARGET", "r"), ("YEAR ACHIEVED %", "r"),
+]
+
+
+def render_tva_principal(sheet) -> "Image":
+    """Page 2 — the same sheet by PARENT COMPANY (Manav, 12 Nov 2026: "one more page to add with PARENT COMPANY WISE |
+    LIKE SABHYATA/VFL/ABFRL"), grouped on the store master's PRINCIPAL column as the master writes it, its brands
+    beside it so a code like TL or RAL reads at a glance. Same stores, same pairs as page 1: the principals add up to
+    page 1's region and grand totals, to the rupee."""
+    asof = sheet["asof"]
+    rows = sheet["rows"]
+    header = [h for h, _ in TVA_PRIN_COLS]
+    aligns = [a for _, a in TVA_PRIN_COLS]
+
+    def pct(a, b):
+        return f"{a / b * 100:,.1f}" if (a is not None and b) else ""
+
+    def line(r, label, brands, n):
+        return [label, brands, f"{n:,}",
+                _money(r["mtd_target"]), _money(r["mtd"]), pct(r["mtd"], r["mtd_target"]),
+                _money(r.get("mtd_ly")), _tva_gd(r, "mtd"),
+                _money(r["ytd_target"]), _money(r["ytd"]), pct(r["ytd"], r["ytd_target"]),
+                _money(r.get("ytd_ly")), _tva_gd(r, "ytd"),
+                _money(r["year_target"]), pct(r["ytd"], r["year_target"])]
+
+    groups = {}
+    for r in rows:
+        groups.setdefault(r.get("principal") or "(not in master)", []).append(r)
+    grid = []
+    for p in sorted(groups, key=lambda k: -sum(x["ytd"] for x in groups[k])):
+        part = groups[p]
+        brands = ", ".join(sorted({str(x.get("brand") or "").title() for x in part if x.get("brand")}))
+        grid.append((_cells(line(_tva_total(part, p), p, brands, len(part)), aligns, None, False), ROW_H))
+    for reg in sorted({r["region"] for r in rows}):
+        part = [r for r in rows if r["region"] == reg]
+        grid.append((_cells(line(_tva_total(part, ""), f"{reg.upper()} TOTAL", "", len(part)),
+                            aligns, HDR_BG, True), ROW_H))
+    grid.append((_cells(line(_tva_total(rows, ""), "G. TOTAL", "", len(rows)), aligns, TOTAL_BG, True), ROW_H))
+    warn = "" if sheet.get("principal_read") else "  ·  ⚠ store master not readable — principals missing"
+    return _draw_grid(header, grid, landscape=True,
+                      title=f"TARGET vs ACHIEVEMENT  ·  PARENT COMPANY WISE (store master PRINCIPAL)  ·  "
+                            f"{asof:%d %b %Y}  ·  GD % like to like{warn}")
 
 
 def _YE_vfl():
@@ -2398,7 +2528,10 @@ def build_target_vs_ach(pf_df, asof=None, basis_label="") -> tuple[str, bytes]:
         img = _stack([render_tva_exec(sheet),
                       render_tva_exec(sheet, is_vfl, "VFL SNAPSHOT  ·  Manyavar, Mohey, Twamev stores only"),
                       render_target_vs_ach(sheet)], 34)
-        pdf = _pdf_from([("Target vs achievement", img)],
+        # ★ 12 Nov 2026 (Manav): "one more page … PARENT COMPANY WISE … make this sheet landscape, and run it 2 pages"
+        pdf = _pdf_from([("Target vs achievement", img),
+                         ("Target vs achievement · parent company wise", render_tva_principal(sheet))],
                         f"As of {asof:%d %b %Y}"
-                        + (f" · {basis_label}" if basis_label else ""))
+                        + (f" · {basis_label}" if basis_label else ""),
+                        own_heights=True)
     return (f"TARGET VS ACHIEVEMENT {asof:%d-%m-%Y}.pdf", pdf)

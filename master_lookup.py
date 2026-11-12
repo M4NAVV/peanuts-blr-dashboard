@@ -227,3 +227,18 @@ def _candidates():
         out.append(f"https://docs.google.com/spreadsheets/d/{wid}"
                    f"/export?format=csv&gid={_GID}")
     return [u for i, u in enumerate(out) if u and u not in out[:i]]
+
+
+def principal() -> dict:
+    """store code -> PRINCIPAL (the brand's parent company: VFL, ABFRL, SAB, TCNS …), as the master writes it.
+
+    Manav, 12 Nov 2026: the Target vs achievement report gets a page "PARENT COMPANY WISE | LIKE SABHYATA/VFL/ABFRL",
+    and the grouping is "the principal column from our store master" — read live, so a new store or a corrected
+    principal needs no code change. An empty map when the master cannot be read; the report then says so on the page
+    rather than grouping everything under one heading.
+    """
+    m = _read()
+    if m is None or "PRINCIPAL" not in m.columns:
+        return {}
+    return {int(c): str(p).strip() for c, p in zip(m["_code"], m["PRINCIPAL"])
+            if pd.notna(c) and pd.notna(p) and str(p).strip() and int(c) not in NON_STORE_CODES}
