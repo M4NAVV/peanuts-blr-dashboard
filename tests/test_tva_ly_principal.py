@@ -43,4 +43,14 @@ def test_the_report_is_two_pages_store_sheet_then_parent_company():
     from pathlib import Path
     src = Path("report_td.py").read_text()
     assert "render_tva_principal(sheet, fill_w=main.width)" in src
+    assert "render_target_vs_ach(sheet, by=\"principal\")" in src
     assert "own_heights=True" in src
+
+
+def test_page_three_groups_stores_under_their_principal_with_a_total():
+    """Manav, 12 Nov 2026: "the first page, but with brands as the subtotals. so, vfl and all under VFL"."""
+    g = R._tva_group_principal(_rows())
+    kinds = [(k, r.get("name") if k == "subtotal" else r["principal"]) for k, r in g]
+    assert ("subtotal", "VFL TOTAL") in kinds and ("subtotal", "SAB TOTAL") in kinds
+    first_total = next(i for i, (k, _) in enumerate(kinds) if k == "subtotal")
+    assert all(p == kinds[first_total][1].replace(" TOTAL", "") for k, p in kinds[:first_total])

@@ -2368,7 +2368,20 @@ def render_tva_exec(sheet, keep=None, title="EXECUTIVE SNAPSHOT", fill_w=None) -
                       title=f"{title}  ·  {asof:%d %b %Y}")
 
 
-def render_target_vs_ach(sheet, region=None) -> "Image":
+def _tva_group_principal(rows):
+    """Parent company (store master PRINCIPAL), then its stores — page 3 (Manav, 12 Nov 2026: "the first page, but
+    with brands as the subtotals. so, vfl and all under VFL"). Largest principal by YTD first; stores by YTD inside."""
+    out, groups = [], {}
+    for r in rows:
+        groups.setdefault(r.get("principal") or "(not in master)", []).append(r)
+    for p in sorted(groups, key=lambda k: -sum(x["ytd"] for x in groups[k])):
+        part = sorted(groups[p], key=lambda r: -r["ytd"])
+        out.extend(("store", r) for r in part)
+        out.append(("subtotal", _tva_total(part, f"{p} TOTAL")))
+    return out
+
+
+def render_target_vs_ach(sheet, region=None, by="city") -> "Image":
     """One money table: every store against its month and its year."""
     asof = sheet["asof"]
     rows = [r for r in sheet["rows"]
@@ -2437,7 +2450,7 @@ def render_target_vs_ach(sheet, region=None) -> "Image":
         return NEG_INK if share < _tva_pace(r, asof, "MTD") * 0.9 else INK
 
     grid = []
-    for kind, r in _tva_group(rows):
+    for kind, r in (_tva_group_principal(rows) if by == "principal" else _tva_group(rows)):
         fill = (HDR_BG if kind == "subtotal"
                 else LOC_BG if kind == "loctotal" else None)
         grid.append((_cells(line(r, kind), aligns, fill,
@@ -2461,7 +2474,8 @@ def render_target_vs_ach(sheet, region=None) -> "Image":
     _note = (f"  ·  trading stores only, {len(_gone)} closed this year excluded"
              if _gone else "")
     return _draw_grid(header, grid, landscape=False,
-                      title=f"TARGET vs ACHIEVEMENT  ·  {asof:%d %b %Y}  ·  "
+                      title=f"TARGET vs ACHIEVEMENT{'  ·  BY PARENT COMPANY' if by == 'principal' else ''}  ·  "
+                            f"{asof:%d %b %Y}  ·  "
                             f"year to date covers {m[0]}–{m[-1]}{_note}  ·  GD % like to like; "
                             f"South last year from the VFL feed (previous operator)")
 
@@ -2535,7 +2549,10 @@ def build_target_vs_ach(pf_df, asof=None, basis_label="") -> tuple[str, bytes]:
         # ★ 12 Nov 2026 (Manav): "one more page … PARENT COMPANY WISE … make this sheet landscape, and run it 2 pages"
         pdf = _pdf_from([("Target vs achievement", img),
                          ("Target vs achievement · parent company wise",
-                          render_tva_principal(sheet, fill_w=main.width))],
+                          render_tva_principal(sheet, fill_w=main.width)),
+                         # ★ 12 Nov 2026 (Manav): page 3 — page 1's store table with the principals as subtotals
+                         ("Target vs achievement · stores by parent company",
+                          render_target_vs_ach(sheet, by="principal"))],
                         f"As of {asof:%d %b %Y}"
                         + (f" · {basis_label}" if basis_label else ""),
                         own_heights=True)
