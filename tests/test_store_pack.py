@@ -36,6 +36,8 @@ def _run(monkeypatch, team, cats=None):
     monkeypatch.setattr(SP, "detailed_sheet", team)
     # ★ 18 Oct 2026: page two is the category page
     monkeypatch.setattr(A4, "category_sheet_print", cats or (lambda *a, **k: [_page("blue")]))
+    # ★ 12 Nov 2026: page two is targets, brand & gender (categories move to three, team to four)
+    monkeypatch.setattr(A4, "brand_gender_page", lambda *a, **k: [_page("green")])
     return A4.store_packs(_Master, pd.DataFrame(), "2026-10-09", ff={},
                           targets={})
 
@@ -53,14 +55,14 @@ def test_briefing_then_team_in_one_pdf_per_store(monkeypatch):
         "SOUTH/SOUTH 1 · Store sheet, Grand Kamraj Road · 09-10-2026.pdf",
         "EAST/EAST 1 · Store sheet, Dibrugarh · 09-10-2026.pdf"]
     assert set(seen) == {"pages"}
-    assert [_pdf_pages(b) for _, b in out] == [3, 3]   # briefing + categories + team
+    assert [_pdf_pages(b) for _, b in out] == [4, 4]   # briefing + brand & gender + categories + team
 
 
 def test_a_store_where_nobody_sold_keeps_its_briefing_and_is_named(monkeypatch):
     def team(L, df, asof, s, code=None, fmt="pdf", **k):
         return None if s == "Dibrugarh" else ("t.pdf", [_page("red")], 0, 1, 1)
     out, failed = _run(monkeypatch, team)
-    assert [_pdf_pages(b) for _, b in out] == [3, 2]   # Dibrugarh: pages one and two
+    assert [_pdf_pages(b) for _, b in out] == [4, 3]   # Dibrugarh: no team page
     assert failed == ["Dibrugarh: no team page — nobody sold"]
 
 
@@ -100,5 +102,5 @@ def test_a_failed_category_page_keeps_the_rest_and_is_named(monkeypatch):
     def cats(*a, **k):
         raise ValueError("no rows")
     out, failed = _run(monkeypatch, team, cats)
-    assert [_pdf_pages(b) for _, b in out] == [2, 2]   # briefing + team still go
+    assert [_pdf_pages(b) for _, b in out] == [3, 3]   # briefing + brand & gender + team still go
     assert all("categories page — no rows" in f for f in failed)
