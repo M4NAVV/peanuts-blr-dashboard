@@ -986,6 +986,18 @@ def _period_cards(L, df, asof, store, code, kind, targets, label_px=23,
     grow = (PP.GREEN if k["move"] > 0
             else (PP.NEG_INK if k["move"] < 0 else None))
     c = SN.target_cards(tp, kind)
+    # ★ 12 Nov 2026 (Manav: "All comparisons to follow B and pointed out accordingly"): when the month has slabs,
+    # the month's target IS slab B — the cards say so, and the slab strip below plots all four.
+    slab = {}
+    if kind == "MTD":
+        try:
+            import slabs as _SL
+            slab = _SL.for_store(code, asof)
+        except Exception:
+            slab = {}
+        if slab:
+            c = [(f"{c[0][0]} (B)",) + tuple(c[0][1:]), c[1], c[2], c[3],
+                 ("Balance to B",) + tuple(c[4][1:]), (c[5][0].replace("Per day reqd", "Per day for B"),) + tuple(c[5][1:])]
     rows = [
         [c[0], c[1], c[2], c[4], c[5]],
         [c[3],
@@ -1003,7 +1015,8 @@ def _period_cards(L, df, asof, store, code, kind, targets, label_px=23,
     return dict(cap=_caption(CONTENT_W, f"{kind} — {label}",
                              "target, achievement and how the trading is going"),
                 cards=SN._cards_image(rows, CONTENT_W, label_px=label_px,
-                                      value_px=value_px))
+                                      value_px=value_px),
+                slabs=(slab_strip(CONTENT_W, k["ty"]["sale"], slab, asof) if slab else None))
 
 
 def store_sheet(L, df, asof, store, code=None, pf=None, ff=None, targets=None,
@@ -1276,7 +1289,11 @@ def store_packs(L, df, asof, ff=None, pf=None, targets=None, progress=None,
                                  fmt="pages")[1]
         except Exception as e:                  # one store must not sink the run
             failed.append(f"{s}: morning briefing — {e}")
-        try:                                    # ★ page two since 18 Oct 2026: by category
+        try:                                    # ★ page two since 12 Nov 2026: brand & gender
+            pages += brand_gender_page(L, df, asof, s, code)
+        except Exception as e:
+            failed.append(f"{s}: brand & gender page — {e}")
+        try:                                    # ★ page three since 12 Nov 2026 (two since 18 Oct): by category
             pages += category_sheet_print(L, df, asof, s, code, ff=ff,
                                           targets=targets) or []
         except Exception as e:
@@ -1585,6 +1602,7 @@ def store_sheet_print(L, df, asof, store, code=None, pf=None, ff=None,
         _sign = ["Shortfall", "Gain"] + _pct_all
         fixed = (title_h + GAP
                  + sum(b["cap"].height + 8 + b["cards"].height + GAP
+                       + (b["slabs"].height + GAP if b.get("slabs") is not None else 0)
                        for b in built)
                  + 2 * (tcap_h + 8) + 24 + kpi.height + GAP + GAP)
         budget = usable - fixed
@@ -1637,6 +1655,8 @@ def store_sheet_print(L, df, asof, store, code=None, pf=None, ff=None,
         for b in built:
             sheet.put(b["cap"], gap=8)
             sheet.put(b["cards"], gap=GAP)
+            if b.get("slabs") is not None:          # ★ 12 Nov 2026: the four slabs, under the month's cards
+                sheet.put(b["slabs"], gap=GAP)
 
         cols = []
         for b in built:
@@ -1666,3 +1686,184 @@ def store_sheet_print(L, df, asof, store, code=None, pf=None, ff=None,
     tag = f"{code}_" if code is not None else ""
     stem = f"{asof:%Y-%m-%d}_{tag}{SN._slug(store)}_briefing_a4"
     return (f"{stem}.pdf", out, font_px, pages, used_cap, pad_used)
+
+
+# --------------------------------------------------------------------------- #
+#  Target slabs and brand / gender — Manav, 12 Nov 2026                         #
+# --------------------------------------------------------------------------- #
+# "Targets all 4 to be plotted super a/a/b/c. All comparisons to follow B and pointed out accordingly. then we need
+# gender/brand gd, gender contribution … make a new page if needed." Slabs from the `Target Slabs` tab (slabs.py);
+# B IS the month target the cards already used, so nothing moves — it is named.
+def _cr_l(v):
+    if v is None or pd.isna(v):
+        return "—"
+    v = float(v)
+    return f"{v / 1e7:,.2f} Cr" if abs(v) >= 1e7 else f"{v / 1e5:,.2f} L"
+
+
+def slab_strip(width, achieved, slabs, asof, font_px=28):
+    """The four slabs as one table (SLAB · TARGET · ACH % · BALANCE · PER DAY REQD · WHERE) and a bar plotting the
+    month so far against all four, with today's B pace marked."""
+    import calendar
+    from PIL import Image, ImageDraw
+    import festive_admin as FADM
+    asof = pd.Timestamp(asof)
+    days = calendar.monthrange(asof.year, asof.month)[1]
+    left = days - asof.day
+    pace = asof.day / days
+    rows = []
+    for s in ("SUPER A", "A", "B", "C"):
+        t = slabs.get(s)
+        bal = (t - achieved) if t else None
+        if not t:
+            where = ""
+        elif achieved >= t:
+            where = "reached"
+        elif achieved / t >= pace:
+            where = "on pace"
+        else:
+            where = "behind pace"
+        rows.append({"slab": s + ("  (target)" if s == "B" else ""), "target": _cr_l(t),
+                     "pct": (achieved / t * 100) if t else None,
+                     "bal": (f"{_cr_l(-bal)} ahead" if bal is not None and bal <= 0 else _cr_l(bal)),
+                     "perday": (_cr_l(bal / left) if (bal and bal > 0 and left > 0) else ("—" if left <= 0 else "done")),
+                     "where": where})
+    spec = [("slab", "text", "SLAB"), ("target", "text", "TARGET"), ("pct", "pct", "ACHIEVED %"),
+            ("bal", "text", "BALANCE"), ("perday", "text", f"PER DAY REQD ({left}d)"), ("where", "text", "WHERE")]
+    tbl = FADM.table_image(rows, spec, width, font_px=font_px)
+
+    # ---- the bar
+    reg, bold = _ft(font_px - 2)
+    H = int(font_px * 6.6)
+    img = Image.new("RGB", (width, H), (255, 255, 255))
+    d = ImageDraw.Draw(img)
+    top = max(slabs.values()) * 1.06
+    x0, x1 = 6, width - 6
+    X = lambda v: x0 + (x1 - x0) * min(max(v / top, 0), 1)
+    yb, hb = int(font_px * 2.3), int(font_px * 1.3)
+    d.rectangle([x0, yb, x1, yb + hb], fill=(236, 236, 236))
+    d.rectangle([x0, yb, X(achieved), yb + hb], fill=(46, 125, 50))
+    d.text((x0 + 8, yb + (hb - font_px) // 2), f"sold {_cr_l(achieved)}", font=bold, fill=(255, 255, 255)
+           if X(achieved) - x0 > font_px * 6 else (20, 20, 20))
+    for s in ("C", "B", "A", "SUPER A"):
+        v = slabs.get(s)
+        if not v:
+            continue
+        x = X(v)
+        w = 5 if s == "B" else 3
+        d.rectangle([x - w // 2, yb - int(font_px * 0.5), x + w // 2, yb + hb + 4], fill=(20, 20, 20))
+        lab = f"{s} {_cr_l(v)}"
+        tw = d.textlength(lab, font=bold if s == "B" else reg)
+        d.text((min(max(x - tw / 2, x0), x1 - tw), yb - int(font_px * 1.7)), lab,
+               font=bold if s == "B" else reg, fill=(20, 20, 20))
+    if slabs.get("B"):
+        xp = X(slabs["B"] * pace)
+        for yy in range(yb + hb + 6, yb + hb + int(font_px * 1.1), 6):
+            d.line([(xp, yy), (xp, yy + 3)], fill=(178, 34, 34), width=3)
+        lab = f"B pace today {_cr_l(slabs['B'] * pace)}"
+        tw = d.textlength(lab, font=reg)
+        d.text((min(max(xp - tw / 2, x0), x1 - tw), yb + hb + int(font_px * 1.15)), lab, font=reg, fill=(178, 34, 34))
+    return _stack([_caption(width, "MTD target slabs",
+                            "SUPER A · A · B · C — every comparison above is against B"), tbl, img], gap=8)
+
+
+_BRAND_FOLD = {"MANYAVAR": "Manyavar", "MOHEY": "Mohey", "TWAMEV MEN": "Twamev", "TWAMEV-WOMEN": "Twamev"}
+_GENDER = {"MEN": "Men", "WOMEN": "Women", "CHILD": "Kids"}
+
+
+def _bg_frames(L, df, asof, store):
+    """{kind: (cur, prior)} for one store, LIKE TO LIKE (the store's own comparable span — exec_snapshot.l2l_bounds)."""
+    import exec_snapshot as ES
+    key, amt = L.COL_STORE_LABEL, L.COL_AMOUNT
+    hist = df[df[key] == store]
+    bounds = ES.l2l_bounds(hist, key, amt, {}, asof)
+    out = {}
+    for kind in ("MTD", "YTD"):
+        cur, pri = L.report_frames(df, kind, asof=asof)
+        cur, pri = cur[cur[key] == store], pri[pri[key] == store]
+        out[kind] = ES.l2l_frames(cur, pri, bounds, key)
+    return out
+
+
+def _gd_table(L, frames, by, labels, order, width, font_px):
+    import festive_admin as FADM
+    amt = L.COL_AMOUNT
+    rows = []
+    sums = {}
+    for kind in ("MTD", "YTD"):
+        c, p = frames[kind]
+        sums[kind] = (c.assign(_g=by(c)).groupby("_g")[amt].sum(), p.assign(_g=by(p)).groupby("_g")[amt].sum())
+    for g in order + ["TOTAL"]:
+        r = {"g": g}
+        for kind in ("MTD", "YTD"):
+            ty_s, ly_s = sums[kind]
+            ty = float(ty_s.sum()) if g == "TOTAL" else float(ty_s.get(g, 0.0))
+            ly = float(ly_s.sum()) if g == "TOTAL" else float(ly_s.get(g, 0.0))
+            r[f"{kind}_ty"], r[f"{kind}_ly"] = ty, ly
+            r[f"{kind}_gd"] = ((ty - ly) / ly * 100) if ly > 0 else ("new" if ty else None)
+        if g == "TOTAL" or any(r[f"{k}_ty"] or r[f"{k}_ly"] for k in ("MTD", "YTD")):
+            rows.append(r)
+    spec = [("g", "text", labels), ("MTD_ty", "money", "MTD TY"), ("MTD_ly", "money", "MTD LY"),
+            ("MTD_gd", "gd", "MTD G/D %"), ("YTD_ty", "money", "YTD TY"), ("YTD_ly", "money", "YTD LY"),
+            ("YTD_gd", "gd", "YTD G/D %")]
+    return FADM.table_image(rows[:-1], spec, width, font_px=font_px, total_row=rows[-1])
+
+
+def _contribution(L, frames, width, font_px):
+    """Gender share of the store's sales — this month, this year, last year — a 100% bar each."""
+    from PIL import Image, ImageDraw
+    amt = L.COL_AMOUNT
+    cols = {"Men": (31, 78, 121), "Women": (178, 34, 102), "Kids": (230, 145, 56)}
+    by = lambda f: f["Men/Women/Child"].map(_GENDER).fillna("Men")
+    series = [("This month", frames["MTD"][0]), ("This year", frames["YTD"][0]), ("Last year, same days", frames["YTD"][1])]
+    reg, bold = _ft(font_px)
+    rh = int(font_px * 2.0)
+    lab_w = int(font_px * 11)
+    img = Image.new("RGB", (width, rh * len(series) + int(font_px * 1.8)), (255, 255, 255))
+    d = ImageDraw.Draw(img)
+    for i, (name, f) in enumerate(series):
+        s = f.assign(_g=by(f)).groupby("_g")[amt].sum()
+        tot = float(s.sum())
+        y = i * rh + 4
+        d.text((0, y + (rh - font_px) // 2 - 4), name, font=bold, fill=(20, 20, 20))
+        x = lab_w
+        for g in ("Men", "Women", "Kids"):
+            share = float(s.get(g, 0.0)) / tot if tot else 0
+            w = (width - lab_w) * share
+            d.rectangle([x, y, x + w, y + rh - 10], fill=cols[g])
+            if w > font_px * 3.5:
+                d.text((x + 8, y + (rh - 10 - font_px) // 2 - 2), f"{share * 100:,.1f}%", font=bold, fill=(255, 255, 255))
+            x += w
+    ly = rh * len(series) + 6
+    x = lab_w
+    for g, c in cols.items():
+        d.rectangle([x, ly + 4, x + font_px, ly + 4 + font_px], fill=c)
+        d.text((x + font_px + 8, ly), g, font=reg, fill=(20, 20, 20))
+        x += font_px * 7
+    return img
+
+
+def brand_gender_page(L, df, asof, store, code=None, font_px=30):
+    """[PIL page] — the new page two of the manager pack (Manav, 12 Nov 2026): brand G/D, gender G/D and gender
+    contribution, month and year, like to like, for this store."""
+    global MARGIN, CONTENT_W
+    asof = pd.Timestamp(asof)
+    _keep = (MARGIN, CONTENT_W)
+    MARGIN = PRINT_MARGIN
+    CONTENT_W = PAGE_W - 2 * MARGIN
+    try:
+        fr = _bg_frames(L, df, asof, store)
+        brand = lambda f: L.brand_line_vfl(f).map(_BRAND_FOLD).fillna("Manyavar")
+        gender = lambda f: f["Men/Women/Child"].map(_GENDER).fillna("Men")
+        sheet = _Sheet(store, asof, "", bounded=True, footer=False)
+        sheet.put(_heading(CONTENT_W, f"{store} — brand & gender",
+                           f"as of {asof:%d %b %Y}  ·  growth like to like (the store's own comparable days)"), gap=26)
+        sheet.put(_caption(CONTENT_W, "Brand — growth / degrowth", "Manyavar, Mohey, Twamev: this year against last"), gap=8)
+        sheet.put(_gd_table(L, fr, brand, "BRAND", ["Manyavar", "Mohey", "Twamev"], CONTENT_W, font_px), gap=34)
+        sheet.put(_caption(CONTENT_W, "Gender — growth / degrowth", "Men, Women, Kids: this year against last"), gap=8)
+        sheet.put(_gd_table(L, fr, gender, "GENDER", ["Men", "Women", "Kids"], CONTENT_W, font_px), gap=34)
+        sheet.put(_caption(CONTENT_W, "Gender contribution", "each gender's share of the store's sales"), gap=8)
+        sheet.put(_contribution(L, fr, CONTENT_W, font_px), gap=26)
+        return sheet.images()
+    finally:
+        MARGIN, CONTENT_W = _keep
