@@ -1774,7 +1774,13 @@ _GENDER = {"MEN": "Men", "WOMEN": "Women", "CHILD": "Kids"}
 
 
 def _bg_frames(L, df, asof, store):
-    """{kind: (cur, prior)} for one store, LIKE TO LIKE (the store's own comparable span — exec_snapshot.l2l_bounds)."""
+    """{kind: (cur, prior, cur_l2l)} for one store. `cur` is ALL of this period's sales (what the TY columns and the
+    contribution bars show — the G/D sheet's own figure); `prior` and `cur_l2l` are the LIKE TO LIKE pair behind the
+    growth % (exec_snapshot.l2l_bounds — the store's own comparable span).
+
+    ★ 12 Nov 2026: the TY columns first printed the like-to-like CUT, so Silchar (opened part-way through last year)
+    read ₹1.12 Cr for the year against the G/D sheet's ₹1.49 Cr. TY is now the whole of TY; only G/D % is like to like.
+    Last year is the whole of last year either way (l2l_bounds keeps every rupee of it)."""
     import exec_snapshot as ES
     key, amt = L.COL_STORE_LABEL, L.COL_AMOUNT
     hist = df[df[key] == store]
@@ -1783,7 +1789,8 @@ def _bg_frames(L, df, asof, store):
     for kind in ("MTD", "YTD"):
         cur, pri = L.report_frames(df, kind, asof=asof)
         cur, pri = cur[cur[key] == store], pri[pri[key] == store]
-        out[kind] = ES.l2l_frames(cur, pri, bounds, key)
+        c_l2l, p_l2l = ES.l2l_frames(cur, pri, bounds, key)
+        out[kind] = (cur, p_l2l, c_l2l)
     return out
 
 
@@ -1793,16 +1800,17 @@ def _gd_table(L, frames, by, labels, order, width, font_px):
     rows = []
     sums = {}
     for kind in ("MTD", "YTD"):
-        c, p = frames[kind]
-        sums[kind] = (c.assign(_g=by(c)).groupby("_g")[amt].sum(), p.assign(_g=by(p)).groupby("_g")[amt].sum())
+        c, p, cl = frames[kind]
+        g_ = lambda f: f.assign(_g=by(f)).groupby("_g")[amt].sum()
+        sums[kind] = (g_(c), g_(p), g_(cl))
     for g in order + ["TOTAL"]:
         r = {"g": g}
         for kind in ("MTD", "YTD"):
-            ty_s, ly_s = sums[kind]
-            ty = float(ty_s.sum()) if g == "TOTAL" else float(ty_s.get(g, 0.0))
-            ly = float(ly_s.sum()) if g == "TOTAL" else float(ly_s.get(g, 0.0))
-            r[f"{kind}_ty"], r[f"{kind}_ly"] = ty, ly
-            r[f"{kind}_gd"] = ((ty - ly) / ly * 100) if ly > 0 else ("new" if ty else None)
+            ty_s, ly_s, tl_s = sums[kind]
+            pick = (lambda x: float(x.sum())) if g == "TOTAL" else (lambda x: float(x.get(g, 0.0)))
+            ty, ly, tl = pick(ty_s), pick(ly_s), pick(tl_s)
+            r[f"{kind}_ty"], r[f"{kind}_ly"] = ty, ly          # TY = all of TY; LY = all of LY
+            r[f"{kind}_gd"] = ((tl - ly) / ly * 100) if ly > 0 else ("new" if ty else None)   # growth like to like
         if g == "TOTAL" or any(r[f"{k}_ty"] or r[f"{k}_ly"] for k in ("MTD", "YTD")):
             rows.append(r)
     spec = [("g", "text", labels), ("MTD_ty", "money", "MTD TY"), ("MTD_ly", "money", "MTD LY"),
