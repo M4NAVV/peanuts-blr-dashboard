@@ -1016,7 +1016,9 @@ def _period_cards(L, df, asof, store, code, kind, targets, label_px=23,
                              "target, achievement and how the trading is going"),
                 cards=SN._cards_image(rows, CONTENT_W, label_px=label_px,
                                       value_px=value_px),
-                slabs=(slab_strip(CONTENT_W, k["ty"]["sale"], slab, asof) if slab else None))
+                # ★ the slab strip itself lives on page two (12 Nov 2026, Manav: page one's tables came out "too
+                # small" with it here); page one keeps only the (B) labels above
+                slabs=None)
 
 
 def store_sheet(L, df, asof, store, code=None, pf=None, ff=None, targets=None,
@@ -1764,7 +1766,7 @@ def slab_strip(width, achieved, slabs, asof, font_px=28):
         tw = d.textlength(lab, font=reg)
         d.text((min(max(xp - tw / 2, x0), x1 - tw), yb + hb + int(font_px * 1.15)), lab, font=reg, fill=(178, 34, 34))
     return _stack([_caption(width, "MTD target slabs",
-                            "SUPER A · A · B · C — every comparison above is against B"), tbl, img], gap=8)
+                            "SUPER A · A · B · C — B is the month target every card on page one measures against"), tbl, img], gap=8)
 
 
 _BRAND_FOLD = {"MANYAVAR": "Manyavar", "MOHEY": "Mohey", "TWAMEV MEN": "Twamev", "TWAMEV-WOMEN": "Twamev"}
@@ -1843,7 +1845,7 @@ def _contribution(L, frames, width, font_px):
     return img
 
 
-def brand_gender_page(L, df, asof, store, code=None, font_px=30):
+def brand_gender_page(L, df, asof, store, code=None, font_px=34):
     """[PIL page] — the new page two of the manager pack (Manav, 12 Nov 2026): brand G/D, gender G/D and gender
     contribution, month and year, like to like, for this store."""
     global MARGIN, CONTENT_W
@@ -1856,8 +1858,19 @@ def brand_gender_page(L, df, asof, store, code=None, font_px=30):
         brand = lambda f: L.brand_line_vfl(f).map(_BRAND_FOLD).fillna("Manyavar")
         gender = lambda f: f["Men/Women/Child"].map(_GENDER).fillna("Men")
         sheet = _Sheet(store, asof, "", bounded=True, footer=False)
-        sheet.put(_heading(CONTENT_W, f"{store} — brand & gender",
+        sheet.put(_heading(CONTENT_W, f"{store} — targets, brand & gender",
                            f"as of {asof:%d %b %Y}  ·  growth like to like (the store's own comparable days)"), gap=26)
+        # ★ the four slabs (moved here from page one, 12 Nov 2026) — the month's achievement against SUPER A / A / B / C
+        try:
+            import slabs as _SL
+            slab = _SL.for_store(code, asof)
+        except Exception:
+            slab = {}
+        if slab:
+            ach = SN.store_kpis(L, df, asof, "MTD", store)["ty"]["sale"]
+            sheet.put(slab_strip(CONTENT_W, ach, slab, asof, font_px=font_px), gap=34)
+        else:
+            sheet.put(_caption(CONTENT_W, "MTD target slabs", f"not set for {asof:%b %Y} — the month's target is B"), gap=26)
         sheet.put(_caption(CONTENT_W, "Brand — growth / degrowth", "Manyavar, Mohey, Twamev: this year against last"), gap=8)
         sheet.put(_gd_table(L, fr, brand, "BRAND", ["Manyavar", "Mohey", "Twamev"], CONTENT_W, font_px), gap=34)
         sheet.put(_caption(CONTENT_W, "Gender — growth / degrowth", "Men, Women, Kids: this year against last"), gap=8)
