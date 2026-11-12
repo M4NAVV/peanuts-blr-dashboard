@@ -104,3 +104,15 @@ def test_a_failed_category_page_keeps_the_rest_and_is_named(monkeypatch):
     out, failed = _run(monkeypatch, team, cats)
     assert [_pdf_pages(b) for _, b in out] == [3, 3]   # briefing + brand & gender + team still go
     assert all("categories page — no rows" in f for f in failed)
+
+
+
+def test_the_pack_runs_targets_brand_gender_then_categories_then_briefing_then_team(monkeypatch):
+    """Manav, 12 Nov 2026: "the sequence should be page 2, 3, 1, 4"."""
+    seen = []
+    monkeypatch.setattr(A4, "pages_pdf", lambda pages: seen.append([pg.getpixel((0, 0)) for pg in pages]) or b"%PDF")
+    def team(L, df, asof, s, code=None, fmt="pdf", **k):
+        return ("t.pdf", [_page("red")], 0, 1, 10)
+    _run(monkeypatch, team)
+    green, blue, white, red = (0, 128, 0), (0, 0, 255), (255, 255, 255), (255, 0, 0)
+    assert seen[0] == [green, blue, white, red]

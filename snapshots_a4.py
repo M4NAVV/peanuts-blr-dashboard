@@ -1257,6 +1257,12 @@ def store_sheets(L, df, asof, ff=None, pf=None, targets=None, progress=None,
     return out, failed
 
 
+def PACK_ORDER(brief, bg, cats, team):
+    """The manager pack's page order — one place, shared with the WhatsApp bot (Manav, 12 Nov 2026:
+    "the sequence should be page 2, 3, 1, 4"): targets, brand & gender · categories · briefing · team."""
+    return list(bg) + list(cats) + list(brief) + list(team)
+
+
 def store_packs(L, df, asof, ff=None, pf=None, targets=None, progress=None,
                 folder="store-briefing"):
     """Every open store's morning A4 AND its team detail, bound as ONE PDF.
@@ -1285,19 +1291,21 @@ def store_packs(L, df, asof, ff=None, pf=None, targets=None, progress=None,
     out, failed, unfiled = [], [], []
     for i, s in enumerate(stores, 1):
         code = int(master.loc[s, "code"]) if s in master.index else None
-        pages = []
+        # ★ PAGE ORDER (Manav, 12 Nov 2026: "the sequence should be page 2, 3, 1, 4"): targets, brand & gender →
+        # categories → morning briefing → team detail. Each part is built on its own and a missing one is named.
+        brief, bg, cats, team = [], [], [], []
         try:
-            pages += store_sheet(L, df, asof, s, code, ff=ff, targets=targets,
-                                 fmt="pages")[1]
+            brief = store_sheet(L, df, asof, s, code, ff=ff, targets=targets,
+                                fmt="pages")[1]
         except Exception as e:                  # one store must not sink the run
             failed.append(f"{s}: morning briefing — {e}")
-        try:                                    # ★ page two since 12 Nov 2026: brand & gender
-            pages += brand_gender_page(L, df, asof, s, code)
+        try:
+            bg = brand_gender_page(L, df, asof, s, code)
         except Exception as e:
             failed.append(f"{s}: brand & gender page — {e}")
-        try:                                    # ★ page three since 12 Nov 2026 (two since 18 Oct): by category
-            pages += category_sheet_print(L, df, asof, s, code, ff=ff,
-                                          targets=targets) or []
+        try:
+            cats = category_sheet_print(L, df, asof, s, code, ff=ff,
+                                        targets=targets) or []
         except Exception as e:
             failed.append(f"{s}: categories page — {e}")
         try:
@@ -1305,9 +1313,10 @@ def store_packs(L, df, asof, ff=None, pf=None, targets=None, progress=None,
             if made is None:
                 failed.append(f"{s}: no team page — nobody sold")
             else:
-                pages += made[1]
+                team = made[1]
         except Exception as e:
             failed.append(f"{s}: team detail — {e}")
+        pages = PACK_ORDER(brief, bg, cats, team)
         if pages:
             region = ""
             if s in master.index:
