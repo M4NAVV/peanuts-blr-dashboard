@@ -335,7 +335,7 @@ def _measure(d, header, rows, reg, bold, hbold, ncols):
 
 
 def _draw_grid(header, rows, *, title=None, hdr_h=None, landscape=True,
-               widths=None):
+               widths=None, fill_w=None):
     """rows: list of (cells, height). Returns a cropped image.
 
     `widths` pins the column widths instead of measuring them off these rows,
@@ -389,8 +389,10 @@ def _draw_grid(header, rows, *, title=None, hdr_h=None, landscape=True,
     # table, and the page came out portrait. The workbook prints A4 landscape and
     # so does every pack we ship, so the surplus is handed back to the columns in
     # proportion: same type size, more room around it.
-    if landscape or MIN_TABLE_W:
-        want = max(height * (PAGE_PT_W / 595.0) if landscape else 0, MIN_TABLE_W)
+    # ★ `fill_w` (12 Nov 2026, Manav: "make all the tables span edge to edge like the main table"): stretch to a
+    # sibling table's width, so every table on a page shares one left and one right edge.
+    if landscape or MIN_TABLE_W or fill_w:
+        want = max(height * (PAGE_PT_W / 595.0) if landscape else 0, MIN_TABLE_W, fill_w or 0)
         if total_w < want:
             k = want / total_w
             widths = [int(round(w * k)) for w in widths]
@@ -2332,7 +2334,7 @@ def tva_exec_rows(sheet, keep=None):
     return out
 
 
-def render_tva_exec(sheet, keep=None, title="EXECUTIVE SNAPSHOT") -> "Image":
+def render_tva_exec(sheet, keep=None, title="EXECUTIVE SNAPSHOT", fill_w=None) -> "Image":
     """The snapshot table — one grid, both periods, three scopes each."""
     asof = sheet["asof"]
     _cols = _tva_exec_cols()
@@ -2362,7 +2364,7 @@ def render_tva_exec(sheet, keep=None, title="EXECUTIVE SNAPSHOT") -> "Image":
             _money(r["projected"]),
         ], aligns, TOTAL_BG if kind == "total" else None,
             kind == "total", ink=ink), ROW_H))
-    return _draw_grid(header, grid, landscape=False,
+    return _draw_grid(header, grid, landscape=False, fill_w=fill_w,
                       title=f"{title}  ·  {asof:%d %b %Y}")
 
 
@@ -2472,7 +2474,7 @@ TVA_PRIN_COLS = [
 ]
 
 
-def render_tva_principal(sheet) -> "Image":
+def render_tva_principal(sheet, fill_w=None) -> "Image":
     """Page 2 — the same sheet by PARENT COMPANY (Manav, 12 Nov 2026: "one more page to add with PARENT COMPANY WISE |
     LIKE SABHYATA/VFL/ABFRL"), grouped on the store master's PRINCIPAL column as the master writes it, its brands
     beside it so a code like TL or RAL reads at a glance. Same stores, same pairs as page 1: the principals add up to
@@ -2507,7 +2509,7 @@ def render_tva_principal(sheet) -> "Image":
                             aligns, HDR_BG, True), ROW_H))
     grid.append((_cells(line(_tva_total(rows, ""), "G. TOTAL", "", len(rows)), aligns, TOTAL_BG, True), ROW_H))
     warn = "" if sheet.get("principal_read") else "  ·  ⚠ store master not readable — principals missing"
-    return _draw_grid(header, grid, landscape=True,
+    return _draw_grid(header, grid, landscape=True, fill_w=fill_w,
                       title=f"TARGET vs ACHIEVEMENT  ·  PARENT COMPANY WISE (store master PRINCIPAL)  ·  "
                             f"{asof:%d %b %Y}  ·  GD % like to like{warn}")
 
@@ -2525,12 +2527,15 @@ def build_target_vs_ach(pf_df, asof=None, basis_label="") -> tuple[str, bytes]:
     with _LOCK, desk():
         # The snapshot leads, then the store sheet it summarises — one page, so
         # the estate figure and the stores that make it are read together.
-        img = _stack([render_tva_exec(sheet),
-                      render_tva_exec(sheet, is_vfl, "VFL SNAPSHOT  ·  Manyavar, Mohey, Twamev stores only"),
-                      render_target_vs_ach(sheet)], 34)
+        main = render_target_vs_ach(sheet)
+        img = _stack([render_tva_exec(sheet, fill_w=main.width),
+                      render_tva_exec(sheet, is_vfl, "VFL SNAPSHOT  ·  Manyavar, Mohey, Twamev stores only",
+                                      fill_w=main.width),
+                      main], 34)
         # ★ 12 Nov 2026 (Manav): "one more page … PARENT COMPANY WISE … make this sheet landscape, and run it 2 pages"
         pdf = _pdf_from([("Target vs achievement", img),
-                         ("Target vs achievement · parent company wise", render_tva_principal(sheet))],
+                         ("Target vs achievement · parent company wise",
+                          render_tva_principal(sheet, fill_w=main.width))],
                         f"As of {asof:%d %b %Y}"
                         + (f" · {basis_label}" if basis_label else ""),
                         own_heights=True)

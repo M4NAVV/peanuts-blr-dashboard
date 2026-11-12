@@ -42,5 +42,5 @@ def test_the_parent_page_renders_one_row_per_principal():
 def test_the_report_is_two_pages_store_sheet_then_parent_company():
     from pathlib import Path
     src = Path("report_td.py").read_text()
-    assert '("Target vs achievement · parent company wise", render_tva_principal(sheet))' in src
+    assert "render_tva_principal(sheet, fill_w=main.width)" in src
     assert "own_heights=True" in src
