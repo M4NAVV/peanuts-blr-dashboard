@@ -2535,6 +2535,14 @@ def render_tva_principal(sheet, fill_w=None) -> "Image":
                             f"{asof:%d %b %Y}  ·  GD % like to like{warn}")
 
 
+def _tva_bar_pages(sheet, width, by="city"):
+    """The bar pages at the report's own width, each one landscape page tall; `by` = "city" | "principal"."""
+    import tva_bars as TB
+    chrome = (PP.MARGIN + PP.FRAME + PP.HEADER_H + PP.PAD + PP.FOOTER_H + PP.FRAME + PP.MARGIN)
+    page_w = width + 2 * (PP.MARGIN + PP.FRAME + PP.PAD)
+    return TB.render_pages(sheet, width, int(page_w * 595 / 842) - chrome, by=by)
+
+
 def _YE_vfl():
     """The VFL feed, fetched ONCE — see `yearend.vfl_feed`."""
     import yearend as _YE
@@ -2559,7 +2567,14 @@ def build_target_vs_ach(pf_df, asof=None, basis_label="") -> tuple[str, bytes]:
                           render_tva_principal(sheet, fill_w=main.width)),
                          # ★ 12 Nov 2026 (Manav): page 3 — page 1's store table with the principals as subtotals
                          ("Target vs achievement · stores by parent company",
-                          render_target_vs_ach(sheet, by="principal"))],
+                          render_target_vs_ach(sheet, by="principal"))]
+                        # ★ 13 Nov 2026 (Manav): "in new pages after all the current info … bars like this for every
+                        # store … city wise" — MTD only, every store (tva_bars.py)
+                        + [("Target vs achievement · MTD bars, city-wise", b) for b in _tva_bar_pages(sheet, main.width)]
+                        # ★ then the same bars by PARENT COMPANY (Manav: "another graph data, which is brand wise, so,
+                        # all the vfl stores like this and follows")
+                        + [("Target vs achievement · MTD bars, parent company-wise", b)
+                           for b in _tva_bar_pages(sheet, main.width, by="principal")],
                         f"As of {asof:%d %b %Y}"
                         + (f" · {basis_label}" if basis_label else ""),
                         own_heights=True)
