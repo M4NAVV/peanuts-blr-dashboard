@@ -1991,7 +1991,9 @@ def _tva_cols():
     import yearend as _YE
     if not _YE.enabled():
         return TVA_COLS
-    return [(("YEAR END", a) if h == "TTM SALES" else (h, a))
+    # ★ 13 Nov 2026 (Manav): "make that year end ttm" → heading "TTM/PROJECTED" — the figures are unchanged: a store
+    # with twelve months shows its trailing twelve months, a younger one its run-rate projection (yearend.year_end).
+    return [(("TTM/PROJECTED", a) if h == "TTM SALES" else (h, a))
             for h, a in TVA_COLS]
 _TVA_VALUES = ("mtd_target", "mtd", "mtd_bal", "ytd_target", "ytd", "ytd_bal",
                "year_target", "ttm",
@@ -2386,7 +2388,7 @@ def render_target_vs_ach(sheet, region=None, by="city") -> "Image":
     asof = sheet["asof"]
     rows = [r for r in sheet["rows"]
             if region is None or r["region"] == region]
-    _cols = _tva_cols()          # the trial renames TTM SALES -> YEAR END
+    _cols = _tva_cols()          # the trial renames TTM SALES -> TTM/PROJECTED
     header = [h for h, _ in _cols]
     aligns = [a for _, a in _cols]
 
@@ -2516,7 +2518,12 @@ def render_tva_principal(sheet, fill_w=None) -> "Image":
     for p in sorted(groups, key=lambda k: -sum(x["ytd"] for x in groups[k])):
         part = groups[p]
         brands = ", ".join(sorted({str(x.get("brand") or "").title() for x in part if x.get("brand")}))
-        grid.append((_cells(line(_tva_total(part, p), p, brands, len(part)), aligns, None, False), ROW_H))
+        tot = _tva_total(part, p)
+        # ★ 13 Nov 2026 (Manav): "if any brand is in YTD degrowth, that row gets red" — below zero at all, like to
+        # like (his call: -0.0% counts), from the principal's own pair; no comparable last year → stays black.
+        ty, ly = tot.get("ytd_ty_l2l"), tot.get("ytd_ly")
+        ink = NEG_INK if (ty is not None and ly and ty < ly) else INK
+        grid.append((_cells(line(tot, p, brands, len(part)), aligns, None, False, ink=ink), ROW_H))
     for reg in sorted({r["region"] for r in rows}):
         part = [r for r in rows if r["region"] == reg]
         grid.append((_cells(line(_tva_total(part, ""), f"{reg.upper()} TOTAL", "", len(part)),

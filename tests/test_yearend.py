@@ -263,7 +263,7 @@ def test_the_target_sheet_and_its_pace_table_are_swept(on, feeds):
     sheet = RTD.target_vs_ach(pf, asof)
 
     heads = [h for h, _ in RTD._tva_cols()]
-    assert "TTM SALES" not in heads and "YEAR END" in heads
+    assert "TTM SALES" not in heads and "TTM/PROJECTED" in heads   # 13 Nov 2026 (Manav): was "YEAR END"
 
     exec_heads = [h for h, _ in RTD._tva_exec_cols()]
     assert "PROJECTED" not in exec_heads, "the pace table still says PROJECTED"
