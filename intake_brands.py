@@ -35,6 +35,18 @@ import re
 
 import pandas as pd
 
+# ★★ THE FORM IS DISCONTINUED (Manav, 13 Nov 2026: "we are discontinuing the form. dont see the use
+# anymore"). Every live read below is switched off by this one line; the code is KEPT so it can come
+# back ("keep the code incase we revert sometime later"). To revert: set True, and the Intake vs
+# Tableau tab, the brand split from the form and the sidebar's "estimated" note all return.
+# Read at CALL time (in_use()), never at import, so a test can flip it.
+IN_USE = False
+
+
+def in_use() -> bool:
+    return bool(IN_USE)
+
+
 RESPONSES_ENV = "INTAKE_RESPONSES_URL"
 DIRECTORY_ENV = "STORE_DIRECTORY_URL"
 BRANDS = ("manyavar", "mohey", "twamev")
@@ -140,6 +152,9 @@ def split_map(responses=None, mails=None) -> dict:
     """{(store code, date): {manyavar, mohey, twamev}} — latest filing wins."""
     global _LAST_PROBLEM
     _LAST_PROBLEM = None
+    if responses is None and not in_use():
+        _LAST_PROBLEM = "the intake form is discontinued (13 Nov 2026)"
+        return {}                     # ★ no live read: the brand split falls back to the 4-week mix
     try:
         df = read_responses() if responses is None else responses
         mails = mail_map() if mails is None else mails

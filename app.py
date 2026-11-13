@@ -2531,9 +2531,11 @@ if _vfl_prov is not None:
     _span = (f"{_pfrom:%d %b} – {_vfl_prov:%d %b}** are"
              if _pfrom is not None and _pfrom < _vfl_prov
              else f"{_vfl_prov:%d %b}** is")
+    # ★ 13 Nov 2026: with the intake form discontinued EVERY store would be listed here every night,
+    # so the note is off with the form (Manav: no replacement line). Returns with intake_brands.IN_USE.
     _est = (f" Brand split **estimated** from the last 4 weeks for store "
             f"{', '.join(str(c) for c in _pest)} (intake form not filed)."
-            if _pest else "")
+            if _pest and __import__("intake_brands").in_use() else "")
     st.sidebar.warning(
         f"**{_span} provisional — typed into Peanuts Total, not yet in the "
         f"VFL sheet. Its "
@@ -3001,7 +3003,8 @@ def render_productivity(pr, key):
 _TAB_LABELS = [
     "🧮 Excel Builder",                  # ★ 6 Nov 2026: the landing page (active_nav starts at _PILL_TABS[0])
     "🧾 VFL G/D", "🧾 VFL Gender", "📄 REPORTS PDF", "🖼️ REPORTS IMAGES",
-    "📝 Intake vs Tableau",
+    # ★ 13 Nov 2026: hidden, the intake form is discontinued; returns with intake_brands.IN_USE.
+    *(["📝 Intake vs Tableau"] if __import__("intake_brands").in_use() else []),
     "📋 MTD / YTD Report", "📉 Degrowth", "🔎 Degrowth Drivers",
     "💸 DB REPORTS", "⭐ Google Reviews", "🗓️ Day calendar",
     "🧑‍🤝‍🧑 Gender G/D", "🏷️ Brand G/D", "🏬 Store × Brand G/D",
@@ -3017,7 +3020,7 @@ _TAB_LABELS = [
 # is hidden.
 _PILL_TABS = _TAB_LABELS
 
-if "active_nav" not in st.session_state:
+if st.session_state.get("active_nav") not in _PILL_TABS:   # e.g. a section that has been switched off
     st.session_state["active_nav"] = _PILL_TABS[0]
     st.session_state["nav_pills"] = _PILL_TABS[0]
 
@@ -3087,7 +3090,7 @@ def _intake_filings():
         return pd.DataFrame(), f"{type(e).__name__}: {e}"
 
 
-if nav == "📝 Intake vs Tableau":
+if nav == "📝 Intake vs Tableau" and __import__("intake_brands").in_use():
     import intake_check as IC
     st.subheader("Intake vs Tableau")
     st.caption(
