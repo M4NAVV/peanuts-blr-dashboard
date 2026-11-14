@@ -1778,6 +1778,70 @@ def slab_strip(width, achieved, slabs, asof, font_px=28):
                             "SUPER A · A · B · C — B is the month target every card on page one measures against"), tbl, img], gap=8)
 
 
+def staff_week_grid(L, df, asof, store, width, max_h, font_px=30, min_px=17):
+    """Salespeople down the side, the last 7 days across, each cell that person's sales that day (₹ lakh), with the
+    week's total per person and per day (Manav, 13 Nov 2026: "i only want the staff grid … check if this fits for the
+    bigger store like grand").
+
+    ★ THE TEAM PAGE'S WEEK AND KEY: the 7 days up to the last day WITH bills (a night-fill day has takings but no
+    salesperson), keyed on SALESPERSON_NO (salespeople.py: one person typed two ways is one id), shown under the
+    name most used. Everyone with a line in the week is listed — never a top-n; the type shrinks to fit the room
+    left on the page, down to `min_px`. Returns None only if even that cannot fit, so the caller can say so."""
+    import festive_admin as FADM
+    sid = "SALESPERSON_NO"
+    d = df[df[L.COL_STORE_LABEL] == store]
+    ok = d[d[sid].notna() & (d[sid].astype(str).str.strip() != "")]
+    if ok.empty:
+        return None, None
+    end = ok["date"].max().normalize()
+    days = [end - pd.Timedelta(days=k) for k in range(6, -1, -1)]
+    w = ok[(ok["date"] >= days[0]) & (ok["date"] <= end)].copy()
+    w["_id"] = w[sid].astype(str).str.strip()
+    names = (w.groupby("_id")[L.COL_SALESPERSON].agg(lambda s: s.astype(str).str.strip().value_counts().index[0])
+             .str.replace(r"\s+\.(?=\s|$)", "", regex=True).str.replace(r"\s+", " ", regex=True).str.strip()
+             .str.title())                       # "ASIF . SHARIF" / "MUSKAN ." -> "Asif Sharif" / "Muskan"
+    g = w.groupby(["_id", w["date"].dt.normalize()])[L.COL_AMOUNT].sum().unstack(fill_value=0.0)
+    g = g.reindex(columns=days, fill_value=0.0)
+    g["_wk"] = g.sum(axis=1)
+    g = g.sort_values("_wk", ascending=False)
+
+    def lakh(v):
+        return "—" if abs(v) < 1 else f"{v / 1e5:,.2f}"
+
+    cols = [f"d{i}" for i in range(7)]
+    rows = []
+    for pid, r in g.iterrows():
+        row = {"who": names.get(pid, pid), "wk": lakh(r["_wk"])}
+        row.update({c: lakh(r[dd]) for c, dd in zip(cols, days)})
+        rows.append(row)
+    tot = {"who": "TOTAL", "wk": lakh(g["_wk"].sum())}
+    tot.update({c: lakh(g[dd].sum()) for c, dd in zip(cols, days)})
+    spec = ([("who", "text", "SALESPERSON")] + [(c, "rtext", f"{dd:%a %d}") for c, dd in zip(cols, days)]
+            + [("wk", "rtext", "WEEK")])
+    sub = f"each salesperson's sales by day, ₹ lakh  ·  {days[0]:%d %b} – {end:%d %b} (the 7 days to the last day with bills)"
+    cap = _caption(width, f"Team — the week by day  ·  {len(rows)} salespeople", sub)
+    room = max_h - cap.height - 8
+    # one table while it stays readable; a big team (Grand Kamraj: 28) goes into TWO halves side by side rather than
+    # shrinking the type past reading — everyone stays listed, best first, the total at the end of the right half
+    from PIL import Image as _I
+    for px in range(font_px, 21, -1):
+        img = FADM.table_image(rows, spec, width, font_px=px, total_row=tot, spread_numbers=True, spread_rtext=True)
+        if img.height <= room:
+            return _stack([cap, img], gap=8), len(rows)
+    half = (len(rows) + 1) // 2
+    gap = 24
+    hw = (width - gap) // 2
+    for px in range(min(font_px, 26), min_px - 1, -1):
+        left = FADM.table_image(rows[:half], spec, hw, font_px=px, spread_numbers=True, spread_rtext=True)
+        right = FADM.table_image(rows[half:], spec, hw, font_px=px, total_row=tot, spread_numbers=True, spread_rtext=True)
+        if max(left.height, right.height) <= room:
+            both = _I.new("RGB", (width, max(left.height, right.height)), (255, 255, 255))
+            both.paste(left, (0, 0))
+            both.paste(right, (hw + gap, 0))
+            return _stack([cap, both], gap=8), len(rows)
+    return None, len(rows)
+
+
 _BRAND_FOLD = {"MANYAVAR": "Manyavar", "MOHEY": "Mohey", "TWAMEV MEN": "Twamev", "TWAMEV-WOMEN": "Twamev"}
 _GENDER = {"MEN": "Men", "WOMEN": "Women", "CHILD": "Kids"}
 
@@ -1893,7 +1957,18 @@ def brand_gender_page(L, df, asof, store, code=None, font_px=34):
         sheet.put(_caption(CONTENT_W, "Gender — growth / degrowth", "Men, Women, Kids: this year against last"), gap=8)
         sheet.put(_gd_table(L, fr, gender, "GENDER", ["Men", "Women", "Kids"], CONTENT_W, font_px), gap=34)
         sheet.put(_caption(CONTENT_W, "Gender contribution", "each gender's share of the store's sales"), gap=8)
-        sheet.put(_contribution(L, fr, CONTENT_W, font_px), gap=26)
+        sheet.put(_contribution(L, fr, CONTENT_W, font_px), gap=34)
+        # ★ the team's week by day in the room left (Manav, 13 Nov 2026) — sized to fit, every salesperson listed
+        try:
+            grid, n = staff_week_grid(L, df, asof, store, CONTENT_W, sheet.room() - 4, font_px=min(font_px, 30))
+        except Exception as e:                    # a failure says so on the page, never a silent blank
+            grid, n = None, None
+            sheet.put(_caption(CONTENT_W, "Team — the week by day", f"could not be built ({type(e).__name__})"), gap=0)
+        if grid is not None:
+            sheet.put(grid, gap=0)
+        elif n:
+            sheet.put(_caption(CONTENT_W, "Team — the week by day",
+                               f"{n} salespeople do not fit this page; the full team is on the team page"), gap=0)
         return sheet.images()
     finally:
         MARGIN, CONTENT_W = _keep

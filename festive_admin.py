@@ -284,7 +284,7 @@ def daily_chart(width, height, w, ty_days, ly_days):
 # The exact number stays beside it, so nothing is lost to anyone who needs it.
 def table_image(df, spec, width, font_px=26, bar_col=None, bar_label="",
                 total_row=None, shade=(), neg_row=None, fill=True, sub_row=None,
-                total_first=False, spread_numbers=False, head_row=None):
+                total_first=False, spread_numbers=False, head_row=None, spread_rtext=False):
     """`spec` is [(column, kind, header)] with kind in
     text | money | pct | int | bar.
 
@@ -394,7 +394,8 @@ def table_image(df, spec, width, font_px=26, bar_col=None, bar_label="",
                 key=lambda i: widths[i] if spec[i][1] == "text" else 0)
         widths[j] = max(widths[j] - over, PP._px(120))
     elif over < 0 and fill and spread_numbers:
-        nums = [i for i, sp in enumerate(spec) if sp[1] not in ("text", "rtext", "bar")]
+        nums = [i for i, sp in enumerate(spec) if sp[1] not in ("text", "rtext", "bar")
+                or (spread_rtext and sp[1] == "rtext")]     # 13 Nov 2026: pre-formatted figure columns can take it too
         if nums:
             each = (-over) // len(nums)
             for i in nums:
