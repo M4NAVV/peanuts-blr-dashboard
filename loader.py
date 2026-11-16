@@ -666,7 +666,7 @@ def salesperson_kpis(df: pd.DataFrame, asof=None, settled=None) -> pd.DataFrame:
             g = pd.DataFrame(0.0, index=ids,
                              columns=[f"{tag}_sales", f"{tag}_units",
                                       f"{tag}_abs", f"{tag}_abv",
-                                      f"{tag}_single", f"{tag}_bills"])
+                                      f"{tag}_single", f"{tag}_bills", f"{tag}_sbills"])
             out = g if out is None else out.join(g, how="outer")
             continue
         # ★ RETURNED PIECES COME OFF, here as on the driver sheet — the two
@@ -679,7 +679,10 @@ def salesperson_kpis(df: pd.DataFrame, asof=None, settled=None) -> pd.DataFrame:
         # anything was added to the sale
         per = (d.assign(**{"_u": _u})
                .groupby([sid, COL_BILL_UID], dropna=False)["_u"].sum())
-        g["single"] = (per <= 1).groupby(level=0).sum().reindex(g.index).fillna(0)
+        # ★ 16 Nov 2026 (Manav: "exclude there too"): a RETURN or EXCHANGE bill (zero or fewer pieces after returns)
+        # is not a sale that could have had something added — it is neither single nor counted in the share's base.
+        g["single"] = (per == 1).groupby(level=0).sum().reindex(g.index).fillna(0)
+        g["sbills"] = (per > 0).groupby(level=0).sum().reindex(g.index).fillna(0)
         g = pd.DataFrame({
             f"{tag}_sales": g["sales"],
             # ★ UNITS KEPT, NOT JUST DIVIDED AWAY. They were computed here only
@@ -689,8 +692,9 @@ def salesperson_kpis(df: pd.DataFrame, asof=None, settled=None) -> pd.DataFrame:
             f"{tag}_units": g["units"],
             f"{tag}_abs": g["units"] / g["bills"].where(g["bills"] != 0),
             f"{tag}_abv": g["sales"] / g["bills"].where(g["bills"] != 0),
-            f"{tag}_single": g["single"] / g["bills"].where(g["bills"] != 0) * 100,
+            f"{tag}_single": g["single"] / g["sbills"].where(g["sbills"] != 0) * 100,
             f"{tag}_bills": g["bills"],
+            f"{tag}_sbills": g["sbills"],          # bills that sold something: the single share's base
         })
         out = g if out is None else out.join(g, how="outer")
 

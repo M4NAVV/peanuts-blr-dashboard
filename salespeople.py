@@ -175,7 +175,9 @@ def total_row(k, label="TOTAL"):
         tot[f"{t}_units"] = float(k[f"{t}_units"].sum())
         tot[f"{t}_abv"] = tot[f"{t}_sales"] / b if b else 0.0
         tot[f"{t}_abs"] = float((k[f"{t}_abs"] * k[f"{t}_bills"]).sum()) / b if b else 0.0
-        tot[f"{t}_single"] = float((k[f"{t}_single"] * k[f"{t}_bills"]).sum()) / b if b else 0.0
+        _base = k[f"{t}_sbills"] if f"{t}_sbills" in k else k[f"{t}_bills"]   # returns are not in the base (16 Nov)
+        tot[f"{t}_single"] = (float((k[f"{t}_single"] * _base).sum()) / float(_base.sum())
+                              if float(_base.sum()) else 0.0)
     return tot
 
 
@@ -245,8 +247,9 @@ def store_table(L, df, asof, store):
     _live = [r for r in people_rows
              if pd.isna(r.get("quiet")) or r["quiet"] < 30]
     MOVE_MIN = max(3, round(0.2 * len(_live)))
-    st_single = (sum(r["q_single"] * r["q_bills"] for r in ok)
-                 / sum(r["q_bills"] for r in ok)) if ok else None
+    _sbq = lambda r: r.get("q_sbills", r["q_bills"])          # returns are not in the base (16 Nov 2026)
+    st_single = (sum(r["q_single"] * _sbq(r) for r in ok)
+                 / sum(_sbq(r) for r in ok)) if ok and sum(_sbq(r) for r in ok) else None
     st_abs = (sum(r["q_abs"] * r["q_bills"] for r in ok)
               / sum(r["q_bills"] for r in ok)) if ok else None
 
