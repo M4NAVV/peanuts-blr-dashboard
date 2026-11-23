@@ -150,8 +150,44 @@ def render_pdf(pages: list[str], out: Path, width: int) -> Path:
                 bottom -= 1
             imgs.append(im.crop((0, 0, im.width, min(im.height, bottom + 72))))
     out.parent.mkdir(parents=True, exist_ok=True)
-    imgs[0].save(out, save_all=True, append_images=imgs[1:], resolution=200)
+    # ★ 23 Nov 2026: saved as JPEG the 34-page All Stores pack was 37.7 MB, over WhatsApp's 20 MB courtesy limit.
+    # The pages are flat tables in a handful of colours, so a 64-colour palette (Flate, lossless-looking) keeps the
+    # type sharp at a fraction of the size.
+    imgs = [im.quantize(64, method=Image.Quantize.MEDIANCUT, dither=Image.Dither.NONE) for im in imgs]
+    _write_pdf(imgs, out, dpi=200)
     return out
+
+
+def _write_pdf(imgs, out: Path, dpi: int) -> None:
+    """Palette pages as Flate-compressed images. Pillow writes palette pages UNCOMPRESSED (a 1 GB file), and adding
+    a PDF library for this is not worth it — a PDF of whole-page images is a few objects."""
+    import zlib
+    objs, kids = [], []
+    def add(b: bytes) -> int:
+        objs.append(b); return len(objs)
+    pages_id = add(b"")                                    # filled in at the end
+    for im in imgs:
+        pal = (im.getpalette() or [])[:768]
+        n = len(pal) // 3
+        data = zlib.compress(im.tobytes(), 9)
+        img = add(b"<< /Type /XObject /Subtype /Image /Width %d /Height %d /BitsPerComponent 8 "
+                  b"/ColorSpace [/Indexed /DeviceRGB %d <%s>] /Filter /FlateDecode /Length %d >>\nstream\n"
+                  % (im.width, im.height, n - 1, bytes(pal[:n * 3]).hex().encode(), len(data)) + data + b"\nendstream")
+        w, h = im.width * 72 / dpi, im.height * 72 / dpi
+        cs = b"q %.2f 0 0 %.2f 0 0 cm /I Do Q" % (w, h)
+        c = add(b"<< /Length %d >>\nstream\n" % len(cs) + cs + b"\nendstream")
+        kids.append(add(b"<< /Type /Page /Parent %d 0 R /MediaBox [0 0 %.2f %.2f] /Contents %d 0 R "
+                        b"/Resources << /XObject << /I %d 0 R >> >> >>" % (pages_id, w, h, c, img)))
+    objs[pages_id - 1] = (b"<< /Type /Pages /Count %d /Kids [%s] >>"
+                          % (len(kids), b" ".join(b"%d 0 R" % k for k in kids)))
+    cat = add(b"<< /Type /Catalog /Pages %d 0 R >>" % pages_id)
+    buf, offs = bytearray(b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\n"), []
+    for i, o in enumerate(objs, 1):
+        offs.append(len(buf)); buf += b"%d 0 obj\n" % i + o + b"\nendobj\n"
+    x = len(buf)
+    buf += b"xref\n0 %d\n0000000000 65535 f \n" % (len(objs) + 1) + b"".join(b"%010d 00000 n \n" % o for o in offs)
+    buf += b"trailer\n<< /Size %d /Root %d 0 R >>\nstartxref\n%d\n%%%%EOF\n" % (len(objs) + 1, cat, x)
+    out.write_bytes(bytes(buf))
 
 
 # ── 1 + 2 · the VFL packs (South, East & NE) ─────────────────────────────────────────────────────────────────────
