@@ -74,7 +74,16 @@ _ROW_STYLE = {
 
 
 def _money(v):
-    return "—" if v is None or pd.isna(v) else f"{v:,.0f}"
+    """Whole rupees in INDIAN grouping — 13,39,06,566, not 133,906,566 (Manav, 23 Nov 2026: "the commas for the
+    numbers should follow an indian convention, crores etc")."""
+    if v is None or pd.isna(v):
+        return "—"
+    neg, whole = v < 0, f"{abs(float(v)):.0f}"
+    if len(whole) > 3:
+        head = whole[:-3]
+        head = ",".join([head[max(0, i - 2):i] for i in range(len(head), 0, -2)][::-1])
+        whole = head + "," + whole[-3:]
+    return ("-" if neg else "") + whole
 
 
 def _pct(v):
@@ -291,7 +300,7 @@ def _draw(panels, asof, title=None, subtitle=None):
 def build(L, PL, df, pf, asof=None, only=None):
     """(filename, PNG bytes) for the day.
 
-    `only` draws a single panel — "East" or "South" — so each region can be
+    `only` draws a single panel — "East", "South" or "Overall" (both added) — so each can be
     downloaded on its own. Both are computed either way: the figures come from
     the same call, so a single-region card can never disagree with the pair.
     """
@@ -364,7 +373,20 @@ def build(L, PL, df, pf, asof=None, only=None):
         panel(L, "PRPL South", south, L.COL_AMOUNT, asof,
               g(s_m_cur, s_m_pri), g(s_y_cur, s_y_pri), _tgt(s_codes)),
     ]
-    if only:
+    if only and str(only).lower().startswith("o"):
+        # ★ THE PORTFOLIO CARD (Manav, 23 Nov 2026: "a third card, same format, but combined"). Every rupee line is
+        # East + South, each read exactly as its own card reads it (East off the portfolio feed, South off the VFL
+        # feed), and the target covers both regions' store lists. G/D is NEVER an average of the two rates: the
+        # regions' rupee pairs (East like to like, South from the 19 Apr takeover) are added, then one growth is
+        # taken from the sums — the director card's OVERALL rule, so the three cards always agree.
+        both = pd.concat([east[["date", "sales"]].rename(columns={"sales": "_amt"}),
+                          south[["date", L.COL_AMOUNT]].rename(columns={L.COL_AMOUNT: "_amt"})],
+                         ignore_index=True)
+        ep, sp = east_pairs(PL, pf, asof), south_pairs(L, df, asof)
+        gd = {k: g(ep[k][0] + sp[k][0], ep[k][1] + sp[k][1]) for k in ("MTD", "YTD")}
+        panels = [panel(L, "PRPL OVERALL", both, "_amt", asof, gd["MTD"], gd["YTD"], _tgt(e_codes | s_codes))]
+        stem = f"month_brief_overall_{asof:%Y-%m-%d}"
+    elif only:
         want = "PRPL East" if str(only).lower().startswith("e") else "PRPL South"
         panels = [p for p in panels if p[0] == want]
         stem = f"month_brief_{want.split()[1].lower()}_{asof:%Y-%m-%d}"
