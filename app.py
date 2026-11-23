@@ -3011,7 +3011,7 @@ _TAB_LABELS = [
     "⚖️ Gender Mix",
     "📊 Executive", "🎯 Day Targets", "🏙️ City-wise G/D", "📅 Monthly Contribution",
     "📐 Store Productivity", "Overview", "🏬 Stores",
-    "✂️ Alterations", "↩️ GRT", "🔧 Build your view", "Trends",
+    "✂️ Alterations", "↩️ GRT", "🏢 B2B", "🔧 Build your view", "Trends",
     "Category mix", "Salespeople",
     "Customers", "Colors & sizes",
 ]
@@ -3242,6 +3242,75 @@ if nav == "↩️ GRT":
             _late = [r["Store Name"] for _, r in _gst.iterrows() if r["Export up to"] and r["Export up to"] < _today - pd.Timedelta(days=1).to_pytimedelta()]
             if _late:
                 st.caption("⚠️ Older than yesterday: " + ", ".join(_late) + ". Their newest GRTs are not here yet.")
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def _b2b_data():
+    """Every store's newest Tax_BillWise_FY export, hourly at most (b2b.py)."""
+    import b2b as B2
+    bills, lines, status = B2.load()
+    return bills, lines, status, B2.last_problem()
+
+
+# =========================================================================== #
+# B2B — every sale billed to a customer's GST number, every store (Manav, 23 Nov 2026)
+# =========================================================================== #
+if nav == "🏢 B2B":
+    import b2b as B2
+    st.subheader("B2B · sales billed to a GST number")
+    st.caption("Every bill where the customer gave a GSTIN, from each store's own POS export in its Drive folder "
+               "(Tax_BillWise_FY). One row per bill; returns are negative, so totals are net. Amounts **include GST**. "
+               "The export carries no customer name — the GSTIN's first two digits give the buyer's state. "
+               "Updates by itself when the stores' reports land; nothing is typed.")
+    with st.spinner("Reading the stores' tax exports…"):
+        _bdf, _bln, _bst, _bprob = _b2b_data()
+    if _bdf.empty:
+        st.error("**No B2B data could be read.** " + (_bprob or "no store has a Tax_BillWise_FY export with a customer GSTIN."))
+    else:
+        _today = pd.Timestamp(end_d).date()
+        _c1, _c2, _c3, _c4 = st.columns([2, 2, 3, 2])
+        with _c1:
+            _rng = st.date_input("Dates", value=(_today.replace(day=1), max(_bdf["Date"])),
+                                 min_value=min(_bdf["Date"]), max_value=max(max(_bdf["Date"]), _today), key="b2b_dates")
+        with _c2:
+            _regs = st.multiselect("Region", ["East & NE", "South"], default=["East & NE", "South"], key="b2b_reg")
+        with _c3:
+            _sts = st.multiselect("Stores", sorted(_bdf["Store Name"].unique()), default=[], placeholder="All stores", key="b2b_st")
+        with _c4:
+            _gq = st.text_input("GSTIN contains", key="b2b_gstin").strip().upper()
+        _d0, _d1 = (_rng if isinstance(_rng, (list, tuple)) and len(_rng) == 2 else (_rng, _rng))
+        _f = _bdf[(_bdf["Date"] >= _d0) & (_bdf["Date"] <= _d1) & (_bdf["Region"].isin(_regs))]
+        if _sts:
+            _f = _f[_f["Store Name"].isin(_sts)]
+        if _gq:
+            _f = _f[_f["Customer GSTIN"].str.contains(_gq, regex=False)]
+        _l = _bln.merge(_f[["Store Code", "GST Doc No"]], on=["Store Code", "GST Doc No"])
+        m1, m2, m3, m4, m5 = st.columns(5)
+        m1.metric("Bills", f"{len(_f):,}")
+        m2.metric("Customers (GSTINs)", f"{_f['Customer GSTIN'].nunique():,}")
+        m3.metric("Taxable", rupees(_f["Taxable"].sum()))
+        m4.metric("GST", rupees(_f[["CGST", "SGST", "IGST"]].sum().sum()))
+        m5.metric("Total incl. GST", rupees(_f["Total incl. GST"].sum()))
+        _sum = B2.by_store(_f)
+        _money = lambda v: "₹" + fmt_in(v, 2)
+        st.markdown(f"**Store-wise · {_d0:%d %b %Y} – {_d1:%d %b %Y}**")
+        st.dataframe(_sum.style.format({**{c: _money for c in B2.MONEY}, "Qty": "{:,.0f}", "Bills": "{:,.0f}",
+                                        "Customers": "{:,.0f}"}), use_container_width=True, hide_index=True)
+        st.download_button("⬇ Download Excel (B2B bills + HSN lines + store totals)",
+                           B2.to_excel(_f, _l, _sum), key="b2b_xlsx", use_container_width=True,
+                           file_name=f"B2B {_d0:%d-%m-%Y} to {_d1:%d-%m-%Y}.xlsx",
+                           mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        st.markdown(f"**Every B2B bill · {len(_f):,} rows**")
+        _show = _f.drop(columns=["Region"]).copy()
+        _show["Date"] = pd.to_datetime(_show["Date"]).dt.strftime("%d-%m-%Y")
+        st.dataframe(_show.style.format({**{c: _money for c in B2.MONEY}, "Qty": "{:,.0f}"}),
+                     use_container_width=True, hide_index=True, height=480)
+        with st.expander("Whose export is in"):
+            _s = _bst.copy()
+            _s["Export up to"] = _s["Export up to"].map(lambda d: d.strftime("%d %b %Y") if d else "no export found")
+            st.dataframe(_s.sort_values(["Region", "Store Name"]), use_container_width=True, hide_index=True)
+            _late = [r["Store Name"] for _, r in _bst.iterrows() if r["Export up to"] and r["Export up to"] < _today - pd.Timedelta(days=1).to_pytimedelta()]
+            if _late:
+                st.caption("⚠️ Older than yesterday: " + ", ".join(_late) + ". Their newest bills are not here yet.")
 
 if nav == "✂️ Alterations":
     import tailoring as TLR

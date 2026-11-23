@@ -74,15 +74,16 @@ def parse(text: str) -> pd.DataFrame:
     return pd.DataFrame(rows, columns=["Date", "GST Doc No", "GRT No", "Qty", "Value"])
 
 
-def newest_files(svc) -> dict:
-    """{code: (modifiedTime, id, name, export_date)} — each store's newest GoodsReturn_FY file on the shared drives."""
+def newest_files(svc, kind: str = "GoodsReturn_FY") -> dict:
+    """{code: (modifiedTime, id, name, export_date)} — each store's newest `<kind>` file on the shared drives
+    (GoodsReturn_FY for GRT; b2b.py asks for Tax_BillWise_FY)."""
     out, tok = {}, None
     while True:
-        r = svc.files().list(q="name contains 'GoodsReturn_FY_' and trashed = false", corpora="allDrives",
+        r = svc.files().list(q=f"name contains '{kind}_' and trashed = false", corpora="allDrives",
                              includeItemsFromAllDrives=True, supportsAllDrives=True, pageSize=1000, pageToken=tok,
                              fields="nextPageToken, files(id,name,modifiedTime)").execute()
         for f in r.get("files", []):
-            m = re.match(r"^(\d+)_.*GoodsReturn_FY_.*_to_(\d{2}-\d{2}-\d{4})\.csv$", f["name"])
+            m = re.match(rf"^(\d+)_.*{kind}_.*_to_(\d{{2}}-\d{{2}}-\d{{4}})\.csv$", f["name"])
             if not m:
                 continue
             code, upto = int(m.group(1)), dt.datetime.strptime(m.group(2), "%d-%m-%Y").date()
