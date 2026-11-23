@@ -3011,7 +3011,7 @@ _TAB_LABELS = [
     "⚖️ Gender Mix",
     "📊 Executive", "🎯 Day Targets", "🏙️ City-wise G/D", "📅 Monthly Contribution",
     "📐 Store Productivity", "Overview", "🏬 Stores",
-    "✂️ Alterations", "🔧 Build your view", "Trends",
+    "✂️ Alterations", "↩️ GRT", "🔧 Build your view", "Trends",
     "Category mix", "Salespeople",
     "Customers", "Colors & sizes",
 ]
@@ -3179,6 +3179,69 @@ if nav == "📝 Intake vs Tableau" and __import__("intake_brands").in_use():
                     "Typical sales gap": [("" if v is None or pd.isna(v) else "₹" + fmt_in(v, 0)) for v in _tr["typical_gap"]],
                 }), hide_index=True, width="stretch")
 
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def _grt_data():
+    """Every store's newest GoodsReturn_FY export, hourly at most (grt.py). Nightly files, so an hour is plenty."""
+    import grt as G
+    df, status = G.load()
+    return df, status, G.last_problem()
+
+
+# =========================================================================== #
+# GRT — goods returned to VFL, every store (Manav, 19 Nov 2026)
+# =========================================================================== #
+if nav == "↩️ GRT":
+    import grt as G
+    st.subheader("GRT · goods returned to VFL")
+    st.caption("Every GRT the stores raise, from each store's own nightly POS export in its Drive folder "
+               "(GoodsReturn_FY). Value is the GRT invoice total **including GST**. Updates by itself when the "
+               "stores' nightly reports land; nothing is typed.")
+    with st.spinner("Reading the stores' GRT exports…"):
+        _gdf, _gst, _gprob = _grt_data()
+    if _gdf.empty:
+        st.error("**No GRT data could be read.** " + (_gprob or "no store has a GoodsReturn_FY export."))
+    else:
+        _today = pd.Timestamp(end_d).date()
+        _c1, _c2, _c3 = st.columns([2, 2, 3])
+        with _c1:
+            _rng = st.date_input("Dates", value=(_today.replace(day=1), max(_gdf["Date"])),
+                                 min_value=min(_gdf["Date"]), max_value=max(max(_gdf["Date"]), _today), key="grt_dates")
+        with _c2:
+            _regs = st.multiselect("Region", ["East & NE", "South"], default=["East & NE", "South"], key="grt_reg")
+        with _c3:
+            _all_st = sorted(_gdf["Store Name"].unique())
+            _sts = st.multiselect("Stores", _all_st, default=[], placeholder="All stores", key="grt_st")
+        _d0, _d1 = (_rng if isinstance(_rng, (list, tuple)) and len(_rng) == 2 else (_rng, _rng))
+        _f = _gdf[(_gdf["Date"] >= _d0) & (_gdf["Date"] <= _d1) & (_gdf["Region"].isin(_regs))]
+        if _sts:
+            _f = _f[_f["Store Name"].isin(_sts)]
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric("GRTs", f"{len(_f):,}")
+        m2.metric("Pieces", f"{_f['Qty'].sum():,.0f}")
+        m3.metric("Value incl. GST", rupees(_f["Value"].sum()))
+        m4.metric("Stores", f"{_f['Store Code'].nunique()}")
+        _sum = G.by_store(_f)
+        st.markdown(f"**Store-wise · {_d0:%d %b %Y} – {_d1:%d %b %Y}**")
+        st.dataframe(_sum.drop(columns=["Region"]).style.format({"Value": lambda v: rupees(v), "Qty": "{:,.0f}",
+                                                                 "GRTs": "{:,.0f}"}),
+                     use_container_width=True, hide_index=True)
+        st.download_button("⬇ Download Excel (GRT + store totals)",
+                           G.to_excel(_f, _sum, "GRT"), key="grt_xlsx", use_container_width=True,
+                           file_name=f"GRT {_d0:%d-%m-%Y} to {_d1:%d-%m-%Y}.xlsx",
+                           mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        st.markdown(f"**Every GRT · {len(_f):,} rows**")
+        _show = _f.drop(columns=["Region"]).copy()
+        _show["Date"] = pd.to_datetime(_show["Date"]).dt.strftime("%d-%m-%Y")
+        st.dataframe(_show.style.format({"Value": lambda v: rupees(v) if abs(v - round(v)) < 1e-9 else "₹" + fmt_in(v, 2),
+                                         "Qty": "{:,.0f}"}), use_container_width=True, hide_index=True, height=480)
+        with st.expander("Whose export is in"):
+            _s = _gst.copy()
+            _s["Export up to"] = _s["Export up to"].map(lambda d: d.strftime("%d %b %Y") if d else "no export found")
+            st.dataframe(_s.sort_values(["Region", "Store Name"]), use_container_width=True, hide_index=True)
+            _late = [r["Store Name"] for _, r in _gst.iterrows() if r["Export up to"] and r["Export up to"] < _today - pd.Timedelta(days=1).to_pytimedelta()]
+            if _late:
+                st.caption("⚠️ Older than yesterday: " + ", ".join(_late) + ". Their newest GRTs are not here yet.")
 
 if nav == "✂️ Alterations":
     import tailoring as TLR
