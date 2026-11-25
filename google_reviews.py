@@ -147,7 +147,8 @@ def fetch_counts(places: pd.DataFrame) -> pd.DataFrame:
                     time.sleep(2 ** attempt)
         if d is None:
             continue
-        rows.append({"date": date.today(), "store": p["store"],
+        rows.append({"date": date.today(), "read_at": pd.Timestamp.now(tz="UTC").strftime("%Y-%m-%dT%H:%M:%SZ"),
+                     "store": p["store"],
                      "place_id": p["place_id"],
                      "total_reviews": d.get("userRatingCount"),
                      "rating": d.get("rating")})
@@ -174,6 +175,22 @@ def append_snapshot(new: pd.DataFrame, path=None) -> str:
     return path
 
 
+# Stores open about 10:30 IST (05:00 UTC). A reading taken after that also holds some of the NEXT day's morning
+# reviews, so its day is flagged `late` (readings before 25 Nov 2026 carry no time and are not flagged).
+_OPEN_UTC_HOUR = 5
+
+
+def _late(read_at) -> bool:
+    try:
+        t = pd.Timestamp(read_at)
+    except Exception:                     # noqa: BLE001
+        return False
+    if pd.isna(t):
+        return False
+    t = t.tz_convert("UTC") if t.tzinfo else t
+    return t.hour >= _OPEN_UTC_HOUR
+
+
 def daily_reviews(path=None) -> pd.DataFrame:
     """Running totals -> reviews per day.
 
@@ -185,6 +202,14 @@ def daily_reviews(path=None) -> pd.DataFrame:
     if not os.path.exists(path):
         return pd.DataFrame(columns=["date", "store", "reviews", "days_covered"])
     d = pd.read_csv(path, parse_dates=["date"]).sort_values(["store", "date"])
+    # ★★ A READING BELONGS TO THE DAY BEFORE IT (Manav, 25 Nov 2026: "the reports we make dont tally with the staff
+    # numbers"). The reading stamped D is taken on the morning of D — the commits land between 06:08 and 11:50 IST — so
+    # the change since the last reading is the reviews of D-1's trading day (stores trade ~10:30–22:30). It used to be
+    # filed under D: every day's figure was the PREVIOUS day's reviews, and the review rate divided them by the wrong
+    # day's bills. The snapshot keeps the reading date; only the daily figure moves back one day.
+    d["date"] = d["date"] - pd.Timedelta(days=1)
+    if "read_at" not in d:
+        d["read_at"] = pd.NA
     out = []
     for store, g in d.groupby("store"):
         g = g.sort_values("date")
@@ -215,6 +240,7 @@ def daily_reviews(path=None) -> pd.DataFrame:
                             "removed": max(-gained, 0.0) / span,
                             "days_covered": 1,
                             "estimated": True,
+                            "late": _late(r.get("read_at")),
                             "total_reviews": float(r.total_reviews)})
                     prev_n, prev_d = float(r.total_reviews), r.date
                     continue
@@ -236,6 +262,7 @@ def daily_reviews(path=None) -> pd.DataFrame:
                             "removed": max(-gained, 0.0),
                             "days_covered": span,
                             "estimated": False,
+                            "late": _late(r.get("read_at")),
                             "total_reviews": float(r.total_reviews)})
             prev_n, prev_d = float(r.total_reviews), r.date
     return pd.DataFrame(out)

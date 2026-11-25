@@ -58,7 +58,8 @@ def test_a_missed_day_records_the_span_it_actually_covers(tmp_path):
     # nothing downstream ever looked at `days_covered`. The gain is now spread
     # across the days it covers and flagged as estimated. The total is unchanged.
     assert len(d) == 3
-    assert sorted(f"{x:%d}" for x in d["date"]) == ["21", "22", "23"]
+    # readings on the mornings of 20 and 23 Aug cover the trading days 20, 21 and 22 Aug
+    assert sorted(f"{x:%d}" for x in d["date"]) == ["20", "21", "22"]
     assert d["reviews"].sum() == 12
     assert (d["reviews"] == 4).all()
     assert d["estimated"].all()
@@ -125,3 +126,24 @@ def test_the_resolved_store_list_has_no_shared_listing():
     if p.empty:
         pytest.skip("no resolved stores on this machine")
     assert p["place_id"].is_unique
+
+
+def test_a_reading_is_the_previous_trading_days_reviews(tmp_path):
+    """The 23 Aug morning reading holds what customers wrote on 22 Aug (Manav, 25 Nov 2026)."""
+    p = _snap(tmp_path, [
+        {"date": "2026-08-22", "store": "A", "total_reviews": 100},
+        {"date": "2026-08-23", "store": "A", "total_reviews": 107},
+    ])
+    d = G.daily_reviews(p)
+    assert f"{d.iloc[0]['date']:%Y-%m-%d}" == "2026-08-22"
+    assert d.iloc[0]["reviews"] == 7
+
+
+def test_a_reading_after_the_stores_open_is_flagged_late(tmp_path):
+    p = _snap(tmp_path, [
+        {"date": "2026-11-24", "store": "A", "total_reviews": 100, "read_at": "2026-11-24T00:40:00Z"},
+        {"date": "2026-11-25", "store": "A", "total_reviews": 104, "read_at": "2026-11-25T06:20:00Z"},
+        {"date": "2026-11-26", "store": "A", "total_reviews": 106, "read_at": "2026-11-26T00:35:00Z"},
+    ])
+    d = G.daily_reviews(p).sort_values("date")
+    assert d["late"].tolist() == [True, False]   # 25 Nov read at 11:50 IST; 26 Nov at 06:05 IST
