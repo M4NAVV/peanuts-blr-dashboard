@@ -3011,7 +3011,7 @@ _TAB_LABELS = [
     "⚖️ Gender Mix",
     "📊 Executive", "🎯 Day Targets", "🏙️ City-wise G/D", "📅 Monthly Contribution",
     "📐 Store Productivity", "Overview", "🏬 Stores",
-    "✂️ Alterations", "↩️ GRT", "🏢 B2B", "🔧 Build your view", "Trends",
+    "✂️ Alterations", "↩️ GRT", "🏢 B2B", "🖥️ Stores", "🔧 Build your view", "Trends",
     "Category mix", "Salespeople",
     "Customers", "Colors & sizes",
 ]
@@ -3311,6 +3311,43 @@ if nav == "🏢 B2B":
             _late = [r["Store Name"] for _, r in _bst.iterrows() if r["Export up to"] and r["Export up to"] < _today - pd.Timedelta(days=1).to_pytimedelta()]
             if _late:
                 st.caption("⚠️ Older than yesterday: " + ", ".join(_late) + ". Their newest bills are not here yet.")
+
+@st.cache_data(ttl=300, show_spinner=False)
+def _stores_health():
+    import stores_health as SH
+    return SH.load()
+
+
+# =========================================================================== #
+# Stores — is every store PC sending its files? (Store Data Agent head-office view, Manav 23 Nov 2026)
+# =========================================================================== #
+if nav == "🖥️ Stores":
+    st.subheader("Stores · are the PCs sending their files?")
+    st.caption("For every store: today's hourly sales file, the last close-of-day export, and — once a store runs the "
+               "Store Data Agent — its own check-in (version, POS and Drive reachable, last error). Read from the "
+               "stores' Drive folders; refreshes every 5 minutes. A store with no bill yet today has no hourly file "
+               "yet, so an empty hourly column in the morning is not a fault on its own.")
+    with st.spinner("Reading the stores' Drive folders…"):
+        _sh, _shp = _stores_health()
+    if _shp:
+        st.error("**Store status could not be read.** " + _shp)
+    elif _sh.empty:
+        st.warning("No stores found in the store master.")
+    else:
+        # ★ Region, then store code (Manav, 25 Nov 2026); closed stores in their own table beneath, not in the list.
+        _sh = _sh.assign(_c=pd.to_numeric(_sh["Code"], errors="coerce")).sort_values(["Region", "_c"]).drop(columns="_c")
+        _isclosed = _sh["Status"].str.startswith("closed")
+        _open, _closed = _sh[~_isclosed], _sh[_isclosed]
+        _bad = _open[_open["Status"] != "OK"]
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Stores OK", f"{len(_open) - len(_bad)} of {len(_open)}")
+        c2.metric("Need a look", f"{len(_bad)}")
+        c3.metric("On the agent", f"{int(_open['Exports by'].str.startswith('Agent').sum())}")
+        st.dataframe(_open, use_container_width=True, hide_index=True, height=min(38 * (len(_open) + 1), 900))
+        if len(_closed):
+            st.markdown("**Closed stores**")
+            st.dataframe(_closed[["Store", "Code", "Region", "Status"]], use_container_width=True, hide_index=True,
+                         height=38 * (len(_closed) + 1))
 
 if nav == "✂️ Alterations":
     import tailoring as TLR
