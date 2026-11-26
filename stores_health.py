@@ -102,7 +102,7 @@ def load(now: dt.datetime | None = None) -> tuple[pd.DataFrame, str]:
             issues.append("yesterday's close not exported")
         if a:
             at = dt.datetime.fromisoformat(a["at"]).astimezone(IST)
-            if now - at > dt.timedelta(minutes=20):
+            if 11 <= now.hour <= 21 and now - at > dt.timedelta(minutes=20):   # store PCs sleep after close
                 issues.append(f"agent silent {int((now - at).total_seconds() // 60)} min")
             if not a.get("db_ok"):
                 issues.append("agent cannot read the POS")
